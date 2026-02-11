@@ -947,6 +947,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     // 1. Fetch tournament data (try with new columns first, fallback to basic columns)
     let tournament: any = null;
     let tournamentError: any = null;
+    let usingFallback = false;
 
     const { data: fullTournament, error: fullError } = await supabase
       .from('tournaments')
@@ -956,7 +957,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
     if (fullError && fullError.code === '42703') {
       // Column doesn't exist yet - try without new columns
-      console.warn('[Tournament] New columns not yet available, using basic query');
+      console.warn('[Tournament] ⚠️ MIGRAÇÃO NÃO APLICADA! Colunas member_price/non_member_price não existem. Aplique a migração SQL no Supabase Dashboard.');
+      usingFallback = true;
       const { data: basicTournament, error: basicError } = await supabase
         .from('tournaments')
         .select('id, name, start_date, end_date, status, format, registration_fee, club_id')
@@ -976,6 +978,14 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       tournament = fullTournament;
       tournamentError = fullError;
     }
+
+    console.log('[Tournament] Data loaded:', {
+      usingFallback,
+      registration_fee: tournament?.registration_fee,
+      member_price: tournament?.member_price,
+      non_member_price: tournament?.non_member_price,
+      allow_club_payment: tournament?.allow_club_payment,
+    });
 
     if (!tournament) {
       console.error('[Tournament] Tournament not found or access denied:', tournamentId, tournamentError);
@@ -1032,11 +1042,27 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       .eq('tournament_id', tournamentId)
       .order('name');
 
-    // 3. Fetch categories for this tournament
-    const { data: categories } = await supabase
+    // 3. Fetch categories for this tournament (with fallback for missing columns)
+    let categories: any[] | null = null;
+    const { data: fullCategories, error: catError } = await supabase
       .from('tournament_categories')
       .select('id, name, member_price, non_member_price, registration_fee')
       .eq('tournament_id', tournamentId);
+
+    if (catError && catError.code === '42703') {
+      console.warn('[Tournament] ⚠️ Colunas member_price/non_member_price não existem em tournament_categories. Usando query básica.');
+      const { data: basicCategories } = await supabase
+        .from('tournament_categories')
+        .select('id, name, registration_fee')
+        .eq('tournament_id', tournamentId);
+      categories = (basicCategories || []).map(c => ({
+        ...c,
+        member_price: null,
+        non_member_price: null,
+      }));
+    } else {
+      categories = fullCategories;
+    }
 
     // 4. Fetch active member subscriptions for this club
     const { data: memberSubs } = await supabase
@@ -1044,6 +1070,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       .select('member_name, member_phone, plan:membership_plans(name, court_discount_percent)')
       .eq('club_owner_id', effectiveUserId)
       .eq('status', 'active');
+
+    console.log('[Tournament] Member subscriptions found:', memberSubs?.length || 0, memberSubs?.map((s: any) => ({ name: s.member_name, phone: s.member_phone, plan: s.plan?.name })));
 
     // 5. Build player info with member check
     const memberMap = new Map<string, { discount: number; planName: string }>();
@@ -1060,8 +1088,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
     const categoryMap = new Map<string, any>();
     if (categories) {
-      categories.forEach(c => categoryMap.set(c.id, c));
+      categories.forEach((c: any) => categoryMap.set(c.id, c));
     }
+
+    // Parse tournament prices as numbers to avoid string comparison issues
+    const tournRegFee = Number(tournament.registration_fee) || 0;
+    const tournMemberPrice = Number(tournament.member_price) || 0;
+    const tournNonMemberPrice = Number(tournament.non_member_price) || 0;
+
+    console.log('[Tournament] Parsed prices:', { tournRegFee, tournMemberPrice, tournNonMemberPrice, usingFallback });
 
     const playerInfos: TournamentPlayerInfo[] = (players || []).map(p => {
       const phone = normalizePhone(p.phone_number || '');
@@ -1076,22 +1111,37 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
       // Get the price for this player
       const category = p.category_id ? categoryMap.get(p.category_id) : null;
-      let basePrice = tournament.registration_fee || 0;
+      const catRegFee = Number(category?.registration_fee) || 0;
+      const catMemberPrice = Number(category?.member_price) || 0;
+      const catNonMemberPrice = Number(category?.non_member_price) || 0;
+
+      let basePrice = 0;
       
       if (isStaff) {
         // Staff members are exempt from tournament payment
         basePrice = 0;
       } else if (isMember) {
-        // Use member price: category > tournament > registration_fee
-        // Use || instead of ?? because DEFAULT 0 in DB means "not set"
-        const catMemberPrice = category?.member_price && category.member_price > 0 ? category.member_price : null;
-        const tournMemberPrice = tournament.member_price && tournament.member_price > 0 ? tournament.member_price : null;
-        basePrice = catMemberPrice || tournMemberPrice || tournament.registration_fee || 0;
+        // Priority for member price: category member_price > tournament member_price > category registration_fee > tournament registration_fee
+        if (catMemberPrice > 0) {
+          basePrice = catMemberPrice;
+        } else if (tournMemberPrice > 0) {
+          basePrice = tournMemberPrice;
+        } else if (catRegFee > 0) {
+          basePrice = catRegFee;
+        } else {
+          basePrice = tournRegFee;
+        }
       } else {
-        // Use non-member price: category > tournament > registration_fee
-        const catNonMemberPrice = category?.non_member_price && category.non_member_price > 0 ? category.non_member_price : null;
-        const tournNonMemberPrice = tournament.non_member_price && tournament.non_member_price > 0 ? tournament.non_member_price : null;
-        basePrice = catNonMemberPrice || tournNonMemberPrice || tournament.registration_fee || 0;
+        // Priority for non-member price: category non_member_price > tournament non_member_price > category registration_fee > tournament registration_fee
+        if (catNonMemberPrice > 0) {
+          basePrice = catNonMemberPrice;
+        } else if (tournNonMemberPrice > 0) {
+          basePrice = tournNonMemberPrice;
+        } else if (catRegFee > 0) {
+          basePrice = catRegFee;
+        } else {
+          basePrice = tournRegFee;
+        }
       }
 
       // Apply additional discount if member (but not staff, staff is already free)
@@ -1100,6 +1150,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         : basePrice;
 
       const categoryName = category?.name || null;
+
+      console.log(`[Tournament] Player "${p.name}": isMember=${isMember}, isStaff=${isStaff}, plan=${planName}, basePrice=${basePrice}, finalPrice=${finalPrice}, catMemberPrice=${catMemberPrice}, tournMemberPrice=${tournMemberPrice}, regFee=${tournRegFee}`);
 
       return {
         id: p.id,
