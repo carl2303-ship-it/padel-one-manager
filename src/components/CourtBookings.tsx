@@ -22,7 +22,8 @@ import {
   Heart,
   AlertCircle,
   TrendingUp,
-  UserCheck
+  UserCheck,
+  CreditCard
 } from 'lucide-react';
 
 interface Court {
@@ -1200,6 +1201,50 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     loadData();
   };
 
+  const handleOpenBarTabsForTournament = async () => {
+    if (!selectedTournament || !effectiveUserId) return;
+
+    const players = selectedTournament.players;
+    if (players.length === 0) {
+      alert('Nenhum jogador inscrito neste torneio.');
+      return;
+    }
+
+    // Check which players already have a tab for this tournament
+    const { data: existingTabs } = await supabase
+      .from('bar_tabs')
+      .select('player_name, player_phone')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('tournament_id', selectedTournament.id);
+
+    const existingNames = new Set(existingTabs?.map(t => t.player_name.toLowerCase()) || []);
+
+    const newPlayers = players.filter(p => !existingNames.has(p.name.toLowerCase()));
+
+    if (newPlayers.length === 0) {
+      alert('Todos os jogadores ja tem conta aberta no bar para este torneio.');
+      return;
+    }
+
+    // Create tabs for all new players
+    const tabsToCreate = newPlayers.map(p => ({
+      club_owner_id: effectiveUserId,
+      player_name: p.name,
+      player_phone: p.phone_number || null,
+      tournament_id: selectedTournament.id,
+      tournament_name: selectedTournament.name
+    }));
+
+    const { error } = await supabase.from('bar_tabs').insert(tabsToCreate);
+
+    if (error) {
+      console.error('[BarTabs] Error creating tabs:', error);
+      alert('Erro ao criar contas no bar. Verifique a consola.');
+    } else {
+      alert(`${newPlayers.length} conta(s) criada(s) no bar com sucesso!`);
+    }
+  };
+
   const handleEditBooking = async (booking: Booking) => {
     // Se for open_game, mostrar modal dedicado
     if (booking.event_type === 'open_game') {
@@ -1727,28 +1772,28 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                               ) : (
                                 // Regular Booking Layout
                                 <>
-                                  <div className="flex items-start justify-between">
-                                    <div className={`font-medium ${colors.text} truncate flex-1`}>
+                              <div className="flex items-start justify-between">
+                                <div className={`font-medium ${colors.text} truncate flex-1`}>
                                       {booking.event_type === 'match'
-                                        ? (booking.booked_by_name || 'Guest')
-                                        : (t.bookings?.[booking.event_type as keyof typeof t.bookings] || booking.event_type)
-                                      }
-                                    </div>
-                                    <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
-                                  </div>
-                                  {booking.event_type === 'match' && booking.booked_by_phone && (
-                                    <div className={`${colors.textSecondary} truncate`}>{booking.booked_by_phone}</div>
-                                  )}
-                                  {booking.notes && booking.event_type !== 'match' && (
-                                    <div className={`${colors.textSecondary} truncate text-xs`}>{booking.notes}</div>
-                                  )}
-                                  <div className="mt-1 flex items-center gap-1">
-                                    <span className={`px-1.5 py-0.5 rounded text-xs ${
-                                      booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                                    }`}>
-                                      {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
-                                    </span>
-                                  </div>
+                                    ? (booking.booked_by_name || 'Guest')
+                                    : (t.bookings?.[booking.event_type as keyof typeof t.bookings] || booking.event_type)
+                                  }
+                                </div>
+                                <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
+                              </div>
+                              {booking.event_type === 'match' && booking.booked_by_phone && (
+                                <div className={`${colors.textSecondary} truncate`}>{booking.booked_by_phone}</div>
+                              )}
+                              {booking.notes && booking.event_type !== 'match' && (
+                                <div className={`${colors.textSecondary} truncate text-xs`}>{booking.notes}</div>
+                              )}
+                              <div className="mt-1 flex items-center gap-1">
+                                <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                  booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                }`}>
+                                  {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
+                                </span>
+                              </div>
                                 </>
                               )}
                             </div>
@@ -2571,6 +2616,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       }}
                     />
                   </div>
+
+                  {/* Open bar tabs for tournament */}
+                  <button
+                    onClick={handleOpenBarTabsForTournament}
+                    className="mt-4 w-full px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center justify-center gap-2 font-medium"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    Abrir Contas no Bar para Jogadores
+                  </button>
                 </div>
               )}
             </div>
