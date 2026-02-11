@@ -266,7 +266,6 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const [searchingPlayer, setSearchingPlayer] = useState<number | null>(null);
   const [draggingBooking, setDraggingBooking] = useState<Booking | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ courtId: string; time: string } | null>(null);
-  const [openGamePlayers, setOpenGamePlayers] = useState<{ [bookingId: string]: any[] }>({});
   const [selectedOpenGame, setSelectedOpenGame] = useState<OpenGame | null>(null);
 
   const emptyPlayer: PlayerData = { name: '', phone: '', isMember: false, discount: 0, planName: '' };
@@ -342,30 +341,6 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         (b: any) => b.court?.user_id === effectiveUserId
       );
       setBookings(filteredBookings as Booking[]);
-      
-      // Load player count for open_game bookings
-      const openGameBookings = filteredBookings.filter((b: any) => b.event_type === 'open_game');
-      if (openGameBookings.length > 0) {
-        const playersMap: { [bookingId: string]: any[] } = {};
-        
-        for (const booking of openGameBookings) {
-          // Extract open_game ID from notes
-          const idMatch = booking.notes?.match(/ID:\s*([0-9a-f-]+)/i);
-          if (idMatch?.[1]) {
-            const { data: players } = await supabase
-              .from('open_game_players')
-              .select('user_id, status')
-              .eq('game_id', idMatch[1])
-              .eq('status', 'confirmed');
-            
-            if (players) {
-              playersMap[booking.id] = players;
-            }
-          }
-        }
-        
-        setOpenGamePlayers(playersMap);
-      }
     }
 
     if (settingsResult.data) {
@@ -1295,19 +1270,29 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                       Jogo Aberto
                                     </span>
                                   </div>
-                                  {openGamePlayers[booking.id] && openGamePlayers[booking.id].length > 0 && (
-                                    <div className="flex flex-wrap gap-0.5 mt-0.5">
-                                      {openGamePlayers[booking.id].map((p: any, idx: number) => (
-                                        <div
-                                          key={idx}
-                                          className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${colors.text} bg-white/60 truncate max-w-full`}
-                                          title={p.player_name || p.player_accounts?.name || 'Jogador'}
-                                        >
-                                          {(p.player_name || p.player_accounts?.name || 'Jogador').split(' ')[0]}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
+                                  {/* Show player names from booking fields */}
+                                  {(() => {
+                                    const playerNames = [
+                                      booking.player1_name,
+                                      booking.player2_name,
+                                      booking.player3_name,
+                                      booking.player4_name
+                                    ].filter(Boolean);
+                                    
+                                    return playerNames.length > 0 && (
+                                      <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                        {playerNames.map((name, idx) => (
+                                          <div
+                                            key={idx}
+                                            className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${colors.text} bg-white/60 truncate max-w-full`}
+                                            title={name}
+                                          >
+                                            {name.split(' ')[0]}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="mt-auto flex items-center justify-between">
                                     <span className={`px-1.5 py-0.5 rounded text-[9px] ${
                                       booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
