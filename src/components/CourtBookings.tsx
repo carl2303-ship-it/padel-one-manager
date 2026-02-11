@@ -147,6 +147,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const [searchingPlayer, setSearchingPlayer] = useState<number | null>(null);
   const [draggingBooking, setDraggingBooking] = useState<Booking | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ courtId: string; time: string } | null>(null);
+  const [openGamePlayers, setOpenGamePlayers] = useState<{ [bookingId: string]: any[] }>({});
 
   const emptyPlayer: PlayerData = { name: '', phone: '', isMember: false, discount: 0, planName: '' };
   const [players, setPlayers] = useState<PlayerData[]>([
@@ -221,6 +222,34 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         (b: any) => b.court?.user_id === effectiveUserId
       );
       setBookings(filteredBookings as Booking[]);
+      
+      // Load players for open_game bookings
+      const openGameBookings = filteredBookings.filter((b: any) => b.event_type === 'open_game');
+      if (openGameBookings.length > 0) {
+        const playersMap: { [bookingId: string]: any[] } = {};
+        
+        for (const booking of openGameBookings) {
+          // Extract open_game ID from notes
+          const idMatch = booking.notes?.match(/ID:\s*([0-9a-f-]+)/i);
+          if (idMatch?.[1]) {
+            const { data: players } = await supabase
+              .from('open_game_players')
+              .select(`
+                player_account_id,
+                player_name,
+                player_phone,
+                player_accounts(name, phone_number, level, category)
+              `)
+              .eq('game_id', idMatch[1]);
+            
+            if (players) {
+              playersMap[booking.id] = players;
+            }
+          }
+        }
+        
+        setOpenGamePlayers(playersMap);
+      }
     }
 
     if (settingsResult.data) {
@@ -793,32 +822,66 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                 isDragging ? `opacity-50 ${colors.bgDragging}` : `${colors.bg} ${colors.bgHover}`
                               }`}
                             >
-                              <div className="flex items-start justify-between">
-                                <div className={`font-medium ${colors.text} truncate flex-1`}>
-                                  {booking.event_type === 'tournament'
-                                    ? (booking.booked_by_name || 'Tournament')
-                                    : booking.event_type === 'open_game'
-                                    ? `🎮 ${booking.booked_by_name || 'Jogo Aberto'}`
-                                    : booking.event_type === 'match'
-                                    ? (booking.booked_by_name || 'Guest')
-                                    : (t.bookings?.[booking.event_type as keyof typeof t.bookings] || booking.event_type)
-                                  }
+                              {booking.event_type === 'open_game' ? (
+                                // Open Game Layout
+                                <div className="flex flex-col h-full gap-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-sm">🎾</span>
+                                    <span className={`font-semibold ${colors.text} text-[10px] leading-tight`}>
+                                      Jogo Aberto
+                                    </span>
+                                  </div>
+                                  {openGamePlayers[booking.id] && openGamePlayers[booking.id].length > 0 && (
+                                    <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                      {openGamePlayers[booking.id].map((p: any, idx: number) => (
+                                        <div
+                                          key={idx}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${colors.text} bg-white/60 truncate max-w-full`}
+                                          title={p.player_name || p.player_accounts?.name || 'Jogador'}
+                                        >
+                                          {(p.player_name || p.player_accounts?.name || 'Jogador').split(' ')[0]}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div className="mt-auto flex items-center justify-between">
+                                    <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                      booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
+                                    </span>
+                                    <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
+                                  </div>
                                 </div>
-                                <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
-                              </div>
-                              {booking.event_type === 'match' && booking.booked_by_phone && (
-                                <div className={`${colors.textSecondary} truncate`}>{booking.booked_by_phone}</div>
+                              ) : (
+                                // Regular Booking Layout
+                                <>
+                                  <div className="flex items-start justify-between">
+                                    <div className={`font-medium ${colors.text} truncate flex-1`}>
+                                      {booking.event_type === 'tournament'
+                                        ? (booking.booked_by_name || 'Tournament')
+                                        : booking.event_type === 'match'
+                                        ? (booking.booked_by_name || 'Guest')
+                                        : (t.bookings?.[booking.event_type as keyof typeof t.bookings] || booking.event_type)
+                                      }
+                                    </div>
+                                    <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
+                                  </div>
+                                  {booking.event_type === 'match' && booking.booked_by_phone && (
+                                    <div className={`${colors.textSecondary} truncate`}>{booking.booked_by_phone}</div>
+                                  )}
+                                  {booking.notes && booking.event_type !== 'match' && (
+                                    <div className={`${colors.textSecondary} truncate text-xs`}>{booking.notes}</div>
+                                  )}
+                                  <div className="mt-1 flex items-center gap-1">
+                                    <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                      booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
+                                    </span>
+                                  </div>
+                                </>
                               )}
-                              {booking.notes && booking.event_type !== 'match' && (
-                                <div className={`${colors.textSecondary} truncate text-xs`}>{booking.notes}</div>
-                              )}
-                              <div className="mt-1 flex items-center gap-1">
-                                <span className={`px-1.5 py-0.5 rounded text-xs ${
-                                  booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                                }`}>
-                                  {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
-                                </span>
-                              </div>
                             </div>
                           </div>
                         );
