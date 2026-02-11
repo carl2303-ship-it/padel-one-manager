@@ -671,58 +671,106 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     calculateFinancialSummary();
   }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics]);
 
+  const loadPlayerTransactions = async () => {
+    if (!effectiveUserId) return;
+
+    const { startDate, endDate } = getDateRange();
+
+    const { data: transactions } = await supabase
+      .from('player_transactions')
+      .select('*')
+      .eq('club_owner_id', effectiveUserId)
+      .gte('transaction_date', startDate)
+      .lte('transaction_date', endDate);
+
+    return transactions || [];
+  };
+
   useEffect(() => {
-    const customerMap = new Map<string, CustomerMetric>();
-    customerMetrics.forEach(c => customerMap.set(c.customerName.toLowerCase(), c));
+    const aggregatePlayerSpending = async () => {
+      const customerMap = new Map<string, CustomerMetric>();
+      customerMetrics.forEach(c => customerMap.set(c.customerName.toLowerCase(), c));
 
-    const playerMap = new Map<string, PlayerTotalSpending>();
+      const playerMap = new Map<string, PlayerTotalSpending>();
 
-    memberBookings.forEach(member => {
-      const key = member.memberName.toLowerCase();
-      playerMap.set(key, {
-        playerName: member.memberName,
-        bookingsSpent: member.totalSpent,
-        academySpent: 0,
-        barSpent: 0,
-        totalSpent: member.totalSpent
-      });
-    });
-
-    studentMetrics.forEach(student => {
-      const key = student.studentName.toLowerCase();
-      const existing = playerMap.get(key);
-      if (existing) {
-        existing.academySpent = student.totalSpent;
-        existing.totalSpent += student.totalSpent;
-      } else {
+      // Add regular bookings from court_bookings
+      memberBookings.forEach(member => {
+        const key = member.memberName.toLowerCase();
         playerMap.set(key, {
-          playerName: student.studentName,
-          bookingsSpent: 0,
-          academySpent: student.totalSpent,
-          barSpent: 0,
-          totalSpent: student.totalSpent
-        });
-      }
-    });
-
-    customerMap.forEach((customer, key) => {
-      const existing = playerMap.get(key);
-      if (existing) {
-        existing.barSpent = customer.totalSpent;
-        existing.totalSpent += customer.totalSpent;
-      } else {
-        playerMap.set(key, {
-          playerName: customer.customerName,
-          bookingsSpent: 0,
+          playerName: member.memberName,
+          bookingsSpent: member.totalSpent,
           academySpent: 0,
-          barSpent: customer.totalSpent,
-          totalSpent: customer.totalSpent
+          barSpent: 0,
+          totalSpent: member.totalSpent
         });
-      }
-    });
+      });
 
-    setPlayerTotalSpending(Array.from(playerMap.values()).sort((a, b) => b.totalSpent - a.totalSpent));
-  }, [memberBookings, studentMetrics, customerMetrics]);
+      // Add player_transactions (open games with individual pricing)
+      const transactions = await loadPlayerTransactions();
+      transactions.forEach(tx => {
+        const key = tx.player_name.toLowerCase();
+        const existing = playerMap.get(key);
+        
+        if (existing) {
+          if (tx.transaction_type === 'open_game' || tx.transaction_type === 'booking') {
+            existing.bookingsSpent += Number(tx.amount);
+          } else if (tx.transaction_type === 'academy') {
+            existing.academySpent += Number(tx.amount);
+          } else if (tx.transaction_type === 'bar') {
+            existing.barSpent += Number(tx.amount);
+          }
+          existing.totalSpent += Number(tx.amount);
+        } else {
+          playerMap.set(key, {
+            playerName: tx.player_name,
+            bookingsSpent: tx.transaction_type === 'open_game' || tx.transaction_type === 'booking' ? Number(tx.amount) : 0,
+            academySpent: tx.transaction_type === 'academy' ? Number(tx.amount) : 0,
+            barSpent: tx.transaction_type === 'bar' ? Number(tx.amount) : 0,
+            totalSpent: Number(tx.amount)
+          });
+        }
+      });
+
+      // Add academy from class bookings
+      studentMetrics.forEach(student => {
+        const key = student.studentName.toLowerCase();
+        const existing = playerMap.get(key);
+        if (existing) {
+          existing.academySpent += student.totalSpent;
+          existing.totalSpent += student.totalSpent;
+        } else {
+          playerMap.set(key, {
+            playerName: student.studentName,
+            bookingsSpent: 0,
+            academySpent: student.totalSpent,
+            barSpent: 0,
+            totalSpent: student.totalSpent
+          });
+        }
+      });
+
+      // Add bar from orders
+      customerMap.forEach((customer, key) => {
+        const existing = playerMap.get(key);
+        if (existing) {
+          existing.barSpent += customer.totalSpent;
+          existing.totalSpent += customer.totalSpent;
+        } else {
+          playerMap.set(key, {
+            playerName: customer.customerName,
+            bookingsSpent: 0,
+            academySpent: 0,
+            barSpent: customer.totalSpent,
+            totalSpent: customer.totalSpent
+          });
+        }
+      });
+
+      setPlayerTotalSpending(Array.from(playerMap.values()).sort((a, b) => b.totalSpent - a.totalSpent));
+    };
+
+    aggregatePlayerSpending();
+  }, [memberBookings, studentMetrics, customerMetrics, dateFilter]);
 
   const handleAddSponsor = async (e: React.FormEvent) => {
     e.preventDefault();
