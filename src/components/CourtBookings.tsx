@@ -744,67 +744,91 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const handleTogglePlayerPayment = async (playerId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
     
+    console.log('[Payment] Toggling payment:', { playerId, currentStatus, newStatus });
+    
     // Update payment status
-    const { error } = await supabase
+    const { error, data: updateData } = await supabase
       .from('open_game_players')
       .update({ payment_status: newStatus })
-      .eq('id', playerId);
+      .eq('id', playerId)
+      .select();
+
+    console.log('[Payment] Update result:', { error, updateData });
 
     if (!error && selectedOpenGame) {
       const player = selectedOpenGame.players.find(p => p.id === playerId);
+      console.log('[Payment] Player found:', player);
+      
       if (player) {
-        const normalizedPhone = player.phone?.replace(/\s+/g, '').startsWith('+')
-          ? player.phone.replace(/\s+/g, '')
-          : '+' + player.phone?.replace(/\s+/g, '');
+        const rawPhone = player.phone_number || '';
+        const normalizedPhone = rawPhone.replace(/\s+/g, '').startsWith('+')
+          ? rawPhone.replace(/\s+/g, '')
+          : rawPhone ? '+' + rawPhone.replace(/\s+/g, '') : '';
 
-        // 1. Create or update player_account
-        const { data: existingAccount } = await supabase
-          .from('player_accounts')
-          .select('id, user_id')
-          .eq('phone_number', normalizedPhone)
-          .maybeSingle();
+        console.log('[Payment] Phone:', normalizedPhone, 'Price:', player.price);
 
-        let playerAccountId = existingAccount?.id;
-
-        if (!existingAccount) {
-          // Create new player account
-          const { data: newAccount } = await supabase
+        // 1. Find existing player_account
+        let playerAccountId: string | null = null;
+        if (normalizedPhone) {
+          const { data: existingAccount, error: accError } = await supabase
             .from('player_accounts')
-            .insert({
-              phone_number: normalizedPhone,
-              name: player.name,
-              level: player.level,
-              player_category: player.category
-            })
-            .select('id')
-            .single();
-          
-          playerAccountId = newAccount?.id;
+            .select('id, user_id')
+            .eq('phone_number', normalizedPhone)
+            .maybeSingle();
+
+          console.log('[Payment] Existing account:', { existingAccount, accError });
+          playerAccountId = existingAccount?.id || null;
+
+          if (!existingAccount) {
+            // Create new player account
+            const { data: newAccount, error: createError } = await supabase
+              .from('player_accounts')
+              .insert({
+                phone_number: normalizedPhone,
+                name: player.name || 'Jogador'
+              })
+              .select('id')
+              .single();
+            
+            console.log('[Payment] New account:', { newAccount, createError });
+            playerAccountId = newAccount?.id || null;
+          }
         }
 
         if (newStatus === 'paid') {
           // 2. Create player_transaction with correct individual price
-          await supabase
+          const txData: any = {
+            club_owner_id: user?.id,
+            player_name: player.name || 'Jogador',
+            player_phone: normalizedPhone || 'unknown',
+            transaction_type: 'open_game',
+            amount: player.price || 0,
+            reference_id: selectedOpenGame.id,
+            reference_type: 'open_game',
+            notes: `Jogo Aberto: ${getGameTypeLabel(selectedOpenGame.game_type)} - ${selectedOpenGame.court_name || 'Campo'}`
+          };
+          if (playerAccountId) {
+            txData.player_account_id = playerAccountId;
+          }
+          console.log('[Payment] Creating transaction:', txData);
+          
+          const { data: txResult, error: txError } = await supabase
             .from('player_transactions')
-            .insert({
-              club_owner_id: user?.id,
-              player_account_id: playerAccountId,
-              player_name: player.name,
-              player_phone: normalizedPhone,
-              transaction_type: 'open_game',
-              amount: player.finalPrice,
-              reference_id: selectedOpenGame.id,
-              reference_type: 'open_game',
-              notes: `Jogo Aberto: ${selectedOpenGame.gameTypeName} - ${selectedOpenGame.courtName}`
-            });
+            .insert(txData)
+            .select();
+          
+          console.log('[Payment] Transaction result:', { txResult, txError });
         } else {
           // 3. Remove transaction when payment is cancelled
-          await supabase
+          const { data: delResult, error: delError } = await supabase
             .from('player_transactions')
             .delete()
             .eq('reference_id', selectedOpenGame.id)
             .eq('reference_type', 'open_game')
-            .eq('player_name', player.name);
+            .eq('player_name', player.name || '')
+            .select();
+          
+          console.log('[Payment] Delete result:', { delResult, delError });
         }
       }
 

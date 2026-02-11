@@ -674,17 +674,18 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
   }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics]);
 
   const loadPlayerTransactions = async () => {
-    if (!effectiveUserId) return;
+    if (!effectiveUserId) return [];
 
     const { startDate, endDate } = getDateRange();
 
-    const { data: transactions } = await supabase
+    const { data: transactions, error } = await supabase
       .from('player_transactions')
       .select('*')
       .eq('club_owner_id', effectiveUserId)
       .gte('transaction_date', startDate)
       .lte('transaction_date', endDate);
 
+    console.log('[Metrics] Player transactions loaded:', { transactions, error, effectiveUserId, startDate, endDate });
     return transactions || [];
   };
 
