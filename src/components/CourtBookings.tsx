@@ -89,6 +89,8 @@ interface TournamentPlayerInfo {
   payment_status: string;
   category_name: string | null;
   is_member: boolean;
+  is_staff: boolean;
+  plan_name: string | null;
   discount_percent: number;
   final_price: number;
 }
@@ -995,6 +997,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           payment_status: p.payment_status || 'pending',
           category_name: null,
           is_member: false,
+          is_staff: false,
+          plan_name: null,
           discount_percent: 0,
           final_price: 0,
         }));
@@ -1063,22 +1067,34 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       const name = (p.name || '').toLowerCase().trim();
       const memberInfo = memberMap.get(phone) || memberMap.get(name);
       const isMember = !!memberInfo;
+      const planName = memberInfo?.planName || null;
       const discountPercent = memberInfo?.discount || 0;
+      
+      // Check if this member is Staff (exempt from payment)
+      const isStaff = isMember && planName ? planName.toLowerCase().includes('staff') : false;
 
       // Get the price for this player
       const category = p.category_id ? categoryMap.get(p.category_id) : null;
       let basePrice = tournament.registration_fee || 0;
       
-      if (isMember) {
-        // Use member price: category > tournament > 0
-        basePrice = category?.member_price ?? tournament.member_price ?? tournament.registration_fee ?? 0;
+      if (isStaff) {
+        // Staff members are exempt from tournament payment
+        basePrice = 0;
+      } else if (isMember) {
+        // Use member price: category > tournament > registration_fee
+        // Use || instead of ?? because DEFAULT 0 in DB means "not set"
+        const catMemberPrice = category?.member_price && category.member_price > 0 ? category.member_price : null;
+        const tournMemberPrice = tournament.member_price && tournament.member_price > 0 ? tournament.member_price : null;
+        basePrice = catMemberPrice || tournMemberPrice || tournament.registration_fee || 0;
       } else {
         // Use non-member price: category > tournament > registration_fee
-        basePrice = category?.non_member_price ?? tournament.non_member_price ?? tournament.registration_fee ?? 0;
+        const catNonMemberPrice = category?.non_member_price && category.non_member_price > 0 ? category.non_member_price : null;
+        const tournNonMemberPrice = tournament.non_member_price && tournament.non_member_price > 0 ? tournament.non_member_price : null;
+        basePrice = catNonMemberPrice || tournNonMemberPrice || tournament.registration_fee || 0;
       }
 
-      // Apply additional discount if member
-      const finalPrice = isMember && discountPercent > 0 
+      // Apply additional discount if member (but not staff, staff is already free)
+      const finalPrice = !isStaff && isMember && discountPercent > 0 
         ? basePrice * (1 - discountPercent / 100) 
         : basePrice;
 
@@ -1089,9 +1105,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         name: p.name,
         phone_number: p.phone_number,
         email: p.email,
-        payment_status: p.payment_status || 'pending',
+        payment_status: isStaff ? 'exempt' : (p.payment_status || 'pending'),
         category_name: categoryName,
         is_member: isMember,
+        is_staff: isStaff,
+        plan_name: planName,
         discount_percent: discountPercent,
         final_price: Math.round(finalPrice * 100) / 100,
       };
@@ -2448,20 +2466,24 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       >
                         {/* Player Avatar */}
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold ${
-                          player.is_member ? 'bg-green-500' : 'bg-gray-400'
+                          player.is_staff ? 'bg-blue-500' : player.is_member ? 'bg-green-500' : 'bg-gray-400'
                         }`}>
                           {player.name.charAt(0).toUpperCase()}
                         </div>
 
                         {/* Player Info */}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-medium text-gray-900 truncate">{player.name}</p>
-                            {player.is_member && (
-                              <span className="text-[10px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
-                                MEMBRO
+                            {player.is_staff ? (
+                              <span className="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-full">
+                                STAFF
                               </span>
-                            )}
+                            ) : player.is_member ? (
+                              <span className="text-[10px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
+                                {player.plan_name || 'MEMBRO'}
+                              </span>
+                            ) : null}
                             {player.category_name && (
                               <span className="text-[10px] font-medium text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-full">
                                 {player.category_name}
@@ -2475,11 +2497,17 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
                         {/* Price */}
                         <div className="text-right mr-2">
-                          <p className={`text-sm font-bold ${player.final_price === 0 ? 'text-green-600' : 'text-gray-900'}`}>
-                            {player.final_price === 0 ? 'Grátis' : `${player.final_price}€`}
-                          </p>
-                          {player.is_member && player.discount_percent > 0 && (
-                            <p className="text-[10px] text-green-600">-{player.discount_percent}%</p>
+                          {player.is_staff ? (
+                            <p className="text-sm font-bold text-blue-600">Isento</p>
+                          ) : (
+                            <>
+                              <p className={`text-sm font-bold ${player.final_price === 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                                {player.final_price === 0 ? 'Grátis' : `${player.final_price}€`}
+                              </p>
+                              {player.is_member && player.discount_percent > 0 && (
+                                <p className="text-[10px] text-green-600">-{player.discount_percent}%</p>
+                              )}
+                            </>
                           )}
                         </div>
 
