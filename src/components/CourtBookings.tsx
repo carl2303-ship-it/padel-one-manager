@@ -878,8 +878,6 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           // Update booking payment status
           if (allConfirmed.length > 0 && allPaid) {
             bookingUpdate.payment_status = 'paid';
-          } else if (allConfirmed.some(p => p.payment_status === 'paid')) {
-            bookingUpdate.payment_status = 'partial';
           } else {
             bookingUpdate.payment_status = 'pending';
           }
