@@ -748,12 +748,79 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const handleTogglePlayerPayment = async (playerId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
     
+    // Update payment status
     const { error } = await supabase
       .from('open_game_players')
       .update({ payment_status: newStatus })
       .eq('id', playerId);
 
     if (!error && selectedOpenGame) {
+      // If marking as paid, add player to club members and update court_booking
+      if (newStatus === 'paid') {
+        const player = selectedOpenGame.players.find(p => p.id === playerId);
+        if (player) {
+          // 1. Create or update player_account
+          const normalizedPhone = player.phone?.replace(/\s+/g, '').startsWith('+')
+            ? player.phone.replace(/\s+/g, '')
+            : '+' + player.phone?.replace(/\s+/g, '');
+
+          const { data: existingAccount } = await supabase
+            .from('player_accounts')
+            .select('id, user_id')
+            .eq('phone_number', normalizedPhone)
+            .maybeSingle();
+
+          let playerAccountId = existingAccount?.id;
+
+          if (!existingAccount) {
+            // Create new player account
+            const { data: newAccount } = await supabase
+              .from('player_accounts')
+              .insert({
+                phone_number: normalizedPhone,
+                name: player.name,
+                level: player.level,
+                player_category: player.category
+              })
+              .select('id')
+              .single();
+            
+            playerAccountId = newAccount?.id;
+          }
+
+          // 2. Update court_booking with player names for metrics
+          // Get confirmed players
+          const confirmedPlayers = selectedOpenGame.players
+            .filter(p => p.status === 'confirmed')
+            .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime());
+
+          // Find the booking for this game
+          const { data: gameBookings } = await supabase
+            .from('court_bookings')
+            .select('id')
+            .eq('event_type', 'open_game')
+            .ilike('notes', `%${selectedOpenGame.id}%`)
+            .limit(1);
+
+          if (gameBookings && gameBookings.length > 0) {
+            const bookingUpdate: any = {};
+            confirmedPlayers.forEach((p, idx) => {
+              if (idx < 4) {
+                bookingUpdate[`player${idx + 1}_name`] = p.name;
+                bookingUpdate[`player${idx + 1}_phone`] = p.phone;
+                bookingUpdate[`player${idx + 1}_is_member`] = p.isMember;
+                bookingUpdate[`player${idx + 1}_discount`] = p.discountPercent || 0;
+              }
+            });
+
+            await supabase
+              .from('court_bookings')
+              .update(bookingUpdate)
+              .eq('id', gameBookings[0].id);
+          }
+        }
+      }
+
       // Reload the game details to refresh
       await loadOpenGameDetails(selectedOpenGame.id);
     }
