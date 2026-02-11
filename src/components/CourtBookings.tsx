@@ -108,10 +108,15 @@ interface OpenGamePlayer {
   player_account_id: string | null;
   status: 'confirmed' | 'pending' | 'rejected';
   position: number | null;
+  payment_status?: 'pending' | 'paid';
   name?: string;
   avatar_url?: string | null;
   level?: number | null;
   player_category?: string | null;
+  phone_number?: string | null;
+  is_member?: boolean;
+  discount_percent?: number;
+  price?: number;
 }
 
 const normalizePhone = (phone: string): string => {
@@ -593,12 +598,12 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         .eq('game_id', gameId);
 
       // Get player details from player_accounts
-      let playerDetailsMap: Record<string, { name: string; avatar_url: string | null; level: number | null; player_category: string | null }> = {};
+      let playerDetailsMap: Record<string, { name: string; avatar_url: string | null; level: number | null; player_category: string | null; phone_number: string | null }> = {};
       if (playersData && playersData.length > 0) {
         const userIds = [...new Set(playersData.map(p => p.user_id))];
         const { data: accounts } = await supabase
           .from('player_accounts')
-          .select('user_id, name, avatar_url, level, player_category')
+          .select('user_id, name, avatar_url, level, player_category, phone_number')
           .in('user_id', userIds);
         if (accounts) {
           accounts.forEach(a => {
@@ -606,7 +611,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               name: a.name,
               avatar_url: a.avatar_url,
               level: a.level,
-              player_category: a.player_category
+              player_category: a.player_category,
+              phone_number: a.phone_number
             };
           });
         }
@@ -615,14 +621,54 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       // Get creator details
       const creatorDetails = playerDetailsMap[gameData.creator_user_id];
 
-      // Map players with details
-      const players: OpenGamePlayer[] = (playersData || []).map(p => ({
-        ...p,
-        name: playerDetailsMap[p.user_id]?.name || 'Jogador',
-        avatar_url: playerDetailsMap[p.user_id]?.avatar_url,
-        level: playerDetailsMap[p.user_id]?.level,
-        player_category: playerDetailsMap[p.user_id]?.player_category
-      }));
+      // Check which players are club members
+      const playerPhones = Object.values(playerDetailsMap)
+        .map(p => p.phone_number)
+        .filter(Boolean)
+        .map(normalizePhone);
+      
+      let memberDiscountsMap: Record<string, number> = {};
+      if (playerPhones.length > 0) {
+        const { data: members } = await supabase
+          .from('member_subscriptions')
+          .select(`
+            member_phone,
+            plan:membership_plans(court_discount_percent)
+          `)
+          .eq('club_owner_id', effectiveUserId)
+          .eq('status', 'active')
+          .in('member_phone', playerPhones);
+        
+        if (members) {
+          members.forEach((m: any) => {
+            if (m.member_phone && m.plan) {
+              memberDiscountsMap[normalizePhone(m.member_phone)] = m.plan.court_discount_percent || 0;
+            }
+          });
+        }
+      }
+
+      // Map players with details, member status, and calculate prices
+      const basePrice = gameData.price_per_player || 0;
+      const players: OpenGamePlayer[] = (playersData || []).map(p => {
+        const playerDetails = playerDetailsMap[p.user_id];
+        const playerPhone = playerDetails?.phone_number ? normalizePhone(playerDetails.phone_number) : null;
+        const isMember = playerPhone ? memberDiscountsMap.hasOwnProperty(playerPhone) : false;
+        const discountPercent = isMember && playerPhone ? memberDiscountsMap[playerPhone] : 0;
+        const finalPrice = basePrice - (basePrice * discountPercent / 100);
+        
+        return {
+          ...p,
+          name: playerDetails?.name || 'Jogador',
+          avatar_url: playerDetails?.avatar_url,
+          level: playerDetails?.level,
+          player_category: playerDetails?.player_category,
+          phone_number: playerDetails?.phone_number,
+          is_member: isMember,
+          discount_percent: discountPercent,
+          price: finalPrice
+        };
+      });
 
       const openGame: OpenGame = {
         ...gameData,
@@ -696,6 +742,20 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     if (!error) {
       setSelectedOpenGame(null);
       loadData();
+    }
+  };
+
+  const handleTogglePlayerPayment = async (playerId: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    
+    const { error } = await supabase
+      .from('open_game_players')
+      .update({ payment_status: newStatus })
+      .eq('id', playerId);
+
+    if (!error && selectedOpenGame) {
+      // Reload the game details to refresh
+      await loadOpenGameDetails(selectedOpenGame.id);
     }
   };
 
@@ -1621,7 +1681,14 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                               </div>
                             )}
                             <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-900">{player.name}</p>
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="text-sm font-medium text-gray-900">{player.name}</p>
+                                {player.is_member && (
+                                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                    Membro
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex items-center gap-2">
                                 {player.level !== null && player.level !== undefined && (
                                   <span
@@ -1635,10 +1702,31 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                   <span className="text-xs text-gray-500">{player.player_category}</span>
                                 )}
                               </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className={`text-sm font-semibold ${player.is_member ? 'text-emerald-600' : 'text-gray-900'}`}>
+                                  €{player.price?.toFixed(2) || '0.00'}
+                                </span>
+                                {player.is_member && player.discount_percent && player.discount_percent > 0 && (
+                                  <span className="text-[10px] text-emerald-600">
+                                    (-{player.discount_percent}%)
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-1 rounded-full">
-                              Confirmado
-                            </span>
+                            <button
+                              onClick={() => handleTogglePlayerPayment(player.id, player.payment_status || 'pending')}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors ${
+                                player.payment_status === 'paid'
+                                  ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              }`}
+                              title={player.payment_status === 'paid' ? 'Marcar como não pago' : 'Marcar como pago'}
+                            >
+                              <Check className={`w-4 h-4 ${player.payment_status === 'paid' ? 'opacity-100' : 'opacity-30'}`} />
+                              <span className="text-xs font-medium">
+                                {player.payment_status === 'paid' ? 'Pago' : 'Pendente'}
+                              </span>
+                            </button>
                           </div>
                         ))}
                     </div>
