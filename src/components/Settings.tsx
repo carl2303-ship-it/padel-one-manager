@@ -24,6 +24,8 @@ export default function Settings() {
 
   const [bookingStartTime, setBookingStartTime] = useState('08:00');
   const [bookingEndTime, setBookingEndTime] = useState('22:00');
+  const [bookingSlotDuration, setBookingSlotDuration] = useState(90);
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState(7);
   const [hoursSaving, setHoursSaving] = useState(false);
   const [hoursSuccess, setHoursSuccess] = useState('');
 
@@ -37,7 +39,7 @@ export default function Settings() {
     if (!user) return;
     const { data } = await supabase
       .from('user_logo_settings')
-      .select('logo_url, booking_start_time, booking_end_time')
+      .select('logo_url, booking_start_time, booking_end_time, booking_slot_duration, max_advance_days')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -45,6 +47,8 @@ export default function Settings() {
       if (data.logo_url) setLogoUrl(data.logo_url);
       if (data.booking_start_time) setBookingStartTime(data.booking_start_time);
       if (data.booking_end_time) setBookingEndTime(data.booking_end_time);
+      if (data.booking_slot_duration) setBookingSlotDuration(data.booking_slot_duration);
+      if (data.max_advance_days) setMaxAdvanceDays(data.max_advance_days);
     }
   };
 
@@ -58,7 +62,9 @@ export default function Settings() {
       .upsert({
         user_id: user.id,
         booking_start_time: bookingStartTime,
-        booking_end_time: bookingEndTime
+        booking_end_time: bookingEndTime,
+        booking_slot_duration: bookingSlotDuration,
+        max_advance_days: maxAdvanceDays
       }, { onConflict: 'user_id' });
 
     if (!error) {
@@ -286,6 +292,36 @@ export default function Settings() {
                   >
                     {timeOptions.map(time => (
                       <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t.settings?.slotDuration || 'Slot Duration'}
+                  </label>
+                  <select
+                    value={bookingSlotDuration}
+                    onChange={(e) => setBookingSlotDuration(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value={60}>60 min (1h)</option>
+                    <option value={90}>90 min (1h30)</option>
+                    <option value={120}>120 min (2h)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t.settings?.maxAdvanceDays || 'Max Advance Booking (days)'}
+                  </label>
+                  <select
+                    value={maxAdvanceDays}
+                    onChange={(e) => setMaxAdvanceDays(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {[3, 5, 7, 10, 14].map(d => (
+                      <option key={d} value={d}>{d} {t.settings?.days || 'days'}</option>
                     ))}
                   </select>
                 </div>
