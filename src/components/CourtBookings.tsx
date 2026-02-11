@@ -61,7 +61,36 @@ interface Booking {
   payment_status: string;
   notes: string | null;
   event_type: string;
+  tournament_id?: string | null;
+  tournament_match_id?: string | null;
   court?: Court;
+}
+
+interface TournamentDetails {
+  id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  format: string;
+  registration_fee: number;
+  member_price: number | null;
+  non_member_price: number | null;
+  allow_club_payment: boolean;
+  club_id: string | null;
+  players: TournamentPlayerInfo[];
+}
+
+interface TournamentPlayerInfo {
+  id: string;
+  name: string;
+  phone_number: string | null;
+  email: string | null;
+  payment_status: string;
+  category_name: string | null;
+  is_member: boolean;
+  discount_percent: number;
+  final_price: number;
 }
 
 interface MemberMatch {
@@ -267,6 +296,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const [draggingBooking, setDraggingBooking] = useState<Booking | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ courtId: string; time: string } | null>(null);
   const [selectedOpenGame, setSelectedOpenGame] = useState<OpenGame | null>(null);
+  const [selectedTournament, setSelectedTournament] = useState<TournamentDetails | null>(null);
+  const [tournamentSummaries, setTournamentSummaries] = useState<Map<string, { playerCount: number; paidCount: number; playerNames: string[] }>>(new Map());
 
   const emptyPlayer: PlayerData = { name: '', phone: '', isMember: false, discount: 0, planName: '' };
   const [players, setPlayers] = useState<PlayerData[]>([
@@ -341,6 +372,36 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         (b: any) => b.court?.user_id === effectiveUserId
       );
       setBookings(filteredBookings as Booking[]);
+
+      // Pre-fetch tournament summaries for calendar cards
+      const tournamentIds = [...new Set(
+        filteredBookings
+          .filter((b: any) => b.event_type === 'tournament' && b.tournament_id)
+          .map((b: any) => b.tournament_id as string)
+      )];
+
+      if (tournamentIds.length > 0) {
+        const { data: tournamentPlayers } = await supabase
+          .from('players')
+          .select('tournament_id, name, payment_status')
+          .in('tournament_id', tournamentIds);
+
+        const summaryMap = new Map<string, { playerCount: number; paidCount: number; playerNames: string[] }>();
+        tournamentIds.forEach(tid => summaryMap.set(tid, { playerCount: 0, paidCount: 0, playerNames: [] }));
+
+        (tournamentPlayers || []).forEach((p: any) => {
+          const summary = summaryMap.get(p.tournament_id);
+          if (summary) {
+            summary.playerCount++;
+            summary.playerNames.push(p.name);
+            if (p.payment_status === 'paid') summary.paidCount++;
+          }
+        });
+
+        setTournamentSummaries(summaryMap);
+      } else {
+        setTournamentSummaries(new Map());
+      }
     }
 
     if (settingsResult.data) {
@@ -874,12 +935,288 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   };
 
+  // =============================================
+  // TOURNAMENT DETAILS
+  // =============================================
+  const loadTournamentDetails = async (tournamentId: string) => {
+    if (!effectiveUserId) return;
+
+    // 1. Fetch tournament data (try with new columns first, fallback to basic columns)
+    let tournament: any = null;
+    let tournamentError: any = null;
+
+    const { data: fullTournament, error: fullError } = await supabase
+      .from('tournaments')
+      .select('id, name, start_date, end_date, status, format, registration_fee, member_price, non_member_price, allow_club_payment, club_id')
+      .eq('id', tournamentId)
+      .maybeSingle();
+
+    if (fullError && fullError.code === '42703') {
+      // Column doesn't exist yet - try without new columns
+      console.warn('[Tournament] New columns not yet available, using basic query');
+      const { data: basicTournament, error: basicError } = await supabase
+        .from('tournaments')
+        .select('id, name, start_date, end_date, status, format, registration_fee, club_id')
+        .eq('id', tournamentId)
+        .maybeSingle();
+      
+      if (basicTournament) {
+        tournament = {
+          ...basicTournament,
+          member_price: null,
+          non_member_price: null,
+          allow_club_payment: false,
+        };
+      }
+      tournamentError = basicError;
+    } else {
+      tournament = fullTournament;
+      tournamentError = fullError;
+    }
+
+    if (!tournament) {
+      console.error('[Tournament] Tournament not found or access denied:', tournamentId, tournamentError);
+      
+      // Fallback: try to get basic info from the booking itself
+      const matchingBooking = bookings.find(b => b.tournament_id === tournamentId);
+      if (matchingBooking) {
+        // Fetch players directly - they may be accessible even if tournament isn't
+        const { data: fallbackPlayers } = await supabase
+          .from('players')
+          .select('id, name, phone_number, email, payment_status, category_id')
+          .eq('tournament_id', tournamentId)
+          .order('name');
+
+        const playerInfos: TournamentPlayerInfo[] = (fallbackPlayers || []).map(p => ({
+          id: p.id,
+          name: p.name,
+          phone_number: p.phone_number,
+          email: p.email,
+          payment_status: p.payment_status || 'pending',
+          category_name: null,
+          is_member: false,
+          discount_percent: 0,
+          final_price: 0,
+        }));
+
+        setSelectedTournament({
+          id: tournamentId,
+          name: matchingBooking.booked_by_name || 'Torneio',
+          start_date: new Date(matchingBooking.start_time).toISOString().split('T')[0],
+          end_date: new Date(matchingBooking.end_time).toISOString().split('T')[0],
+          status: 'active',
+          format: '',
+          registration_fee: 0,
+          member_price: null,
+          non_member_price: null,
+          allow_club_payment: false,
+          club_id: null,
+          players: playerInfos,
+        });
+        return;
+      }
+      
+      alert('Não foi possível carregar os detalhes do torneio. Verifique se o torneio está associado ao seu clube.');
+      return;
+    }
+
+    // 2. Fetch all players in this tournament
+    const { data: players } = await supabase
+      .from('players')
+      .select('id, name, phone_number, email, payment_status, category_id')
+      .eq('tournament_id', tournamentId)
+      .order('name');
+
+    // 3. Fetch categories for this tournament
+    const { data: categories } = await supabase
+      .from('tournament_categories')
+      .select('id, name, member_price, non_member_price, registration_fee')
+      .eq('tournament_id', tournamentId);
+
+    // 4. Fetch active member subscriptions for this club
+    const { data: memberSubs } = await supabase
+      .from('member_subscriptions')
+      .select('member_name, member_phone, plan:membership_plans(name, court_discount_percent)')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('status', 'active');
+
+    // 5. Build player info with member check
+    const memberMap = new Map<string, { discount: number; planName: string }>();
+    if (memberSubs) {
+      memberSubs.forEach((sub: any) => {
+        const phone = normalizePhone(sub.member_phone || '');
+        const name = (sub.member_name || '').toLowerCase().trim();
+        const discount = sub.plan?.court_discount_percent || 0;
+        const planName = sub.plan?.name || '';
+        if (phone) memberMap.set(phone, { discount, planName });
+        if (name) memberMap.set(name, { discount, planName });
+      });
+    }
+
+    const categoryMap = new Map<string, any>();
+    if (categories) {
+      categories.forEach(c => categoryMap.set(c.id, c));
+    }
+
+    const playerInfos: TournamentPlayerInfo[] = (players || []).map(p => {
+      const phone = normalizePhone(p.phone_number || '');
+      const name = (p.name || '').toLowerCase().trim();
+      const memberInfo = memberMap.get(phone) || memberMap.get(name);
+      const isMember = !!memberInfo;
+      const discountPercent = memberInfo?.discount || 0;
+
+      // Get the price for this player
+      const category = p.category_id ? categoryMap.get(p.category_id) : null;
+      let basePrice = tournament.registration_fee || 0;
+      
+      if (isMember) {
+        // Use member price: category > tournament > 0
+        basePrice = category?.member_price ?? tournament.member_price ?? tournament.registration_fee ?? 0;
+      } else {
+        // Use non-member price: category > tournament > registration_fee
+        basePrice = category?.non_member_price ?? tournament.non_member_price ?? tournament.registration_fee ?? 0;
+      }
+
+      // Apply additional discount if member
+      const finalPrice = isMember && discountPercent > 0 
+        ? basePrice * (1 - discountPercent / 100) 
+        : basePrice;
+
+      const categoryName = category?.name || null;
+
+      return {
+        id: p.id,
+        name: p.name,
+        phone_number: p.phone_number,
+        email: p.email,
+        payment_status: p.payment_status || 'pending',
+        category_name: categoryName,
+        is_member: isMember,
+        discount_percent: discountPercent,
+        final_price: Math.round(finalPrice * 100) / 100,
+      };
+    });
+
+    setSelectedTournament({
+      ...tournament,
+      registration_fee: tournament.registration_fee || 0,
+      member_price: tournament.member_price,
+      non_member_price: tournament.non_member_price,
+      allow_club_payment: tournament.allow_club_payment || false,
+      players: playerInfos,
+    });
+  };
+
+  const handleToggleTournamentPlayerPayment = async (playerId: string, currentStatus: string) => {
+    if (!selectedTournament || !effectiveUserId) return;
+
+    const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    const player = selectedTournament.players.find(p => p.id === playerId);
+    if (!player) return;
+
+    // 1. Update payment_status in players table
+    const { error } = await supabase
+      .from('players')
+      .update({ payment_status: newStatus })
+      .eq('id', playerId);
+
+    if (error) {
+      console.error('[Tournament] Error updating player payment:', error);
+      return;
+    }
+
+    // 2. Handle player_transactions
+    const rawPhone = player.phone_number || '';
+    const normalizedPhone = rawPhone.replace(/\s+/g, '').startsWith('+')
+      ? rawPhone.replace(/\s+/g, '')
+      : rawPhone ? '+' + rawPhone.replace(/\s+/g, '') : '';
+
+    // Find or create player_account
+    let playerAccountId: string | null = null;
+    if (normalizedPhone) {
+      const { data: existingAccount } = await supabase
+        .from('player_accounts')
+        .select('id')
+        .eq('phone_number', normalizedPhone)
+        .maybeSingle();
+
+      playerAccountId = existingAccount?.id || null;
+
+      if (!existingAccount) {
+        const { data: newAccount } = await supabase
+          .from('player_accounts')
+          .insert({ phone_number: normalizedPhone, name: player.name })
+          .select('id')
+          .single();
+        playerAccountId = newAccount?.id || null;
+      }
+    }
+
+    if (newStatus === 'paid') {
+      // Create transaction
+      const txData: any = {
+        club_owner_id: user?.id,
+        player_name: player.name,
+        player_phone: normalizedPhone || 'unknown',
+        transaction_type: 'booking',
+        amount: player.final_price || 0,
+        reference_id: selectedTournament.id,
+        reference_type: 'tournament',
+        notes: `Torneio: ${selectedTournament.name}${player.category_name ? ' - ' + player.category_name : ''}`
+      };
+      if (playerAccountId) txData.player_account_id = playerAccountId;
+
+      await supabase.from('player_transactions').insert(txData);
+    } else {
+      // Remove transaction
+      await supabase
+        .from('player_transactions')
+        .delete()
+        .eq('reference_id', selectedTournament.id)
+        .eq('reference_type', 'tournament')
+        .eq('player_name', player.name);
+    }
+
+    // Reload tournament details
+    await loadTournamentDetails(selectedTournament.id);
+    loadData();
+  };
+
   const handleEditBooking = async (booking: Booking) => {
     // Se for open_game, mostrar modal dedicado
     if (booking.event_type === 'open_game') {
       const idMatch = booking.notes?.match(/ID:\s*([0-9a-f-]+)/i);
       if (idMatch?.[1]) {
         await loadOpenGameDetails(idMatch[1]);
+        return;
+      }
+    }
+    
+    // Se for tournament, mostrar modal de torneio
+    if (booking.event_type === 'tournament') {
+      let tournamentId = booking.tournament_id;
+      
+      // Fallback: se não tiver tournament_id, procurar pelo nome do torneio
+      if (!tournamentId && booking.booked_by_name) {
+        const searchName = booking.booked_by_name.replace(/^Torneio:\s*/i, '').trim();
+        const { data: foundTournament } = await supabase
+          .from('tournaments')
+          .select('id')
+          .ilike('name', `%${searchName}%`)
+          .maybeSingle();
+        
+        if (foundTournament) {
+          tournamentId = foundTournament.id;
+          // Atualizar o booking com o tournament_id para futuras consultas
+          await supabase
+            .from('court_bookings')
+            .update({ tournament_id: foundTournament.id })
+            .eq('id', booking.id);
+        }
+      }
+
+      if (tournamentId) {
+        await loadTournamentDetails(tournamentId);
         return;
       }
     }
@@ -1302,14 +1639,79 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                     <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
                                   </div>
                                 </div>
+                              ) : booking.event_type === 'tournament' ? (
+                                // Tournament Layout
+                                <div className="flex flex-col h-full gap-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <Trophy className="w-3.5 h-3.5 text-amber-600" />
+                                    <span className={`font-semibold ${colors.text} text-[10px] leading-tight truncate`}>
+                                      {booking.booked_by_name || 'Torneio'}
+                                    </span>
+                                  </div>
+                                  {/* Tournament player summary */}
+                                  {(() => {
+                                    const summary = booking.tournament_id ? tournamentSummaries.get(booking.tournament_id) : null;
+                                    if (!summary || summary.playerCount === 0) return null;
+                                    return (
+                                      <>
+                                        <div className="flex items-center gap-1 mt-0.5">
+                                          <Users className="w-3 h-3 text-amber-700" />
+                                          <span className="text-[9px] text-amber-800 font-medium">
+                                            {summary.playerCount} inscritos
+                                          </span>
+                                          <span className="text-[9px] text-green-700 font-medium ml-auto">
+                                            {summary.paidCount} pagos
+                                          </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                          {summary.playerNames.slice(0, 6).map((name, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="px-1.5 py-0.5 rounded text-[9px] font-medium text-amber-900 bg-white/60 truncate max-w-full"
+                                              title={name}
+                                            >
+                                              {name.split(' ')[0]}
+                                            </div>
+                                          ))}
+                                          {summary.playerNames.length > 6 && (
+                                            <div className="px-1.5 py-0.5 rounded text-[9px] font-medium text-amber-700 bg-white/40">
+                                              +{summary.playerNames.length - 6}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </>
+                                    );
+                                  })()}
+                                  <div className="mt-auto flex items-center justify-between">
+                                    {(() => {
+                                      const summary = booking.tournament_id ? tournamentSummaries.get(booking.tournament_id) : null;
+                                      if (summary && summary.playerCount > 0) {
+                                        const allPaid = summary.paidCount === summary.playerCount;
+                                        return (
+                                          <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                            allPaid ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                          }`}>
+                                            {allPaid ? 'Todos Pagos' : `${summary.paidCount}/${summary.playerCount} Pagos`}
+                                          </span>
+                                        );
+                                      }
+                                      return (
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                          booking.payment_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                                        }`}>
+                                          {t.bookings[booking.payment_status as keyof typeof t.bookings] || booking.payment_status}
+                                        </span>
+                                      );
+                                    })()}
+                                    <Edit2 className={`w-3 h-3 ${colors.textSecondary} opacity-0 group-hover:opacity-100 transition flex-shrink-0`} />
+                                  </div>
+                                </div>
                               ) : (
                                 // Regular Booking Layout
                                 <>
                                   <div className="flex items-start justify-between">
                                     <div className={`font-medium ${colors.text} truncate flex-1`}>
-                                      {booking.event_type === 'tournament'
-                                        ? (booking.booked_by_name || 'Tournament')
-                                        : booking.event_type === 'match'
+                                      {booking.event_type === 'match'
                                         ? (booking.booked_by_name || 'Guest')
                                         : (t.bookings?.[booking.event_type as keyof typeof t.bookings] || booking.event_type)
                                       }
@@ -1932,6 +2334,214 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       <Trash2 className="w-4 h-4" />
                       Eliminar
                     </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tournament Details Modal */}
+      {selectedTournament && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            {/* Header */}
+            <div className="sticky top-0 bg-gradient-to-r from-amber-500 to-yellow-600 rounded-t-2xl px-6 py-5 flex items-center justify-between z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                  <Trophy className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">{selectedTournament.name}</h2>
+                  <p className="text-sm text-white/80">
+                    {selectedTournament.start_date} - {selectedTournament.end_date}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedTournament(null)}
+                className="p-2 bg-white/20 rounded-full hover:bg-white/30 transition"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              {/* Tournament Info */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                <div className="bg-amber-50 rounded-lg p-3 text-center">
+                  <p className="text-xs text-amber-600 font-medium">Status</p>
+                  <p className="text-sm font-bold text-amber-900 capitalize">{selectedTournament.status}</p>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-3 text-center">
+                  <p className="text-xs text-blue-600 font-medium">Inscritos</p>
+                  <p className="text-sm font-bold text-blue-900">{selectedTournament.players.length}</p>
+                </div>
+                <div className="bg-green-50 rounded-lg p-3 text-center">
+                  <p className="text-xs text-green-600 font-medium">Pagos</p>
+                  <p className="text-sm font-bold text-green-900">
+                    {selectedTournament.players.filter(p => p.payment_status === 'paid').length}
+                  </p>
+                </div>
+                <div className="bg-purple-50 rounded-lg p-3 text-center">
+                  <p className="text-xs text-purple-600 font-medium">Receita</p>
+                  <p className="text-sm font-bold text-purple-900">
+                    {selectedTournament.players
+                      .filter(p => p.payment_status === 'paid')
+                      .reduce((sum, p) => sum + p.final_price, 0)
+                      .toFixed(2)}€
+                  </p>
+                </div>
+              </div>
+
+              {/* Pricing Info */}
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Preços</h4>
+                <div className="flex flex-wrap gap-4 text-sm">
+                  {selectedTournament.member_price !== null && selectedTournament.member_price !== undefined && (
+                    <span className="text-green-700">
+                      <UserCheck className="w-4 h-4 inline mr-1" />
+                      Membros: <strong>{selectedTournament.member_price}€</strong>
+                    </span>
+                  )}
+                  {selectedTournament.non_member_price !== null && selectedTournament.non_member_price !== undefined && (
+                    <span className="text-orange-700">
+                      <User className="w-4 h-4 inline mr-1" />
+                      Não-Membros: <strong>{selectedTournament.non_member_price}€</strong>
+                    </span>
+                  )}
+                  {(!selectedTournament.member_price && !selectedTournament.non_member_price) && (
+                    <span className="text-gray-700">
+                      Taxa: <strong>{selectedTournament.registration_fee}€</strong>
+                    </span>
+                  )}
+                  {selectedTournament.allow_club_payment && (
+                    <span className="text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full text-xs font-medium">
+                      Pagamento no Clube ativo
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Players List */}
+              <div>
+                <h4 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-gray-600" />
+                  Jogadores Inscritos ({selectedTournament.players.length})
+                </h4>
+
+                {selectedTournament.players.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic py-4 text-center">Nenhum jogador inscrito</p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedTournament.players.map(player => (
+                      <div
+                        key={player.id}
+                        className={`flex items-center gap-3 rounded-lg p-3 border transition ${
+                          player.payment_status === 'paid'
+                            ? 'bg-green-50 border-green-200'
+                            : player.payment_status === 'exempt'
+                            ? 'bg-blue-50 border-blue-200'
+                            : 'bg-white border-gray-200'
+                        }`}
+                      >
+                        {/* Player Avatar */}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold ${
+                          player.is_member ? 'bg-green-500' : 'bg-gray-400'
+                        }`}>
+                          {player.name.charAt(0).toUpperCase()}
+                        </div>
+
+                        {/* Player Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-gray-900 truncate">{player.name}</p>
+                            {player.is_member && (
+                              <span className="text-[10px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
+                                MEMBRO
+                              </span>
+                            )}
+                            {player.category_name && (
+                              <span className="text-[10px] font-medium text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-full">
+                                {player.category_name}
+                              </span>
+                            )}
+                          </div>
+                          {player.phone_number && (
+                            <p className="text-xs text-gray-500">{player.phone_number}</p>
+                          )}
+                        </div>
+
+                        {/* Price */}
+                        <div className="text-right mr-2">
+                          <p className={`text-sm font-bold ${player.final_price === 0 ? 'text-green-600' : 'text-gray-900'}`}>
+                            {player.final_price === 0 ? 'Grátis' : `${player.final_price}€`}
+                          </p>
+                          {player.is_member && player.discount_percent > 0 && (
+                            <p className="text-[10px] text-green-600">-{player.discount_percent}%</p>
+                          )}
+                        </div>
+
+                        {/* Payment Toggle */}
+                        {player.payment_status === 'exempt' ? (
+                          <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
+                            Isento
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleToggleTournamentPlayerPayment(player.id, player.payment_status)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                              player.payment_status === 'paid'
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            {player.payment_status === 'paid' ? (
+                              <>
+                                <Check className="w-3.5 h-3.5" />
+                                Pago
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="w-3.5 h-3.5" />
+                                Pendente
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Summary */}
+              {selectedTournament.players.length > 0 && (
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">
+                      Total Pagos: {selectedTournament.players.filter(p => p.payment_status === 'paid').length}/{selectedTournament.players.filter(p => p.payment_status !== 'exempt').length}
+                    </span>
+                    <span className="font-bold text-gray-900">
+                      Total Recebido: {selectedTournament.players
+                        .filter(p => p.payment_status === 'paid')
+                        .reduce((sum, p) => sum + p.final_price, 0)
+                        .toFixed(2)}€
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                    <div
+                      className="bg-green-500 h-2 rounded-full transition-all"
+                      style={{
+                        width: `${
+                          selectedTournament.players.filter(p => p.payment_status !== 'exempt').length > 0
+                            ? (selectedTournament.players.filter(p => p.payment_status === 'paid').length /
+                              selectedTournament.players.filter(p => p.payment_status !== 'exempt').length) * 100
+                            : 0
+                        }%`
+                      }}
+                    />
                   </div>
                 </div>
               )}

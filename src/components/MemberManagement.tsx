@@ -107,6 +107,17 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   }
   const [openGamePlayers, setOpenGamePlayers] = useState<OpenGamePlayerInfo[]>([]);
 
+  // Tournament players from transactions
+  interface TournamentPlayerInfo {
+    player_name: string;
+    player_phone: string;
+    total_spent: number;
+    tournament_count: number;
+    last_tournament_date: string;
+    tournament_names: string[];
+  }
+  const [tournamentPlayers, setTournamentPlayers] = useState<TournamentPlayerInfo[]>([]);
+
   // Filters
   const [filterMemberType, setFilterMemberType] = useState<'all' | 'members' | 'gold'>('all');
   const [filterAge, setFilterAge] = useState<string>('all');
@@ -228,6 +239,57 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
       setOpenGamePlayers(nonMemberPlayers);
     } else {
       setOpenGamePlayers([]);
+    }
+
+    // Load tournament players from player_transactions
+    const { data: tournamentTx } = await supabase
+      .from('player_transactions')
+      .select('player_name, player_phone, amount, transaction_date, notes')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('reference_type', 'tournament')
+      .order('transaction_date', { ascending: false });
+
+    if (tournamentTx && tournamentTx.length > 0) {
+      const tournamentPlayerMap = new Map<string, TournamentPlayerInfo>();
+      tournamentTx.forEach(tx => {
+        const key = tx.player_phone || tx.player_name.toLowerCase();
+        const existing = tournamentPlayerMap.get(key);
+        const tournamentName = tx.notes?.replace(/^Torneio:\s*/, '').split(' - ')[0] || '';
+        if (existing) {
+          existing.total_spent += Number(tx.amount);
+          existing.tournament_count += 1;
+          if (tx.transaction_date > existing.last_tournament_date) {
+            existing.last_tournament_date = tx.transaction_date;
+          }
+          if (tournamentName && !existing.tournament_names.includes(tournamentName)) {
+            existing.tournament_names.push(tournamentName);
+          }
+        } else {
+          tournamentPlayerMap.set(key, {
+            player_name: tx.player_name,
+            player_phone: tx.player_phone,
+            total_spent: Number(tx.amount),
+            tournament_count: 1,
+            last_tournament_date: tx.transaction_date,
+            tournament_names: tournamentName ? [tournamentName] : []
+          });
+        }
+      });
+
+      // Filter out players that are already members
+      const memberPhoneSet = new Set(
+        (subscriptionsResult.data || [])
+          .map((s: any) => s.member_phone ? normalizePhone(s.member_phone) : null)
+          .filter(Boolean)
+      );
+
+      const nonMemberTournamentPlayers = Array.from(tournamentPlayerMap.values()).filter(
+        p => !memberPhoneSet.has(p.player_phone)
+      );
+
+      setTournamentPlayers(nonMemberTournamentPlayers);
+    } else {
+      setTournamentPlayers([]);
     }
 
     setLoading(false);
@@ -840,6 +902,83 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-gray-500">
                           {new Date(player.last_game_date).toLocaleDateString('pt-PT')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Tournament Players (non-members) */}
+          {tournamentPlayers.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-amber-50">
+                <h2 className="font-semibold text-amber-800 flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-amber-600" />
+                  Jogadores de Torneios
+                  <span className="text-sm font-normal text-amber-600">
+                    ({tournamentPlayers.length} jogadores)
+                  </span>
+                </h2>
+                <p className="text-xs text-amber-600 mt-1">
+                  Jogadores que pagaram inscrição em torneios mas não são membros do clube
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Nome</th>
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Telefone</th>
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Torneios</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Pagamentos</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Total Gasto</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Último</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {tournamentPlayers.map((player, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-bold">
+                              {player.player_name?.charAt(0)?.toUpperCase() || '?'}
+                            </div>
+                            {player.player_name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <a href={`tel:${player.player_phone}`} className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1">
+                            <Phone className="w-3 h-3" />
+                            {player.player_phone}
+                          </a>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {player.tournament_names.slice(0, 2).map((name, i) => (
+                              <span key={i} className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium truncate max-w-[120px]" title={name}>
+                                {name}
+                              </span>
+                            ))}
+                            {player.tournament_names.length > 2 && (
+                              <span className="text-[10px] text-amber-500">+{player.tournament_names.length - 2}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-sm font-medium">
+                            {player.tournament_count}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-amber-600 font-medium">
+                            {player.total_spent.toFixed(2)} EUR
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-gray-500">
+                          {new Date(player.last_tournament_date).toLocaleDateString('pt-PT')}
                         </td>
                       </tr>
                     ))}

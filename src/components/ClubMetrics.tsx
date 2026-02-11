@@ -89,6 +89,7 @@ interface CustomerMetric {
 interface PlayerTotalSpending {
   playerName: string;
   bookingsSpent: number;
+  tournamentSpent: number;
   academySpent: number;
   barSpent: number;
   totalSpent: number;
@@ -702,34 +703,40 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         playerMap.set(key, {
           playerName: member.memberName,
           bookingsSpent: member.totalSpent,
+          tournamentSpent: 0,
           academySpent: 0,
           barSpent: 0,
           totalSpent: member.totalSpent
         });
       });
 
-      // Add player_transactions (open games with individual pricing)
+      // Add player_transactions (open games, tournaments, individual pricing)
       const transactions = await loadPlayerTransactions();
       transactions.forEach(tx => {
         const key = tx.player_name.toLowerCase();
         const existing = playerMap.get(key);
+        const amount = Number(tx.amount);
+        const isTournament = tx.reference_type === 'tournament';
         
         if (existing) {
-          if (tx.transaction_type === 'open_game' || tx.transaction_type === 'booking') {
-            existing.bookingsSpent += Number(tx.amount);
+          if (isTournament) {
+            existing.tournamentSpent += amount;
+          } else if (tx.transaction_type === 'open_game' || tx.transaction_type === 'booking') {
+            existing.bookingsSpent += amount;
           } else if (tx.transaction_type === 'academy') {
-            existing.academySpent += Number(tx.amount);
+            existing.academySpent += amount;
           } else if (tx.transaction_type === 'bar') {
-            existing.barSpent += Number(tx.amount);
+            existing.barSpent += amount;
           }
-          existing.totalSpent += Number(tx.amount);
+          existing.totalSpent += amount;
         } else {
           playerMap.set(key, {
             playerName: tx.player_name,
-            bookingsSpent: tx.transaction_type === 'open_game' || tx.transaction_type === 'booking' ? Number(tx.amount) : 0,
-            academySpent: tx.transaction_type === 'academy' ? Number(tx.amount) : 0,
-            barSpent: tx.transaction_type === 'bar' ? Number(tx.amount) : 0,
-            totalSpent: Number(tx.amount)
+            bookingsSpent: !isTournament && (tx.transaction_type === 'open_game' || tx.transaction_type === 'booking') ? amount : 0,
+            tournamentSpent: isTournament ? amount : 0,
+            academySpent: tx.transaction_type === 'academy' ? amount : 0,
+            barSpent: tx.transaction_type === 'bar' ? amount : 0,
+            totalSpent: amount
           });
         }
       });
@@ -745,6 +752,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           playerMap.set(key, {
             playerName: student.studentName,
             bookingsSpent: 0,
+            tournamentSpent: 0,
             academySpent: student.totalSpent,
             barSpent: 0,
             totalSpent: student.totalSpent
@@ -762,6 +770,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           playerMap.set(key, {
             playerName: customer.customerName,
             bookingsSpent: 0,
+            tournamentSpent: 0,
             academySpent: 0,
             barSpent: customer.totalSpent,
             totalSpent: customer.totalSpent
@@ -1351,6 +1360,12 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                     </th>
                     <th className="py-3 px-3 font-medium text-right">
                       <span className="flex items-center justify-end gap-1">
+                        <Trophy className="w-3.5 h-3.5" />
+                        Torneios
+                      </span>
+                    </th>
+                    <th className="py-3 px-3 font-medium text-right">
+                      <span className="flex items-center justify-end gap-1">
                         <GraduationCap className="w-3.5 h-3.5" />
                         Academy
                       </span>
@@ -1372,6 +1387,9 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                         {player.bookingsSpent > 0 ? formatCurrency(player.bookingsSpent) : '-'}
                       </td>
                       <td className="py-3 px-3 text-right text-gray-600">
+                        {player.tournamentSpent > 0 ? formatCurrency(player.tournamentSpent) : '-'}
+                      </td>
+                      <td className="py-3 px-3 text-right text-gray-600">
                         {player.academySpent > 0 ? formatCurrency(player.academySpent) : '-'}
                       </td>
                       <td className="py-3 px-3 text-right text-gray-600">
@@ -1388,6 +1406,9 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                     <td className="py-3 px-5 text-gray-900">TOTAL</td>
                     <td className="py-3 px-3 text-right text-gray-900">
                       {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.bookingsSpent, 0))}
+                    </td>
+                    <td className="py-3 px-3 text-right text-gray-900">
+                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.tournamentSpent, 0))}
                     </td>
                     <td className="py-3 px-3 text-right text-gray-900">
                       {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.academySpent, 0))}
