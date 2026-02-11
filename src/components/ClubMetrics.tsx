@@ -287,6 +287,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         start_time,
         end_time,
         price,
+        event_type,
         booked_by_name,
         player1_name,
         player2_name,
@@ -300,6 +301,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       `)
       .eq('club_courts.user_id', effectiveUserId)
       .eq('status', 'confirmed')
+      .neq('event_type', 'open_game')
       .gte('start_time', startDate)
       .lte('start_time', endDate);
 
