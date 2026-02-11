@@ -832,6 +832,70 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         }
       }
 
+      // 4. Update court_booking with player names and payment status
+      // Get all confirmed players (after reload will have updated payment status)
+      const confirmedPlayers = selectedOpenGame.players
+        .filter(p => p.status === 'confirmed')
+        .sort((a, b) => (a.position || 0) - (b.position || 0));
+
+      // Find the booking
+      const { data: gameBookings } = await supabase
+        .from('court_bookings')
+        .select('id')
+        .eq('event_type', 'open_game')
+        .ilike('notes', `%${selectedOpenGame.id}%`)
+        .limit(1);
+
+      if (gameBookings && gameBookings.length > 0) {
+        const bookingUpdate: any = {};
+        
+        // Update player names (always, to fix "Jogador" issue)
+        confirmedPlayers.forEach((p, idx) => {
+          if (idx < 4) {
+            bookingUpdate[`player${idx + 1}_name`] = p.name || 'Jogador';
+            bookingUpdate[`player${idx + 1}_phone`] = p.phone_number || null;
+            bookingUpdate[`player${idx + 1}_is_member`] = p.is_member || false;
+            bookingUpdate[`player${idx + 1}_discount`] = p.discount_percent || 0;
+          }
+        });
+
+        // Check if all confirmed players have paid
+        const { data: updatedPlayers } = await supabase
+          .from('open_game_players')
+          .select('payment_status, status')
+          .eq('game_id', selectedOpenGame.id);
+
+        if (updatedPlayers) {
+          const allConfirmed = updatedPlayers.filter(p => p.status === 'confirmed');
+          const allPaid = allConfirmed.every(p => p.payment_status === 'paid');
+          
+          console.log('[Payment] Payment check:', { 
+            confirmedCount: allConfirmed.length, 
+            allPaid,
+            statuses: updatedPlayers.map(p => ({ status: p.status, payment: p.payment_status }))
+          });
+
+          // Update booking payment status
+          if (allConfirmed.length > 0 && allPaid) {
+            bookingUpdate.payment_status = 'paid';
+          } else if (allConfirmed.some(p => p.payment_status === 'paid')) {
+            bookingUpdate.payment_status = 'partial';
+          } else {
+            bookingUpdate.payment_status = 'pending';
+          }
+        }
+
+        console.log('[Payment] Updating booking:', bookingUpdate);
+
+        await supabase
+          .from('court_bookings')
+          .update(bookingUpdate)
+          .eq('id', gameBookings[0].id);
+
+        // Refresh bookings list
+        loadData();
+      }
+
       // Reload the game details to refresh
       await loadOpenGameDetails(selectedOpenGame.id);
     }
