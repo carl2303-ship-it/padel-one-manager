@@ -97,6 +97,16 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   const [tournamentHistory, setTournamentHistory] = useState<TournamentHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   
+  // Open game players from transactions
+  interface OpenGamePlayerInfo {
+    player_name: string;
+    player_phone: string;
+    total_spent: number;
+    games_count: number;
+    last_game_date: string;
+  }
+  const [openGamePlayers, setOpenGamePlayers] = useState<OpenGamePlayerInfo[]>([]);
+
   // Filters
   const [filterMemberType, setFilterMemberType] = useState<'all' | 'members' | 'gold'>('all');
   const [filterAge, setFilterAge] = useState<string>('all');
@@ -172,6 +182,54 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
       
       setSubscriptions(subscriptionsWithPlayerData as unknown as Subscription[]);
     }
+
+    // Load open game players from player_transactions
+    const { data: transactions } = await supabase
+      .from('player_transactions')
+      .select('player_name, player_phone, amount, transaction_date')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('transaction_type', 'open_game')
+      .order('transaction_date', { ascending: false });
+
+    if (transactions && transactions.length > 0) {
+      // Aggregate by player
+      const playerMap = new Map<string, OpenGamePlayerInfo>();
+      transactions.forEach(tx => {
+        const key = tx.player_phone || tx.player_name.toLowerCase();
+        const existing = playerMap.get(key);
+        if (existing) {
+          existing.total_spent += Number(tx.amount);
+          existing.games_count += 1;
+          if (tx.transaction_date > existing.last_game_date) {
+            existing.last_game_date = tx.transaction_date;
+          }
+        } else {
+          playerMap.set(key, {
+            player_name: tx.player_name,
+            player_phone: tx.player_phone,
+            total_spent: Number(tx.amount),
+            games_count: 1,
+            last_game_date: tx.transaction_date
+          });
+        }
+      });
+
+      // Filter out players that already have member_subscriptions
+      const memberPhones = new Set(
+        (subscriptionsResult.data || [])
+          .map((s: any) => s.member_phone ? normalizePhone(s.member_phone) : null)
+          .filter(Boolean)
+      );
+
+      const nonMemberPlayers = Array.from(playerMap.values()).filter(
+        p => !memberPhones.has(p.player_phone)
+      );
+
+      setOpenGamePlayers(nonMemberPlayers);
+    } else {
+      setOpenGamePlayers([]);
+    }
+
     setLoading(false);
   };
 
@@ -727,6 +785,69 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
             </div>
           </div>
         )}
+
+          {/* Open Game Players (non-members) */}
+          {openGamePlayers.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b border-gray-100 bg-emerald-50">
+                <h2 className="font-semibold text-emerald-800 flex items-center gap-2">
+                  🎾 Jogadores de Jogos Abertos
+                  <span className="text-sm font-normal text-emerald-600">
+                    ({openGamePlayers.length} jogadores)
+                  </span>
+                </h2>
+                <p className="text-xs text-emerald-600 mt-1">
+                  Jogadores que participaram em jogos abertos mas não são membros do clube
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Nome</th>
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Telefone</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Jogos</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Total Gasto</th>
+                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Último Jogo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {openGamePlayers.map((player, idx) => (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 text-sm font-bold">
+                              {player.player_name?.charAt(0)?.toUpperCase() || '?'}
+                            </div>
+                            {player.player_name}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <a href={`tel:${player.player_phone}`} className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1">
+                            <Phone className="w-3 h-3" />
+                            {player.player_phone}
+                          </a>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-sm font-medium">
+                            🎾 {player.games_count}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-emerald-600 font-medium">
+                            {player.total_spent.toFixed(2)} EUR
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-gray-500">
+                          {new Date(player.last_game_date).toLocaleDateString('pt-PT')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       ) : (
         plans.length === 0 ? (
