@@ -1144,8 +1144,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         }
       }
 
-      // Apply additional discount if member (but not staff, staff is already free)
-      const finalPrice = !isStaff && isMember && discountPercent > 0 
+      // O desconto de campo (court_discount_percent) NÃO se aplica a torneios.
+      // O member_price já É o preço final para membros.
+      // O desconto só se aplica quando se usa registration_fee como fallback (sem member_price definido).
+      const usedMemberSpecificPrice = isMember && !isStaff && (catMemberPrice > 0 || tournMemberPrice > 0);
+      const finalPrice = !isStaff && isMember && discountPercent > 0 && !usedMemberSpecificPrice
         ? basePrice * (1 - discountPercent / 100) 
         : basePrice;
 
