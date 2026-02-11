@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -343,7 +343,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       );
       setBookings(filteredBookings as Booking[]);
       
-      // Load players for open_game bookings
+      // Load player count for open_game bookings
       const openGameBookings = filteredBookings.filter((b: any) => b.event_type === 'open_game');
       if (openGameBookings.length > 0) {
         const playersMap: { [bookingId: string]: any[] } = {};
@@ -354,13 +354,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           if (idMatch?.[1]) {
             const { data: players } = await supabase
               .from('open_game_players')
-              .select(`
-                player_account_id,
-                player_name,
-                player_phone,
-                player_accounts(name, phone_number, level, category)
-              `)
-              .eq('game_id', idMatch[1]);
+              .select('user_id, status')
+              .eq('game_id', idMatch[1])
+              .eq('status', 'confirmed');
             
             if (players) {
               playersMap[booking.id] = players;
@@ -1168,10 +1164,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 }}
               >
                 {calendarSlots.map((slot, slotIndex) => (
-                  <>
+                  <React.Fragment key={`slot-${slotIndex}`}>
                     {/* Time Label */}
                     <div
-                      key={`time-${slot.time}`}
                       className="p-2 border-b border-r border-gray-100 text-xs text-gray-500 text-center flex items-center justify-center"
                       style={{ gridRow: slotIndex + 1, gridColumn: 1 }}
                     >
@@ -1305,7 +1300,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                         ></div>
                       );
                     })}
-                  </>
+                  </React.Fragment>
                 ))}
               </div>
             </div>
