@@ -16,7 +16,13 @@ import {
   Check,
   Edit2,
   Trash2,
-  Award
+  Award,
+  Users,
+  Trophy,
+  Heart,
+  AlertCircle,
+  TrendingUp,
+  UserCheck
 } from 'lucide-react';
 
 interface Court {
@@ -74,9 +80,117 @@ interface PlayerData {
   planName: string;
 }
 
+interface OpenGame {
+  id: string;
+  creator_user_id: string;
+  club_id: string;
+  court_id: string | null;
+  scheduled_at: string;
+  duration_minutes: number;
+  game_type: 'competitive' | 'friendly';
+  gender: string;
+  level_min: number | null;
+  level_max: number | null;
+  price_per_player: number;
+  max_players: number;
+  status: 'open' | 'full' | 'cancelled' | 'completed';
+  notes: string | null;
+  created_at: string;
+  court_name?: string;
+  creator_name?: string;
+  creator_avatar?: string | null;
+  players: OpenGamePlayer[];
+}
+
+interface OpenGamePlayer {
+  id: string;
+  user_id: string;
+  player_account_id: string | null;
+  status: 'confirmed' | 'pending' | 'rejected';
+  position: number | null;
+  name?: string;
+  avatar_url?: string | null;
+  level?: number | null;
+  player_category?: string | null;
+}
+
 const normalizePhone = (phone: string): string => {
   return phone.replace(/[\s\-\(\)\.]/g, '').replace(/^00/, '+');
 };
+
+// Helper functions for Open Games
+function formatDateTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleString('pt-PT', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function formatGameTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleTimeString('pt-PT', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+function getGameTypeLabel(type: string): string {
+  return type === 'competitive' ? 'Competitivo' : 'Amigável';
+}
+
+function getGenderLabel(gender: string): string {
+  switch (gender) {
+    case 'male': return 'Masculino';
+    case 'female': return 'Feminino';
+    case 'mixed': return 'Misto';
+    default: return 'Todos';
+  }
+}
+
+function getGameStatusLabel(status: string): string {
+  switch (status) {
+    case 'open': return 'Aberto';
+    case 'full': return 'Completo';
+    case 'cancelled': return 'Cancelado';
+    case 'completed': return 'Concluído';
+    default: return status;
+  }
+}
+
+function getGameStatusColor(status: string): string {
+  switch (status) {
+    case 'open': return 'bg-green-100 text-green-800';
+    case 'full': return 'bg-blue-100 text-blue-800';
+    case 'cancelled': return 'bg-red-100 text-red-800';
+    case 'completed': return 'bg-gray-100 text-gray-800';
+    default: return 'bg-gray-100 text-gray-800';
+  }
+}
+
+function categoryColors(category?: string | null): { bg: string; hex: string } {
+  switch (category) {
+    case 'M1': return { bg: 'bg-purple-600', hex: '#9333ea' };
+    case 'M2': return { bg: 'bg-blue-600', hex: '#2563eb' };
+    case 'M3': return { bg: 'bg-green-600', hex: '#16a34a' };
+    case 'M4': return { bg: 'bg-yellow-500', hex: '#eab308' };
+    case 'M5': return { bg: 'bg-orange-500', hex: '#f97316' };
+    case 'M6': return { bg: 'bg-gray-500', hex: '#6b7280' };
+    case 'F1': return { bg: 'bg-purple-500', hex: '#a855f7' };
+    case 'F2': return { bg: 'bg-blue-500', hex: '#3b82f6' };
+    case 'F3': return { bg: 'bg-green-500', hex: '#22c55e' };
+    case 'F4': return { bg: 'bg-yellow-400', hex: '#facc15' };
+    case 'F5': return { bg: 'bg-orange-400', hex: '#fb923c' };
+    case 'F6': return { bg: 'bg-gray-400', hex: '#9ca3af' };
+    default: return { bg: 'bg-gray-400', hex: '#9ca3af' };
+  }
+}
 
 const eventTypeColors: Record<string, { bg: string; bgHover: string; bgDragging: string; text: string; textSecondary: string }> = {
   match: {
@@ -148,6 +262,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const [draggingBooking, setDraggingBooking] = useState<Booking | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ courtId: string; time: string } | null>(null);
   const [openGamePlayers, setOpenGamePlayers] = useState<{ [bookingId: string]: any[] }>({});
+  const [selectedOpenGame, setSelectedOpenGame] = useState<OpenGame | null>(null);
 
   const emptyPlayer: PlayerData = { name: '', phone: '', isMember: false, discount: 0, planName: '' };
   const [players, setPlayers] = useState<PlayerData[]>([
@@ -444,7 +559,157 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   };
 
-  const handleEditBooking = (booking: Booking) => {
+  const loadOpenGameDetails = async (gameId: string) => {
+    if (!effectiveUserId) return;
+
+    try {
+      // Fetch the open game
+      const { data: gameData, error: gameError } = await supabase
+        .from('open_games')
+        .select('*')
+        .eq('id', gameId)
+        .single();
+
+      if (gameError || !gameData) {
+        console.error('Error fetching open game:', gameError);
+        return;
+      }
+
+      // Get court name
+      let courtName = '';
+      if (gameData.court_id) {
+        const { data: court } = await supabase
+          .from('club_courts')
+          .select('name')
+          .eq('id', gameData.court_id)
+          .single();
+        if (court) courtName = court.name;
+      }
+
+      // Get all game players
+      const { data: playersData } = await supabase
+        .from('open_game_players')
+        .select('*')
+        .eq('game_id', gameId);
+
+      // Get player details from player_accounts
+      let playerDetailsMap: Record<string, { name: string; avatar_url: string | null; level: number | null; player_category: string | null }> = {};
+      if (playersData && playersData.length > 0) {
+        const userIds = [...new Set(playersData.map(p => p.user_id))];
+        const { data: accounts } = await supabase
+          .from('player_accounts')
+          .select('user_id, name, avatar_url, level, player_category')
+          .in('user_id', userIds);
+        if (accounts) {
+          accounts.forEach(a => {
+            playerDetailsMap[a.user_id] = {
+              name: a.name,
+              avatar_url: a.avatar_url,
+              level: a.level,
+              player_category: a.player_category
+            };
+          });
+        }
+      }
+
+      // Get creator details
+      const creatorDetails = playerDetailsMap[gameData.creator_user_id];
+
+      // Map players with details
+      const players: OpenGamePlayer[] = (playersData || []).map(p => ({
+        ...p,
+        name: playerDetailsMap[p.user_id]?.name || 'Jogador',
+        avatar_url: playerDetailsMap[p.user_id]?.avatar_url,
+        level: playerDetailsMap[p.user_id]?.level,
+        player_category: playerDetailsMap[p.user_id]?.player_category
+      }));
+
+      const openGame: OpenGame = {
+        ...gameData,
+        court_name: courtName,
+        creator_name: creatorDetails?.name || 'Desconhecido',
+        creator_avatar: creatorDetails?.avatar_url,
+        players
+      };
+
+      setSelectedOpenGame(openGame);
+    } catch (error) {
+      console.error('Error loading open game details:', error);
+    }
+  };
+
+  const handleCancelOpenGame = async (gameId: string) => {
+    if (!confirm('Cancelar este jogo? Todos os jogadores serão notificados.')) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('open_games')
+      .update({ status: 'cancelled' })
+      .eq('id', gameId);
+
+    if (!error) {
+      // Also cancel the court booking
+      const { data: bookings } = await supabase
+        .from('court_bookings')
+        .select('id')
+        .eq('event_type', 'open_game')
+        .ilike('notes', `%ID: ${gameId}%`);
+      
+      if (bookings && bookings.length > 0) {
+        await supabase
+          .from('court_bookings')
+          .update({ status: 'cancelled' })
+          .eq('id', bookings[0].id);
+      }
+
+      setSelectedOpenGame(null);
+      loadData();
+    }
+  };
+
+  const handleDeleteOpenGame = async (gameId: string) => {
+    if (!confirm('Eliminar este jogo permanentemente? Esta ação não pode ser revertida.')) {
+      return;
+    }
+
+    // Delete the court booking first
+    const { data: bookings } = await supabase
+      .from('court_bookings')
+      .select('id')
+      .eq('event_type', 'open_game')
+      .ilike('notes', `%ID: ${gameId}%`);
+    
+    if (bookings && bookings.length > 0) {
+      await supabase
+        .from('court_bookings')
+        .delete()
+        .eq('id', bookings[0].id);
+    }
+
+    // Delete the open game (players will be deleted automatically due to CASCADE)
+    const { error } = await supabase
+      .from('open_games')
+      .delete()
+      .eq('id', gameId);
+
+    if (!error) {
+      setSelectedOpenGame(null);
+      loadData();
+    }
+  };
+
+  const handleEditBooking = async (booking: Booking) => {
+    // Se for open_game, mostrar modal dedicado
+    if (booking.event_type === 'open_game') {
+      const idMatch = booking.notes?.match(/ID:\s*([0-9a-f-]+)/i);
+      if (idMatch?.[1]) {
+        await loadOpenGameDetails(idMatch[1]);
+        return;
+      }
+    }
+    
+    // Fluxo normal para outros tipos
     const startDate = new Date(booking.start_time);
     const endDate = new Date(booking.end_time);
     const duration = (endDate.getTime() - startDate.getTime()) / 3600000;
@@ -1242,6 +1507,223 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Open Game Details Modal */}
+      {selectedOpenGame && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-6 flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex items-center gap-2 text-indigo-600">
+                    <Clock className="w-5 h-5" />
+                    <span className="font-bold text-xl">
+                      {formatGameTime(selectedOpenGame.scheduled_at)}
+                    </span>
+                    <span className="text-gray-400">-</span>
+                    <span className="text-gray-500">
+                      {formatGameTime(new Date(new Date(selectedOpenGame.scheduled_at).getTime() + selectedOpenGame.duration_minutes * 60000).toISOString())}
+                    </span>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${getGameStatusColor(selectedOpenGame.status)}`}>
+                    {getGameStatusLabel(selectedOpenGame.status)}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    selectedOpenGame.game_type === 'competitive'
+                      ? 'bg-red-50 text-red-700'
+                      : 'bg-green-50 text-green-700'
+                  }`}>
+                    {selectedOpenGame.game_type === 'competitive' ? (
+                      <span className="flex items-center gap-1"><Trophy className="w-3 h-3" /> {getGameTypeLabel(selectedOpenGame.game_type)}</span>
+                    ) : (
+                      <span className="flex items-center gap-1"><Heart className="w-3 h-3" /> {getGameTypeLabel(selectedOpenGame.game_type)}</span>
+                    )}
+                  </span>
+                  <span className="px-2 py-1 rounded-full text-xs font-medium bg-purple-50 text-purple-700">
+                    {getGenderLabel(selectedOpenGame.gender)}
+                  </span>
+                  {selectedOpenGame.court_name && (
+                    <span className="flex items-center gap-1 text-sm text-gray-600">
+                      <MapPin className="w-4 h-4" />
+                      {selectedOpenGame.court_name}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1 text-sm text-gray-600">
+                    <Users className="w-4 h-4" />
+                    {selectedOpenGame.players.filter(p => p.status === 'confirmed').length}/{selectedOpenGame.max_players} jogadores
+                  </span>
+                  {selectedOpenGame.level_min !== null && selectedOpenGame.level_max !== null && (
+                    <span className="flex items-center gap-1 text-sm text-gray-600">
+                      <TrendingUp className="w-4 h-4" />
+                      Nível {selectedOpenGame.level_min?.toFixed(1)} - {selectedOpenGame.level_max?.toFixed(1)}
+                    </span>
+                  )}
+                  {selectedOpenGame.price_per_player > 0 && (
+                    <span className="font-medium text-gray-700 text-sm">
+                      €{selectedOpenGame.price_per_player.toFixed(2)}/jogador
+                    </span>
+                  )}
+                </div>
+
+                {/* Creator */}
+                <div className="flex items-center gap-2 mt-3">
+                  <span className="text-xs text-gray-400">Criado por:</span>
+                  <div className="flex items-center gap-2">
+                    {selectedOpenGame.creator_avatar ? (
+                      <img src={selectedOpenGame.creator_avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-xs text-white font-bold">
+                        {selectedOpenGame.creator_name?.charAt(0).toUpperCase() || '?'}
+                      </div>
+                    )}
+                    <span className="text-sm font-medium text-gray-700">{selectedOpenGame.creator_name}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => setSelectedOpenGame(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Players */}
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Confirmed Players */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-green-500" />
+                    Jogadores Confirmados ({selectedOpenGame.players.filter(p => p.status === 'confirmed').length}/{selectedOpenGame.max_players})
+                  </h4>
+                  {selectedOpenGame.players.filter(p => p.status === 'confirmed').length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">Nenhum jogador confirmado</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedOpenGame.players
+                        .filter(p => p.status === 'confirmed')
+                        .map(player => (
+                          <div key={player.id} className="flex items-center gap-3 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                            {player.avatar_url ? (
+                              <img src={player.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-white text-sm font-bold">
+                                {player.name?.charAt(0).toUpperCase() || '?'}
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-gray-900">{player.name}</p>
+                              <div className="flex items-center gap-2">
+                                {player.level !== null && player.level !== undefined && (
+                                  <span
+                                    className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full"
+                                    style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                  >
+                                    Nv. {player.level.toFixed(1)}
+                                  </span>
+                                )}
+                                {player.player_category && (
+                                  <span className="text-xs text-gray-500">{player.player_category}</span>
+                                )}
+                              </div>
+                            </div>
+                            <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-1 rounded-full">
+                              Confirmado
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pending Players */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-yellow-500" />
+                    Pedidos Pendentes ({selectedOpenGame.players.filter(p => p.status === 'pending').length})
+                  </h4>
+                  {selectedOpenGame.players.filter(p => p.status === 'pending').length === 0 ? (
+                    <p className="text-sm text-gray-400 italic">Sem pedidos pendentes</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {selectedOpenGame.players
+                        .filter(p => p.status === 'pending')
+                        .map(player => (
+                          <div key={player.id} className="flex items-center gap-3 bg-yellow-50 rounded-lg p-3 border border-yellow-200">
+                            {player.avatar_url ? (
+                              <img src={player.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-yellow-300" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-yellow-500 flex items-center justify-center text-white text-sm font-bold">
+                                {player.name?.charAt(0).toUpperCase() || '?'}
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-gray-900">{player.name}</p>
+                              <div className="flex items-center gap-2">
+                                {player.level !== null && player.level !== undefined && (
+                                  <span
+                                    className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full"
+                                    style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                  >
+                                    Nv. {player.level.toFixed(1)}
+                                  </span>
+                                )}
+                                {player.player_category && (
+                                  <span className="text-xs text-gray-500">{player.player_category}</span>
+                                )}
+                              </div>
+                            </div>
+                            <span className="text-xs text-yellow-600 font-medium">
+                              Pendente
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Notes & Actions */}
+              {(selectedOpenGame.notes || selectedOpenGame.status === 'open') && (
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                  {selectedOpenGame.notes && (
+                    <p className="text-sm text-gray-600 italic mb-4">
+                      <span className="font-medium">Notas:</span> {selectedOpenGame.notes}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-400 mb-4">
+                    Criado em {formatDateTime(selectedOpenGame.created_at)}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    {selectedOpenGame.status === 'open' && (
+                      <button
+                        onClick={() => handleCancelOpenGame(selectedOpenGame.id)}
+                        className="flex items-center gap-2 px-4 py-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                      >
+                        <X className="w-4 h-4" />
+                        Cancelar jogo
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDeleteOpenGame(selectedOpenGame.id)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-red-700 bg-red-100 border border-red-300 rounded-lg hover:bg-red-200 transition"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
