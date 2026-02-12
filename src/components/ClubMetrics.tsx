@@ -166,6 +166,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
   const [customerMetrics, setCustomerMetrics] = useState<CustomerMetric[]>([]);
 
   const [playerTotalSpending, setPlayerTotalSpending] = useState<PlayerTotalSpending[]>([]);
+  const [playerTransactions, setPlayerTransactions] = useState<any[]>([]);
   const [financialSummary, setFinancialSummary] = useState<FinancialSummary>({
     bookingsRevenue: 0,
     academyRevenue: 0,
@@ -263,7 +264,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       loadAcademyMetrics(),
       loadBarMetrics(),
       loadSponsorsData(),
-      loadTournamentMetrics()
+      loadTournamentMetrics(),
+      loadPlayerTransactions()
     ]);
     setLoading(false);
   };
@@ -651,11 +653,43 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
   };
 
   const calculateFinancialSummary = () => {
-    const bookingsRevenue = courtMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
-    const academyRevenue = coachMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
-    const barRevenue = categoryMetrics.reduce((sum, c) => sum + c.revenue, 0);
+    // Calculate from player_transactions (the single source of truth for player spending)
+    let bookingsRevenueFromTxns = 0;
+    let academyRevenueFromTxns = 0;
+    let barRevenueFromTxns = 0;
+    let tournamentsRevenueFromTxns = 0;
+
+    playerTransactions.forEach(tx => {
+      const amount = Number(tx.amount) || 0;
+      const isTournament = tx.reference_type === 'tournament';
+      
+      if (isTournament) {
+        tournamentsRevenueFromTxns += amount;
+      } else if (tx.transaction_type === 'booking') {
+        bookingsRevenueFromTxns += amount;
+      } else if (tx.transaction_type === 'open_game') {
+        bookingsRevenueFromTxns += amount;
+      } else if (tx.transaction_type === 'academy') {
+        academyRevenueFromTxns += amount;
+      } else if (tx.transaction_type === 'bar') {
+        barRevenueFromTxns += amount;
+      }
+    });
+
+    // Calculate from traditional sources (for backwards compatibility and completeness)
+    const bookingsRevenueFromCourts = courtMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
+    const academyRevenueFromCoaches = coachMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
+    const barRevenueFromOrders = categoryMetrics.reduce((sum, c) => sum + c.revenue, 0);
+    const tournamentsRevenueFromPayments = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
+
+    // Combine both sources: player_transactions (new system) + traditional sources (old system)
+    // player_transactions is the primary source for new transactions, traditional sources for legacy data
+    const bookingsRevenue = bookingsRevenueFromTxns + bookingsRevenueFromCourts;
+    const academyRevenue = academyRevenueFromTxns + academyRevenueFromCoaches;
+    const barRevenue = barRevenueFromTxns + barRevenueFromOrders;
+    const tournamentsRevenue = tournamentsRevenueFromTxns + tournamentsRevenueFromPayments;
+    
     const sponsorsRevenue = sponsorPayments.filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.amount), 0);
-    const tournamentsRevenue = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
     const tournamentsRegistrations = tournamentMetrics.reduce((sum, t) => sum + t.registrations, 0);
 
     setFinancialSummary({
@@ -672,7 +706,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
   useEffect(() => {
     calculateFinancialSummary();
-  }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics]);
+  }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics, playerTransactions]);
 
   const loadPlayerTransactions = async () => {
     if (!effectiveUserId) return [];
@@ -687,7 +721,9 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       .lte('transaction_date', endDate);
 
     console.log('[Metrics] Player transactions loaded:', { transactions, error, effectiveUserId, startDate, endDate });
-    return transactions || [];
+    const txns = transactions || [];
+    setPlayerTransactions(txns);
+    return txns;
   };
 
   useEffect(() => {
