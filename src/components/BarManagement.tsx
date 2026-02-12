@@ -187,15 +187,73 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
   // ---- Tab Management Functions ----
 
+  // Helper function to normalize phone numbers
+  const normalizePhone = (phone: string | null): string => {
+    if (!phone) return '';
+    return phone.replace(/\s+/g, '').trim();
+  };
+
+  // Helper function to get member bar discount
+  const getMemberBarDiscount = async (playerPhone: string | null, playerAccountId: string | null): Promise<number> => {
+    if (!effectiveUserId) return 0;
+    
+    // Try by player_account_id first
+    if (playerAccountId) {
+      const { data: subscription } = await supabase
+        .from('member_subscriptions')
+        .select('plan:membership_plans(bar_discount_percent)')
+        .eq('club_owner_id', effectiveUserId)
+        .eq('player_account_id', playerAccountId)
+        .eq('status', 'active')
+        .maybeSingle();
+      
+      if (subscription?.plan) {
+        return (subscription.plan as any).bar_discount_percent || 0;
+      }
+    }
+    
+    // Try by phone number
+    if (playerPhone) {
+      const normalizedPhone = normalizePhone(playerPhone);
+      const { data: subscription } = await supabase
+        .from('member_subscriptions')
+        .select('plan:membership_plans(bar_discount_percent)')
+        .eq('club_owner_id', effectiveUserId)
+        .eq('member_phone', normalizedPhone)
+        .eq('status', 'active')
+        .maybeSingle();
+      
+      if (subscription?.plan) {
+        return (subscription.plan as any).bar_discount_percent || 0;
+      }
+    }
+    
+    return 0;
+  };
+
   const handleCreateTab = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!effectiveUserId || !newTabForm.player_name.trim()) return;
     setSaving(true);
 
+    // Try to find player_account_id by phone
+    let playerAccountId: string | null = null;
+    if (newTabForm.player_phone) {
+      const normalizedPhone = normalizePhone(newTabForm.player_phone);
+      const { data: existingAccount } = await supabase
+        .from('player_accounts')
+        .select('id')
+        .eq('phone_number', normalizedPhone)
+        .maybeSingle();
+      
+      playerAccountId = existingAccount?.id || null;
+    }
+
     const { error } = await supabase.from('bar_tabs').insert({
       club_owner_id: effectiveUserId,
       player_name: newTabForm.player_name.trim(),
       player_phone: newTabForm.player_phone.trim() || null,
+      player_account_id: playerAccountId,
       notes: newTabForm.notes.trim() || null
     });
 
@@ -297,12 +355,22 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   };
 
   const handleAddItemToTab = async (tabId: string, menuItem: MenuItem) => {
+    // Get the tab to check for member discount
+    const tab = barTabs.find(t => t.id === tabId);
+    if (!tab) return;
+
+    // Get member discount
+    const discountPercent = await getMemberBarDiscount(tab.player_phone, tab.player_account_id);
+    const discountedPrice = discountPercent > 0 
+      ? menuItem.price * (1 - discountPercent / 100)
+      : menuItem.price;
+
     // Check if item already exists in tab
     const existingItems = tabItems[tabId] || [];
     const existingItem = existingItems.find(i => i.menu_item_id === menuItem.id);
 
     if (existingItem) {
-      // Increment quantity
+      // Increment quantity (keep existing unit_price with discount)
       const newQty = existingItem.quantity + 1;
       await supabase
         .from('bar_tab_items')
@@ -312,14 +380,14 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         })
         .eq('id', existingItem.id);
     } else {
-      // Add new item
+      // Add new item with discounted price
       await supabase.from('bar_tab_items').insert({
         tab_id: tabId,
         menu_item_id: menuItem.id,
         item_name: menuItem.name,
         quantity: 1,
-        unit_price: menuItem.price,
-        total_price: menuItem.price
+        unit_price: discountedPrice,
+        total_price: discountedPrice
       });
     }
 

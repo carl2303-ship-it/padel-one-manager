@@ -1281,13 +1281,28 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       return;
     }
 
-    // Create tabs for all new players
-    const tabsToCreate = newPlayers.map(p => ({
-      club_owner_id: effectiveUserId,
-      player_name: p.name,
-      player_phone: p.phone_number || null,
-      tournament_id: selectedTournament.id,
-      tournament_name: selectedTournament.name
+    // Create tabs for all new players (with player_account_id lookup)
+    const tabsToCreate = await Promise.all(newPlayers.map(async (p) => {
+      let playerAccountId: string | null = null;
+      if (p.phone_number) {
+        const normalizedPhone = p.phone_number.replace(/\s+/g, '');
+        const { data: existingAccount } = await supabase
+          .from('player_accounts')
+          .select('id')
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+        
+        playerAccountId = existingAccount?.id || null;
+      }
+
+      return {
+        club_owner_id: effectiveUserId,
+        player_name: p.name,
+        player_phone: p.phone_number || null,
+        player_account_id: playerAccountId,
+        tournament_id: selectedTournament.id,
+        tournament_name: selectedTournament.name
+      };
     }));
 
     const { error } = await supabase.from('bar_tabs').insert(tabsToCreate);
