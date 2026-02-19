@@ -71,6 +71,7 @@ export type TournamentCategory = {
   registration_fee?: number;
   knockout_stage?: 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final';
   qualified_per_group?: number;
+  court_names?: string[] | null;
   created_at: string;
 };
 

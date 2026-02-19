@@ -14,18 +14,49 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [categories, setCategories] = useState<TournamentCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState<TournamentCategory | null>(null);
+  const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [newCategory, setNewCategory] = useState({
     name: '',
     format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
-    qualified_per_group: 2
+    qualified_per_group: 2,
+    court_names: [] as string[]
   });
 
   useEffect(() => {
     loadCategories();
+    fetchClubCourts();
   }, [tournamentId]);
+
+  const fetchClubCourts = async () => {
+    // Get tournament to find user_id
+    const { data: tournament } = await supabase
+      .from('tournaments')
+      .select('user_id')
+      .eq('id', tournamentId)
+      .single();
+
+    if (!tournament?.user_id) return;
+
+    const { data, error } = await supabase
+      .from('club_courts')
+      .select('id, name, type')
+      .eq('user_id', tournament.user_id)
+      .eq('is_active', true)
+      .order('sort_order')
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching courts:', error);
+      return;
+    }
+
+    if (data) {
+      setClubCourts(data);
+    }
+  };
 
   const loadCategories = async () => {
     const { data, error } = await supabase
@@ -61,7 +92,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
           max_teams: newCategory.max_teams,
           knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
-          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null
+          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
+          court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null
         });
 
       if (error) throw error;
@@ -72,7 +104,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         number_of_groups: 0,
         max_teams: 16,
         knockout_stage: 'quarterfinals',
-        qualified_per_group: 2
+        qualified_per_group: 2,
+        court_names: []
       });
 
       await loadCategories();
@@ -100,7 +133,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
           max_teams: editingCategory.max_teams,
           knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null
+          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
+          court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null
         })
         .eq('id', editingCategory.id);
 
@@ -257,6 +291,45 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
             </div>
 
+            {clubCourts.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Campos para esta Categoria ({newCategory.court_names.length > 0 ? newCategory.court_names.length : 'todos'} selecionado{newCategory.court_names.length !== 1 ? 's' : ''})
+                </label>
+                <div className="border border-gray-300 rounded-lg p-3 space-y-2 bg-gray-50">
+                  <div className="text-xs text-gray-600 mb-2">
+                    Se nenhum campo for selecionado, todos os campos do torneio serão usados
+                  </div>
+                  {clubCourts.map((court) => {
+                    const isSelected = newCategory.court_names.includes(court.name);
+                    return (
+                      <label
+                        key={court.id}
+                        className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                          isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            setNewCategory(prev => ({
+                              ...prev,
+                              court_names: isSelected
+                                ? prev.court_names.filter(n => n !== court.name)
+                                : [...prev.court_names, court.name]
+                            }));
+                          }}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">{court.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <button
               onClick={handleAddCategory}
               disabled={loading}
@@ -372,6 +445,49 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
                         </div>
 
+                        {clubCourts.length > 0 && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Campos para esta Categoria ({editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names.length : 'todos'} selecionado{editingCategory.court_names && editingCategory.court_names.length !== 1 ? 's' : ''})
+                            </label>
+                            <div className="border border-gray-300 rounded-lg p-3 space-y-2 bg-gray-50">
+                              <div className="text-xs text-gray-600 mb-2">
+                                Se nenhum campo for selecionado, todos os campos do torneio serão usados
+                              </div>
+                              {clubCourts.map((court) => {
+                                const isSelected = editingCategory.court_names?.includes(court.name) || false;
+                                return (
+                                  <label
+                                    key={court.id}
+                                    className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                                      isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-white'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setEditingCategory(prev => {
+                                          if (!prev) return prev;
+                                          const currentNames = prev.court_names || [];
+                                          return {
+                                            ...prev,
+                                            court_names: isSelected
+                                              ? currentNames.filter(n => n !== court.name)
+                                              : [...currentNames, court.name]
+                                          };
+                                        });
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm text-gray-700 font-medium">{court.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="flex gap-2">
                           <button
                             onClick={handleUpdateCategory}
@@ -403,6 +519,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             )}
                             {' • '}
                             Max {category.max_teams} {category.format === 'round_robin' || category.format === 'individual_groups_knockout' ? 'players' : 'teams'}
+                            {category.court_names && category.court_names.length > 0 && (
+                              <> • {category.court_names.length} campo{category.court_names.length !== 1 ? 's' : ''}</>
+                            )}
                           </div>
                         </div>
                         <div className="flex gap-2">

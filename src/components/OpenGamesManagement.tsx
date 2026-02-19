@@ -13,6 +13,7 @@ import {
   Eye,
   UserCheck,
   UserX,
+  UserPlus,
   X,
   ChevronDown,
   ChevronUp,
@@ -21,7 +22,8 @@ import {
   AlertCircle,
   TrendingUp,
   Search,
-  Trash2
+  Trash2,
+  Loader2
 } from 'lucide-react';
 
 interface OpenGame {
@@ -155,6 +157,20 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
   const [filter, setFilter] = useState<'all' | 'open' | 'full' | 'completed' | 'cancelled'>('all');
   const [expandedGame, setExpandedGame] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Add player modal state
+  const [addPlayerModal, setAddPlayerModal] = useState<{ gameId: string } | null>(null);
+  const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [playerSearchResults, setPlayerSearchResults] = useState<{
+    id: string;
+    name: string;
+    avatar_url: string | null;
+    level: number | null;
+    player_category: string | null;
+    phone_number: string | null;
+  }[]>([]);
+  const [playerSearchLoading, setPlayerSearchLoading] = useState(false);
+  const [addingPlayer, setAddingPlayer] = useState(false);
 
   useEffect(() => {
     if (effectiveUserId) {
@@ -440,6 +456,54 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
       return;
     }
 
+    loadGames();
+  }
+
+  async function handleSearchPlayers(query: string) {
+    setPlayerSearchQuery(query);
+    if (query.length < 2) {
+      setPlayerSearchResults([]);
+      return;
+    }
+    setPlayerSearchLoading(true);
+    const { data, error } = await supabase
+      .from('player_accounts')
+      .select('id, name, avatar_url, level, player_category, phone_number')
+      .ilike('name', `%${query}%`)
+      .order('name')
+      .limit(10);
+
+    if (!error && data) {
+      setPlayerSearchResults(data);
+    }
+    setPlayerSearchLoading(false);
+  }
+
+  async function handleAddPlayerToGame(gameId: string, playerAccountId: string) {
+    setAddingPlayer(true);
+    const { data, error } = await supabase.rpc('add_player_to_open_game', {
+      p_game_id: gameId,
+      p_player_account_id: playerAccountId,
+    });
+
+    if (error) {
+      console.error('Error adding player:', error);
+      alert('Erro ao adicionar jogador: ' + error.message);
+      setAddingPlayer(false);
+      return;
+    }
+
+    const result = data as any;
+    if (!result?.success) {
+      alert(result?.error || 'Erro ao adicionar jogador');
+      setAddingPlayer(false);
+      return;
+    }
+
+    setAddPlayerModal(null);
+    setPlayerSearchQuery('');
+    setPlayerSearchResults([]);
+    setAddingPlayer(false);
     loadGames();
   }
 
@@ -819,6 +883,20 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                               </p>
                             </div>
                             <div className="flex items-center gap-2">
+                              {(game.status === 'open') && confirmedPlayers.length < game.max_players && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setAddPlayerModal({ gameId: game.id });
+                                    setPlayerSearchQuery('');
+                                    setPlayerSearchResults([]);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors"
+                                >
+                                  <UserPlus className="w-4 h-4" />
+                                  Adicionar jogador
+                                </button>
+                              )}
                               {game.status === 'open' && (
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleCancelGame(game.id); }}
@@ -846,6 +924,96 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Add Player Modal */}
+      {addPlayerModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setAddPlayerModal(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-indigo-600" />
+                  Adicionar Jogador
+                </h3>
+                <button onClick={() => setAddPlayerModal(null)} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">Pesquise e adicione um jogador ao jogo</p>
+            </div>
+
+            <div className="p-5">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Nome do jogador..."
+                  value={playerSearchQuery}
+                  onChange={(e) => handleSearchPlayers(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  autoFocus
+                />
+                {playerSearchLoading && (
+                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 animate-spin" />
+                )}
+              </div>
+
+              <div className="mt-3 max-h-64 overflow-y-auto space-y-1">
+                {playerSearchQuery.length >= 2 && playerSearchResults.length === 0 && !playerSearchLoading && (
+                  <p className="text-sm text-gray-400 text-center py-4">Nenhum jogador encontrado</p>
+                )}
+                {playerSearchResults.map(p => {
+                  const pColors = categoryColors(p.player_category);
+                  // Check if player is already in game
+                  const gameData = games.find(g => g.id === addPlayerModal.gameId);
+                  const alreadyInGame = gameData?.players.some(gp => gp.player_account_id === p.id);
+
+                  return (
+                    <div
+                      key={p.id}
+                      className={`flex items-center gap-3 p-2.5 rounded-lg transition-colors ${
+                        alreadyInGame ? 'bg-gray-50 opacity-50 cursor-not-allowed' : 'hover:bg-indigo-50 cursor-pointer'
+                      }`}
+                      onClick={() => {
+                        if (!alreadyInGame && !addingPlayer) {
+                          handleAddPlayerToGame(addPlayerModal.gameId, p.id);
+                        }
+                      }}
+                    >
+                      {p.avatar_url ? (
+                        <img src={p.avatar_url} alt={p.name} className="w-9 h-9 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-gray-700 flex items-center justify-center text-white text-sm font-bold">
+                          {p.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{p.name}</p>
+                        <div className="flex items-center gap-1.5">
+                          {p.level != null && (
+                            <span className="text-[9px] font-bold text-white px-1.5 py-0 rounded-full" style={{ backgroundColor: pColors.hex }}>
+                              {p.level.toFixed(1)}
+                            </span>
+                          )}
+                          {p.player_category && <span className="text-[10px] text-gray-400">{p.player_category}</span>}
+                          {p.phone_number && <span className="text-[10px] text-gray-400 ml-1">{p.phone_number}</span>}
+                        </div>
+                      </div>
+                      {alreadyInGame ? (
+                        <span className="text-[10px] text-gray-400 font-medium">Já no jogo</span>
+                      ) : addingPlayer ? (
+                        <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />
+                      ) : (
+                        <UserPlus className="w-4 h-4 text-indigo-500" />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

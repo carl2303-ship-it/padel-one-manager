@@ -1076,7 +1076,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         (currentTournament as any).daily_end_time || '21:00',
         (currentTournament as any).match_duration_minutes || 15,
         [] as any[], // No existing matches since we deleted all
-        (currentTournament as any).daily_schedules || []
+        (currentTournament as any).daily_schedules || [],
+        (currentTournament as any).court_names || []
       );
 
       console.log('[ADVANCE] Scheduled matches returned:', scheduledByCategory.get(categoryId!)?.length || 0);
@@ -1085,7 +1086,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         tournament_id: tournament.id,
         category_id: categoryId || null,
         ...match,
-        court: getCourtNameFromIndex(match.court),
+        court: match.court, // Court name is already set by scheduler
         status: 'scheduled',
         team1_score_set1: 0,
         team2_score_set1: 0,
@@ -1224,7 +1225,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         tournament_id: tournament.id,
         category_id: categoryId || null,
         ...match,
-        court: getCourtNameFromIndex(match.court),
+        court: match.court, // Court name is already set by scheduler
         status: 'scheduled',
         team1_score_set1: 0,
         team2_score_set1: 0,
@@ -1357,7 +1358,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         (currentTournament as any).daily_end_time || '21:00',
         (currentTournament as any).match_duration_minutes || 15,
         existingMatches as any[],
-        (currentTournament as any).daily_schedules || []
+        (currentTournament as any).daily_schedules || [],
+        (currentTournament as any).court_names || []
       );
 
       const allScheduledMatches = scheduledByCategory.get(categoryId) || [];
@@ -1381,7 +1383,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             round: match.round,
             match_number: match.match_number,
             scheduled_time: match.scheduled_time,
-            court: getCourtNameFromIndex(match.court),
+            court: match.court, // Court name is already set by scheduler
             player1_individual_id: player1_id || null,
             player2_individual_id: player2_id || null,
             player3_individual_id: player3_id || null,
@@ -1402,7 +1404,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           tournament_id: tournament.id,
           category_id: categoryId,
           ...match,
-          court: getCourtNameFromIndex(match.court),
+          court: match.court, // Court name is already set by scheduler
           team1_id,
           team2_id,
           status: 'scheduled',
@@ -1551,7 +1553,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           format: cat.format === 'groups_knockout' ? 'groups' : cat.format,
           knockoutTeams: knockoutTeamsPlaceholder.length > 0 ? knockoutTeamsPlaceholder : undefined,
           isAmerican: isIndividual && cat.format === 'round_robin',
-          rounds: cat.rounds || 7
+          rounds: cat.rounds || 7,
+          courtNames: cat.court_names || undefined
         };
       }).filter(req => req.teams.length >= 2);
 
@@ -1568,7 +1571,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         (currentTournament as any).daily_end_time || '21:00',
         (currentTournament as any).match_duration_minutes || 15,
         [],
-        (currentTournament as any).daily_schedules || []
+        (currentTournament as any).daily_schedules || [],
+        (currentTournament as any).court_names || []
       );
 
       console.log(`[SCHEDULE ALL] scheduleMultipleCategories returned matches for ${scheduledByCategory.size} categories`);
@@ -1588,7 +1592,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             round: match.round,
             match_number: match.match_number,
             scheduled_time: match.scheduled_time,
-            court: getCourtNameFromIndex(match.court),
+            court: match.court, // Court name is already set by scheduler
             status: 'scheduled',
             team1_score_set1: 0,
             team2_score_set1: 0,
@@ -1868,7 +1872,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           round: match.round,
           match_number: match.match_number,
           scheduled_time: match.scheduled_time,
-          court: getCourtNameFromIndex(match.court),
+          court: match.court, // Court name is already set by scheduler
           status: 'scheduled',
           team1_score_set1: 0,
           team2_score_set1: 0,
