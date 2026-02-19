@@ -18,7 +18,16 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  Search
+  Search,
+  Plus,
+  Trash2,
+  ShoppingBag,
+  Image,
+  Tag,
+  Package,
+  Eye,
+  Clock,
+  CheckCircle
 } from 'lucide-react';
 
 interface RewardRule {
@@ -39,6 +48,30 @@ interface PlayerRewardEntry {
   tier: string;
 }
 
+interface CatalogItem {
+  id: string;
+  club_id: string;
+  title: string;
+  description: string | null;
+  image_url: string | null;
+  cost_points: number;
+  category: string;
+  stock: number | null;
+  is_active: boolean;
+  sort_order: number;
+}
+
+interface Redemption {
+  id: string;
+  catalog_item_id: string;
+  player_account_id: string;
+  points_spent: number;
+  status: string;
+  redeemed_at: string;
+  player_name?: string;
+  item_title?: string;
+}
+
 interface RewardsManagementProps {
   staffClubOwnerId?: string | null;
 }
@@ -54,6 +87,17 @@ const ACTION_LABELS: Record<string, { label: string; icon: JSX.Element; descript
   streak_3: { label: '3 jogos seguidos', icon: <TrendingUp className="w-4 h-4" />, description: 'Bónus por 3 jogos consecutivos' },
   streak_7: { label: '7 jogos seguidos', icon: <Star className="w-4 h-4" />, description: 'Bónus por 7 jogos consecutivos' },
   custom: { label: 'Personalizado', icon: <Gift className="w-4 h-4" />, description: 'Regra personalizada' },
+};
+
+const CATEGORY_LABELS: Record<string, { label: string; emoji: string }> = {
+  drink: { label: 'Bebida', emoji: '🍹' },
+  food: { label: 'Comida', emoji: '🍕' },
+  court: { label: 'Campo', emoji: '🎾' },
+  merchandise: { label: 'Merchandise', emoji: '👕' },
+  lesson: { label: 'Aula', emoji: '📚' },
+  discount: { label: 'Desconto', emoji: '💰' },
+  experience: { label: 'Experiência', emoji: '⭐' },
+  other: { label: 'Outros', emoji: '🎁' },
 };
 
 const TIER_LABELS: Record<string, { label: string; color: string; emoji: string }> = {
@@ -74,9 +118,20 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<{ points: number; isActive: boolean; spendThreshold: number }>({ points: 0, isActive: true, spendThreshold: 10 });
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'rules' | 'leaderboard'>('rules');
+  const [activeTab, setActiveTab] = useState<'rules' | 'catalog' | 'redemptions' | 'leaderboard'>('rules');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
+
+  // Catalog state
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [editingCatalog, setEditingCatalog] = useState<CatalogItem | null>(null);
+  const [showCatalogForm, setShowCatalogForm] = useState(false);
+  const [catalogForm, setCatalogForm] = useState({
+    title: '', description: '', image_url: '', cost_points: 50,
+    category: 'other', stock: '', is_active: true, sort_order: 0,
+  });
+
+  // Redemptions state
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
 
   useEffect(() => {
     if (effectiveUserId) loadData();
@@ -109,6 +164,42 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
       .order('action_type');
 
     if (rulesData) setRules(rulesData);
+
+    // Get catalog items
+    const { data: catalogData } = await supabase
+      .from('reward_catalog')
+      .select('*')
+      .eq('club_id', cid)
+      .order('sort_order', { ascending: true });
+
+    if (catalogData) setCatalogItems(catalogData);
+
+    // Get recent redemptions
+    const { data: redemptionsData } = await supabase
+      .from('reward_redemptions')
+      .select('id, catalog_item_id, player_account_id, points_spent, status, redeemed_at')
+      .eq('club_id', cid)
+      .order('redeemed_at', { ascending: false })
+      .limit(50);
+
+    if (redemptionsData && redemptionsData.length > 0) {
+      const rdPaIds = [...new Set(redemptionsData.map(r => r.player_account_id))];
+      const rdItemIds = [...new Set(redemptionsData.map(r => r.catalog_item_id))];
+
+      const [{ data: rdAccounts }, { data: rdItems }] = await Promise.all([
+        supabase.from('player_accounts').select('id, name').in('id', rdPaIds),
+        supabase.from('reward_catalog').select('id, title').in('id', rdItemIds),
+      ]);
+
+      const rdAccMap = new Map((rdAccounts || []).map(a => [a.id, a.name]));
+      const rdItemMap = new Map((rdItems || []).map(i => [i.id, i.title]));
+
+      setRedemptions(redemptionsData.map(r => ({
+        ...r,
+        player_name: rdAccMap.get(r.player_account_id) || 'Jogador',
+        item_title: rdItemMap.get(r.catalog_item_id) || 'Item',
+      })));
+    }
 
     // Get player rankings
     const { data: playerData } = await supabase
@@ -202,6 +293,106 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
     setSaving(false);
   }
 
+  async function saveCatalogItem() {
+    if (!clubId || !catalogForm.title.trim()) return;
+    setSaving(true);
+
+    const payload = {
+      club_id: clubId,
+      title: catalogForm.title.trim(),
+      description: catalogForm.description.trim() || null,
+      image_url: catalogForm.image_url.trim() || null,
+      cost_points: catalogForm.cost_points,
+      category: catalogForm.category,
+      stock: catalogForm.stock ? parseInt(catalogForm.stock) : null,
+      is_active: catalogForm.is_active,
+      sort_order: catalogForm.sort_order,
+    };
+
+    if (editingCatalog) {
+      const { error } = await supabase
+        .from('reward_catalog')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', editingCatalog.id);
+      if (error) alert('Erro: ' + error.message);
+      else {
+        setCatalogItems(prev => prev.map(i => i.id === editingCatalog.id ? { ...i, ...payload } as CatalogItem : i));
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('reward_catalog')
+        .insert(payload)
+        .select()
+        .single();
+      if (error) alert('Erro: ' + error.message);
+      else if (data) setCatalogItems(prev => [...prev, data as CatalogItem]);
+    }
+
+    setShowCatalogForm(false);
+    setEditingCatalog(null);
+    setCatalogForm({ title: '', description: '', image_url: '', cost_points: 50, category: 'other', stock: '', is_active: true, sort_order: 0 });
+    setSaving(false);
+  }
+
+  async function deleteCatalogItem(itemId: string) {
+    if (!confirm('Tem certeza que quer apagar esta recompensa?')) return;
+    const { error } = await supabase.from('reward_catalog').delete().eq('id', itemId);
+    if (error) alert('Erro: ' + error.message);
+    else setCatalogItems(prev => prev.filter(i => i.id !== itemId));
+  }
+
+  async function toggleCatalogActive(item: CatalogItem) {
+    const { error } = await supabase
+      .from('reward_catalog')
+      .update({ is_active: !item.is_active, updated_at: new Date().toISOString() })
+      .eq('id', item.id);
+    if (!error) setCatalogItems(prev => prev.map(i => i.id === item.id ? { ...i, is_active: !i.is_active } : i));
+  }
+
+  async function updateRedemptionStatus(redemptionId: string, newStatus: string) {
+    const updateData: any = { status: newStatus };
+    if (newStatus === 'approved') updateData.approved_at = new Date().toISOString();
+    if (newStatus === 'used') updateData.used_at = new Date().toISOString();
+
+    const { error } = await supabase
+      .from('reward_redemptions')
+      .update(updateData)
+      .eq('id', redemptionId);
+
+    if (error) alert('Erro: ' + error.message);
+    else {
+      setRedemptions(prev => prev.map(r => r.id === redemptionId ? { ...r, status: newStatus } : r));
+
+      // If cancelled, refund points
+      if (newStatus === 'cancelled') {
+        const redemption = redemptions.find(r => r.id === redemptionId);
+        if (redemption) {
+          await supabase.rpc('award_reward_points', {
+            p_player_account_id: redemption.player_account_id,
+            p_club_id: clubId,
+            p_action_type: 'custom',
+            p_custom_description: 'Reembolso: resgate cancelado',
+          });
+        }
+      }
+    }
+  }
+
+  function openEditCatalog(item: CatalogItem) {
+    setEditingCatalog(item);
+    setCatalogForm({
+      title: item.title,
+      description: item.description || '',
+      image_url: item.image_url || '',
+      cost_points: item.cost_points,
+      category: item.category,
+      stock: item.stock !== null ? String(item.stock) : '',
+      is_active: item.is_active,
+      sort_order: item.sort_order,
+    });
+    setShowCatalogForm(true);
+  }
+
   if (loading) {
     return (
       <div className="p-6">
@@ -270,7 +461,7 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="flex gap-2 mb-6 flex-wrap">
         <button
           onClick={() => setActiveTab('rules')}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -278,6 +469,27 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
           }`}
         >
           ⚙️ Regras
+        </button>
+        <button
+          onClick={() => setActiveTab('catalog')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'catalog' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          🎁 Catálogo ({catalogItems.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('redemptions')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors relative ${
+            activeTab === 'redemptions' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          📋 Resgates
+          {redemptions.filter(r => r.status === 'pending').length > 0 && (
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-[10px] flex items-center justify-center font-bold">
+              {redemptions.filter(r => r.status === 'pending').length}
+            </span>
+          )}
         </button>
         <button
           onClick={() => setActiveTab('leaderboard')}
@@ -422,6 +634,305 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
                 );
               })}
             </>
+          )}
+        </div>
+      )}
+
+      {/* Catalog Tab */}
+      {activeTab === 'catalog' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-500">Defina as recompensas que os jogadores podem resgatar com os seus pontos</p>
+            <button
+              onClick={() => {
+                setEditingCatalog(null);
+                setCatalogForm({ title: '', description: '', image_url: '', cost_points: 50, category: 'other', stock: '', is_active: true, sort_order: catalogItems.length });
+                setShowCatalogForm(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Adicionar recompensa
+            </button>
+          </div>
+
+          {catalogItems.length === 0 && !showCatalogForm ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+              <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-600 mb-2">Catálogo vazio</h3>
+              <p className="text-sm text-gray-400 mb-4">Adicione recompensas para os jogadores poderem resgatar</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {catalogItems.map(item => {
+                const cat = CATEGORY_LABELS[item.category] || CATEGORY_LABELS.other;
+                return (
+                  <div
+                    key={item.id}
+                    className={`bg-white rounded-xl border ${item.is_active ? 'border-gray-200' : 'border-gray-100 opacity-60'} overflow-hidden transition-all hover:shadow-md`}
+                  >
+                    {item.image_url && (
+                      <div className="h-32 bg-gray-100 overflow-hidden">
+                        <img src={item.image_url} alt={item.title} className="w-full h-full object-cover" />
+                      </div>
+                    )}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span>{cat.emoji}</span>
+                            <span className="px-2 py-0.5 bg-gray-100 rounded-full text-[10px] text-gray-500 font-medium">{cat.label}</span>
+                          </div>
+                          <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
+                          {item.description && <p className="text-xs text-gray-500 mt-0.5">{item.description}</p>}
+                        </div>
+                        <div className="text-right ml-3 flex-shrink-0">
+                          <p className="text-lg font-bold text-amber-600">{item.cost_points}</p>
+                          <p className="text-[10px] text-gray-400">pontos</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${item.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {item.is_active ? 'Ativo' : 'Inativo'}
+                          </span>
+                          {item.stock !== null && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">
+                              Stock: {item.stock}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => toggleCatalogActive(item)}
+                            className={`p-1.5 rounded-lg transition-colors ${item.is_active ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-green-50 text-green-500 hover:bg-green-100'}`}
+                            title={item.is_active ? 'Desativar' : 'Ativar'}
+                          >
+                            {item.is_active ? <X className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            onClick={() => openEditCatalog(item)}
+                            className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-colors"
+                            title="Editar"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteCatalogItem(item.id)}
+                            className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-red-100 hover:text-red-600 transition-colors"
+                            title="Apagar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Catalog Form Modal */}
+          {showCatalogForm && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowCatalogForm(false)}>
+              <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl" onClick={e => e.stopPropagation()}>
+                <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {editingCatalog ? '✏️ Editar recompensa' : '➕ Nova recompensa'}
+                  </h3>
+                  <button onClick={() => setShowCatalogForm(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-1">Título *</label>
+                    <input
+                      type="text"
+                      value={catalogForm.title}
+                      onChange={e => setCatalogForm(prev => ({ ...prev, title: e.target.value }))}
+                      placeholder="Ex: Café grátis"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-1">Descrição</label>
+                    <textarea
+                      value={catalogForm.description}
+                      onChange={e => setCatalogForm(prev => ({ ...prev, description: e.target.value }))}
+                      placeholder="Descrição da recompensa..."
+                      rows={2}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 block mb-1">Custo (pontos) *</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={catalogForm.cost_points}
+                        onChange={e => setCatalogForm(prev => ({ ...prev, cost_points: parseInt(e.target.value) || 0 }))}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 block mb-1">Categoria</label>
+                      <select
+                        value={catalogForm.category}
+                        onChange={e => setCatalogForm(prev => ({ ...prev, category: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                      >
+                        {Object.entries(CATEGORY_LABELS).map(([key, val]) => (
+                          <option key={key} value={key}>{val.emoji} {val.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 block mb-1">Stock (vazio = ilimitado)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={catalogForm.stock}
+                        onChange={e => setCatalogForm(prev => ({ ...prev, stock: e.target.value }))}
+                        placeholder="Ilimitado"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700 block mb-1">Ordem</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={catalogForm.sort_order}
+                        onChange={e => setCatalogForm(prev => ({ ...prev, sort_order: parseInt(e.target.value) || 0 }))}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-1">URL da imagem (opcional)</label>
+                    <input
+                      type="text"
+                      value={catalogForm.image_url}
+                      onChange={e => setCatalogForm(prev => ({ ...prev, image_url: e.target.value }))}
+                      placeholder="https://..."
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={catalogForm.is_active}
+                      onChange={e => setCatalogForm(prev => ({ ...prev, is_active: e.target.checked }))}
+                      className="w-4 h-4 text-amber-600 rounded"
+                    />
+                    <span className="text-sm text-gray-700">Ativo (visível para jogadores)</span>
+                  </label>
+                </div>
+                <div className="p-5 border-t border-gray-100 flex gap-3 justify-end">
+                  <button
+                    onClick={() => setShowCatalogForm(false)}
+                    className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={saveCatalogItem}
+                    disabled={saving || !catalogForm.title.trim()}
+                    className="px-6 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {saving ? 'A guardar...' : editingCatalog ? 'Guardar alterações' : 'Criar recompensa'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Redemptions Tab */}
+      {activeTab === 'redemptions' && (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500 mb-3">Pedidos de resgate dos jogadores. Aprove ou cancele cada pedido.</p>
+          
+          {redemptions.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
+              <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-600 mb-2">Sem resgates</h3>
+              <p className="text-sm text-gray-400">Quando os jogadores resgatarem recompensas, aparecerão aqui</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Data</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Jogador</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">Recompensa</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Pontos</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+                    <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {redemptions.map(r => (
+                    <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {new Date(r.redeemed_at).toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{r.player_name}</td>
+                      <td className="px-4 py-3 text-gray-700">{r.item_title}</td>
+                      <td className="px-4 py-3 text-center font-bold text-amber-600">{r.points_spent}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          r.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                          r.status === 'approved' ? 'bg-blue-100 text-blue-700' :
+                          r.status === 'used' ? 'bg-green-100 text-green-700' :
+                          'bg-red-100 text-red-700'
+                        }`}>
+                          {r.status === 'pending' ? '⏳ Pendente' :
+                           r.status === 'approved' ? '✓ Aprovado' :
+                           r.status === 'used' ? '✅ Utilizado' :
+                           '✗ Cancelado'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {r.status === 'pending' && (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => updateRedemptionStatus(r.id, 'approved')}
+                              className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                              title="Aprovar"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => updateRedemptionStatus(r.id, 'cancelled')}
+                              className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+                              title="Cancelar (reembolsar)"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                        {r.status === 'approved' && (
+                          <button
+                            onClick={() => updateRedemptionStatus(r.id, 'used')}
+                            className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700"
+                          >
+                            Marcar utilizado
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
