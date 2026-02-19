@@ -13,6 +13,7 @@ import StaffInviteAccept from './components/StaffInviteAccept';
 import Settings from './components/Settings';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
 import OpenGamesManagement from './components/OpenGamesManagement';
+import RewardsManagement from './components/RewardsManagement';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -29,10 +30,11 @@ import {
   UserCog,
   Settings as SettingsIcon,
   Shield,
-  Gamepad2
+  Gamepad2,
+  Gift
 } from 'lucide-react';
 
-type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'staff' | 'settings';
+type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
 
 interface StaffPermissions {
   isStaff: boolean;
@@ -207,6 +209,7 @@ function App() {
     { id: 'bar' as View, label: t.nav.bar, icon: Coffee, permission: 'perm_bar' },
     { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: BarChart3, permission: 'perm_reports' },
     { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: Gamepad2, permission: 'perm_bookings' },
+    { id: 'rewards' as View, label: 'Rewards', icon: Gift, permission: 'perm_bookings' },
     { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: UserCog, permission: 'owner_only' },
   ];
 
@@ -382,6 +385,7 @@ function App() {
           {view === 'bar' && staffPermissions.perm_bar && <BarManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'metrics' && staffPermissions.perm_reports && <ClubMetrics staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'open-games' && staffPermissions.perm_bookings && <OpenGamesManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'rewards' && staffPermissions.perm_bookings && <RewardsManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'staff' && staffPermissions.isOwner && <StaffManagement />}
           {view === 'settings' && staffPermissions.isOwner && <Settings />}
         </div>
