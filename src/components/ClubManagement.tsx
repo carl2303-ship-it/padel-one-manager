@@ -13,8 +13,14 @@ import {
   Phone,
   Mail,
   Globe,
-  Image
+  Image,
+  CreditCard,
+  Banknote,
+  Users,
+  LayoutGrid
 } from 'lucide-react';
+
+type PaymentMethod = 'at_club' | 'per_player' | 'full_court' | 'at_club_or_per_player' | 'at_club_or_full_court' | 'all';
 
 interface Club {
   id: string;
@@ -28,7 +34,19 @@ interface Club {
   email: string | null;
   website: string | null;
   is_active: boolean;
+  payment_method: PaymentMethod;
+  stripe_publishable_key: string | null;
+  stripe_secret_key: string | null;
 }
+
+const PAYMENT_LABELS: Record<PaymentMethod, string> = {
+  'at_club': '🏢 Apenas no clube',
+  'per_player': '💳 Online por jogador',
+  'full_court': '💳 Online campo inteiro',
+  'at_club_or_per_player': '🏢+💳 Clube ou online (por jogador)',
+  'at_club_or_full_court': '🏢+💳 Clube ou online (campo inteiro)',
+  'all': '🏢+💳 Todas as opções',
+};
 
 export default function ClubManagement() {
   const { t } = useI18n();
@@ -49,7 +67,10 @@ export default function ClubManagement() {
     country: 'Portugal',
     phone: '',
     email: '',
-    website: ''
+    website: '',
+    payment_method: 'at_club' as PaymentMethod,
+    stripe_publishable_key: '',
+    stripe_secret_key: '',
   });
 
   useEffect(() => {
@@ -81,7 +102,10 @@ export default function ClubManagement() {
       country: 'Portugal',
       phone: '',
       email: '',
-      website: ''
+      website: '',
+      payment_method: 'at_club',
+      stripe_publishable_key: '',
+      stripe_secret_key: '',
     });
     setEditingClub(null);
     setShowForm(false);
@@ -97,7 +121,10 @@ export default function ClubManagement() {
       country: club.country || 'Portugal',
       phone: club.phone || '',
       email: club.email || '',
-      website: club.website || ''
+      website: club.website || '',
+      payment_method: club.payment_method || 'at_club',
+      stripe_publishable_key: club.stripe_publishable_key || '',
+      stripe_secret_key: club.stripe_secret_key || '',
     });
     setEditingClub(club);
     setShowForm(true);
@@ -122,6 +149,9 @@ export default function ClubManagement() {
           phone: formData.phone.trim() || null,
           email: formData.email.trim() || null,
           website: formData.website.trim() || null,
+          payment_method: formData.payment_method,
+          stripe_publishable_key: formData.stripe_publishable_key.trim() || null,
+          stripe_secret_key: formData.stripe_secret_key.trim() || null,
           updated_at: new Date().toISOString()
         })
         .eq('id', editingClub.id);
@@ -143,7 +173,10 @@ export default function ClubManagement() {
           country: formData.country.trim() || null,
           phone: formData.phone.trim() || null,
           email: formData.email.trim() || null,
-          website: formData.website.trim() || null
+          website: formData.website.trim() || null,
+          payment_method: formData.payment_method,
+          stripe_publishable_key: formData.stripe_publishable_key.trim() || null,
+          stripe_secret_key: formData.stripe_secret_key.trim() || null,
         });
 
       if (!error) {
@@ -335,6 +368,72 @@ export default function ClubManagement() {
                 />
               </div>
             </div>
+
+            {/* Payment Settings Section */}
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-blue-600" />
+                Configuração de Pagamento
+              </h4>
+              
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Método de pagamento
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {(Object.entries(PAYMENT_LABELS) as [PaymentMethod, string][]).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, payment_method: value })}
+                        className={`text-left px-3 py-2.5 rounded-lg border text-sm transition ${
+                          formData.payment_method === value
+                            ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {formData.payment_method !== 'at_club' && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-3">
+                    <p className="text-xs text-amber-700 flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5" />
+                      Para pagamentos online, configure as chaves Stripe do clube.
+                    </p>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Stripe Publishable Key
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.stripe_publishable_key}
+                        onChange={(e) => setFormData({ ...formData, stripe_publishable_key: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+                        placeholder="pk_live_..."
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Stripe Secret Key
+                      </label>
+                      <input
+                        type="password"
+                        value={formData.stripe_secret_key}
+                        onChange={(e) => setFormData({ ...formData, stripe_secret_key: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
+                        placeholder="sk_live_..."
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="flex gap-3 pt-2">
               <button
                 type="button"
@@ -451,6 +550,16 @@ export default function ClubManagement() {
                         {club.email}
                       </span>
                     )}
+                  </div>
+                  <div className="mt-2">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      club.payment_method === 'at_club' ? 'bg-gray-100 text-gray-600' :
+                      club.stripe_secret_key ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      <CreditCard className="w-3 h-3" />
+                      {PAYMENT_LABELS[club.payment_method] || 'Pagar no clube'}
+                      {club.payment_method !== 'at_club' && !club.stripe_secret_key && ' (Stripe não configurado)'}
+                    </span>
                   </div>
                 </div>
               </div>

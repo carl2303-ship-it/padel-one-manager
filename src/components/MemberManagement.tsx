@@ -774,69 +774,73 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full text-xs">
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">{t.members.name}</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">{t.members.phone}</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3 hidden sm:table-cell">{t.members.plan}</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">{t.members.expiresOn}</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">{t.members.status}</th>
-                    <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">{t.common.actions}</th>
+                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.name}</th>
+                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.phone}</th>
+                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2 hidden sm:table-cell">{t.members.plan}</th>
+                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.expiresOn}</th>
+                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.status}</th>
+                    <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.common.actions}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {getFilteredSubscriptions().map(sub => (
                     <tr key={sub.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{sub.member_name || 'N/A'}</div>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-gray-900 text-xs truncate max-w-[120px]" title={sub.member_name || 'N/A'}>
+                          {sub.member_name || 'N/A'}
+                        </div>
                         {sub.member_email && (
-                          <div className="text-xs text-gray-500 flex items-center gap-1">
-                            <Mail className="w-3 h-3" />
+                          <div className="text-[10px] text-gray-500 flex items-center gap-1 truncate max-w-[120px]" title={sub.member_email}>
+                            <Mail className="w-2.5 h-2.5" />
                             {sub.member_email}
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         {sub.member_phone ? (
-                          <a href={`tel:${sub.member_phone}`} className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1">
-                            <Phone className="w-3 h-3" />
+                          <a href={`tel:${sub.member_phone}`} className="text-[10px] text-gray-600 hover:text-blue-600 flex items-center gap-1 truncate max-w-[100px]" title={sub.member_phone}>
+                            <Phone className="w-2.5 h-2.5" />
                             {sub.member_phone}
                           </a>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-gray-400 text-[10px]">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
-                        <div className="font-medium text-gray-900">{sub.plan?.name || 'Unknown'}</div>
-                        <div className="text-xs text-gray-500">{sub.amount_paid} EUR</div>
+                      <td className="px-2 py-2 hidden sm:table-cell">
+                        <div className="font-medium text-gray-900 text-xs truncate max-w-[100px]" title={sub.plan?.name || 'Unknown'}>
+                          {sub.plan?.name || 'Unknown'}
+                        </div>
+                        <div className="text-[10px] text-gray-500">{sub.amount_paid} EUR</div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{formatDate(sub.end_date)}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(sub.status)}`}>
+                      <td className="px-2 py-2 text-[10px] text-gray-600">{formatDate(sub.end_date)}</td>
+                      <td className="px-2 py-2">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getStatusColor(sub.status)}`}>
                           {t.members[sub.status as keyof typeof t.members] || sub.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
+                      <td className="px-2 py-2 text-right">
+                        <div className="flex items-center justify-end gap-0.5">
                           <button
                             onClick={() => loadTournamentHistory(sub)}
-                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                            className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition"
                             title="View Details"
                           >
-                            <Eye className="w-4 h-4" />
+                            <Eye className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleEditSubscription(sub)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
                           >
-                            <Edit2 className="w-4 h-4" />
+                            <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteSubscription(sub.id)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                            className="p-1 text-red-600 hover:bg-red-50 rounded transition"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -863,44 +867,46 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                 </p>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full text-xs">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Nome</th>
-                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Telefone</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Jogos</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Total Gasto</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Último Jogo</th>
+                      <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Nome</th>
+                      <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Telefone</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Jogos</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Total Gasto</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Último Jogo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {openGamePlayers.map((player, idx) => (
                       <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-gray-900 flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 text-sm font-bold">
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-gray-900 text-xs flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 text-[10px] font-bold flex-shrink-0">
                               {player.player_name?.charAt(0)?.toUpperCase() || '?'}
                             </div>
-                            {player.player_name}
+                            <span className="truncate max-w-[120px]" title={player.player_name}>
+                              {player.player_name}
+                            </span>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <a href={`tel:${player.player_phone}`} className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1">
-                            <Phone className="w-3 h-3" />
+                        <td className="px-2 py-2">
+                          <a href={`tel:${player.player_phone}`} className="text-[10px] text-gray-600 hover:text-blue-600 flex items-center gap-1 truncate max-w-[100px]" title={player.player_phone}>
+                            <Phone className="w-2.5 h-2.5" />
                             {player.player_phone}
                           </a>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-sm font-medium">
+                        <td className="px-2 py-2 text-right">
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] font-medium">
                             🎾 {player.games_count}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-emerald-600 font-medium">
+                        <td className="px-2 py-2 text-right">
+                          <span className="text-emerald-600 font-medium text-[10px]">
                             {player.total_spent.toFixed(2)} EUR
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right text-sm text-gray-500">
+                        <td className="px-2 py-2 text-right text-[10px] text-gray-500">
                           {new Date(player.last_game_date).toLocaleDateString('pt-PT')}
                         </td>
                       </tr>
@@ -927,57 +933,59 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                 </p>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full text-xs">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Nome</th>
-                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Telefone</th>
-                      <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Torneios</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Pagamentos</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Total Gasto</th>
-                      <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Último</th>
+                      <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Nome</th>
+                      <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Telefone</th>
+                      <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Torneios</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Pagamentos</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Total Gasto</th>
+                      <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">Último</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {tournamentPlayers.map((player, idx) => (
                       <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-gray-900 flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-sm font-bold">
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-gray-900 text-xs flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 text-[10px] font-bold flex-shrink-0">
                               {player.player_name?.charAt(0)?.toUpperCase() || '?'}
                             </div>
-                            {player.player_name}
+                            <span className="truncate max-w-[120px]" title={player.player_name}>
+                              {player.player_name}
+                            </span>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <a href={`tel:${player.player_phone}`} className="text-sm text-gray-600 hover:text-blue-600 flex items-center gap-1">
-                            <Phone className="w-3 h-3" />
+                        <td className="px-2 py-2">
+                          <a href={`tel:${player.player_phone}`} className="text-[10px] text-gray-600 hover:text-blue-600 flex items-center gap-1 truncate max-w-[100px]" title={player.player_phone}>
+                            <Phone className="w-2.5 h-2.5" />
                             {player.player_phone}
                           </a>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
+                        <td className="px-2 py-2">
+                          <div className="flex flex-wrap gap-0.5">
                             {player.tournament_names.slice(0, 2).map((name, i) => (
-                              <span key={i} className="inline-flex items-center px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium truncate max-w-[120px]" title={name}>
+                              <span key={i} className="inline-flex items-center px-1 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px] font-medium truncate max-w-[100px]" title={name}>
                                 {name}
                               </span>
                             ))}
                             {player.tournament_names.length > 2 && (
-                              <span className="text-[10px] text-amber-500">+{player.tournament_names.length - 2}</span>
+                              <span className="text-[9px] text-amber-500">+{player.tournament_names.length - 2}</span>
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-sm font-medium">
+                        <td className="px-2 py-2 text-right">
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-medium">
                             {player.tournament_count}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-amber-600 font-medium">
+                        <td className="px-2 py-2 text-right">
+                          <span className="text-amber-600 font-medium text-[10px]">
                             {player.total_spent.toFixed(2)} EUR
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-right text-sm text-gray-500">
+                        <td className="px-2 py-2 text-right text-[10px] text-gray-500">
                           {new Date(player.last_tournament_date).toLocaleDateString('pt-PT')}
                         </td>
                       </tr>
