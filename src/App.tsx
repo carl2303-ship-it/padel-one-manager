@@ -78,11 +78,18 @@ function App() {
   };
 
   useEffect(() => {
+    // Check both query params and hash for invite token
     const urlParams = new URLSearchParams(window.location.search);
-    const inviteToken = urlParams.get('staff-invite');
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    
+    // Try query param first, then hash
+    const inviteToken = urlParams.get('staff-invite') || hashParams.get('staff-invite');
+    
     if (inviteToken) {
+      console.log('[App] Staff invite token found:', inviteToken);
       setStaffInviteToken(inviteToken);
     }
+    
     if (window.location.hash === '#super-admin' || urlParams.get('super-admin') !== null) {
       setShowSuperAdmin(true);
     }

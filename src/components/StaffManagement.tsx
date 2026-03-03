@@ -20,7 +20,8 @@ import {
   Trophy,
   Send,
   Clock,
-  CheckCircle
+  CheckCircle,
+  Building2
 } from 'lucide-react';
 
 interface StaffMember {
@@ -28,7 +29,7 @@ interface StaffMember {
   name: string;
   email: string;
   phone: string;
-  role: 'admin' | 'bar_staff' | 'coach' | 'receptionist' | 'other';
+  role: 'admin' | 'bar_staff' | 'coach' | 'receptionist' | 'club_owner' | 'other';
   permissions: Record<string, boolean>;
   is_active: boolean;
   notes: string | null;
@@ -54,6 +55,7 @@ const roleIcons = {
   bar_staff: Coffee,
   coach: GraduationCap,
   receptionist: UserCheck,
+  club_owner: Building2,
   other: MoreHorizontal
 };
 
@@ -62,6 +64,7 @@ const roleColors = {
   bar_staff: 'bg-rose-100 text-rose-700 border-rose-200',
   coach: 'bg-amber-100 text-amber-700 border-amber-200',
   receptionist: 'bg-blue-100 text-blue-700 border-blue-200',
+  club_owner: 'bg-purple-100 text-purple-700 border-purple-200',
   other: 'bg-gray-100 text-gray-700 border-gray-200'
 };
 
@@ -103,6 +106,7 @@ export default function StaffManagement() {
     bar_staff: t.staff?.barStaff || 'Bar/Restaurant',
     coach: t.staff?.coach || 'Coach',
     receptionist: t.staff?.receptionist || 'Receptionist',
+    club_owner: t.staff?.clubOwner || 'Club Owner',
     other: t.staff?.other || 'Other'
   };
 
@@ -214,13 +218,82 @@ export default function StaffManagement() {
         .from('club_staff')
         .update(staffData)
         .eq('id', editingStaff.id);
+      
+      // Se o role é 'coach', também atualizar em club_coaches
+      if (form.role === 'coach') {
+        // Buscar user_id do staff se existir
+        const { data: staffMember } = await supabase
+          .from('club_staff')
+          .select('user_id')
+          .eq('id', editingStaff.id)
+          .single();
+        
+        if (staffMember?.user_id) {
+          // Verificar se já existe em club_coaches
+          const { data: existingCoach } = await supabase
+            .from('club_coaches')
+            .select('id')
+            .eq('user_id', staffMember.user_id)
+            .eq('club_owner_id', user.id)
+            .maybeSingle();
+          
+          if (existingCoach) {
+            // Atualizar coach existente
+            await supabase
+              .from('club_coaches')
+              .update({
+                name: form.name,
+                email: form.email,
+                phone: normalizePhone(form.phone),
+                is_active: form.is_active
+              })
+              .eq('id', existingCoach.id);
+          } else {
+            // Criar novo coach
+            await supabase
+              .from('club_coaches')
+              .insert({
+                user_id: staffMember.user_id,
+                club_owner_id: user.id,
+                name: form.name,
+                email: form.email,
+                phone: normalizePhone(form.phone),
+                is_active: form.is_active
+              });
+          }
+        }
+      }
     } else {
-      await supabase
+      const { data: newStaff } = await supabase
         .from('club_staff')
         .insert({
           ...staffData,
           club_owner_id: user.id
-        });
+        })
+        .select()
+        .single();
+      
+      // Se o role é 'coach', também criar em club_coaches quando tiver user_id
+      // Nota: O trigger sync_staff_coach_to_club_coaches irá criar automaticamente
+      // quando o staff aceitar o convite e obter um user_id
+      if (form.role === 'coach' && newStaff && newStaff.user_id) {
+        // Se o staff já tem user_id, criar imediatamente em club_coaches
+        await supabase
+          .from('club_coaches')
+          .insert({
+            user_id: newStaff.user_id,
+            club_owner_id: user.id,
+            name: form.name,
+            email: form.email,
+            phone: normalizePhone(form.phone),
+            is_active: form.is_active
+          })
+          .then(({ error }) => {
+            if (error) {
+              console.error('[StaffManagement] Error creating coach in club_coaches:', error);
+            }
+          });
+      }
     }
 
     setShowForm(false);
@@ -364,6 +437,7 @@ export default function StaffManagement() {
     bar_staff: staff.filter(s => s.role === 'bar_staff').length,
     coach: staff.filter(s => s.role === 'coach').length,
     receptionist: staff.filter(s => s.role === 'receptionist').length,
+    club_owner: staff.filter(s => s.role === 'club_owner').length,
     other: staff.filter(s => s.role === 'other').length
   };
 

@@ -449,6 +449,24 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     setSaving(true);
 
     let playerId = selectedPlayer?.id || null;
+    let playerAccountId: string | null = null;
+    let studentId: string | null = null;
+
+    // Se há um jogador selecionado, tentar buscar o player_account_id
+    if (selectedPlayer) {
+      // Tentar encontrar player_accounts pelo nome ou telefone do organizer_player
+      const { data: playerAccount } = await supabase
+        .from('player_accounts')
+        .select('id, user_id')
+        .or(`name.ilike.%${selectedPlayer.name}%,phone_number.eq.${selectedPlayer.phone_number || ''}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (playerAccount) {
+        playerAccountId = playerAccount.id;
+        studentId = playerAccount.user_id;
+      }
+    }
 
     if (isCreatingNewPlayer && !selectedPlayer) {
       const { data: newPlayer, error } = await supabase
@@ -464,6 +482,21 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       if (newPlayer && !error) {
         playerId = newPlayer.id;
+        
+        // Tentar encontrar player_accounts pelo nome ou telefone do novo organizer_player
+        if (studentPhone.trim()) {
+          const { data: playerAccount } = await supabase
+            .from('player_accounts')
+            .select('id, user_id')
+            .or(`name.ilike.%${studentName.trim()}%,phone_number.eq.${studentPhone.trim()}`)
+            .limit(1)
+            .maybeSingle();
+
+          if (playerAccount) {
+            playerAccountId = playerAccount.id;
+            studentId = playerAccount.user_id;
+          }
+        }
       }
     }
 
@@ -471,7 +504,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       class_id: selectedClassForStudent.id,
       student_name: studentName.trim(),
       status: 'enrolled',
-      organizer_player_id: playerId
+      organizer_player_id: playerId,
+      student_id: studentId,
+      player_account_id: playerAccountId
     });
 
     setShowStudentForm(false);

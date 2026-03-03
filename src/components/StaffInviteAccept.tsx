@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { useI18n } from '../lib/i18nContext';
 import {
   Shield,
@@ -51,16 +52,45 @@ export default function StaffInviteAccept({ inviteToken, onComplete, onCancel }:
     setLoading(true);
     setError(null);
 
-    const { data, error: fetchError } = await supabase
+    console.log('[StaffInviteAccept] Loading invite data for token:', inviteToken);
+
+    // Use anon client to access invite (RLS policy allows anon access)
+    const anonSupabase = createClient(
+      import.meta.env.VITE_SUPABASE_URL,
+      import.meta.env.VITE_SUPABASE_ANON_KEY
+    );
+
+    const { data, error: fetchError } = await anonSupabase
       .from('club_staff')
-      .select('id, name, email, role, club_owner_id')
+      .select('id, name, email, role, club_owner_id, invite_expires_at')
       .eq('invite_token', inviteToken)
       .maybeSingle();
 
-    if (fetchError || !data) {
+    console.log('[StaffInviteAccept] Fetch result:', { data, error: fetchError });
+
+    if (fetchError) {
+      console.error('[StaffInviteAccept] Error fetching invite:', fetchError);
       setError(t.staff?.inviteNotFound || 'Invite not found or expired');
       setLoading(false);
       return;
+    }
+
+    if (!data) {
+      console.error('[StaffInviteAccept] No data found for token:', inviteToken);
+      setError(t.staff?.inviteNotFound || 'Invite not found or expired');
+      setLoading(false);
+      return;
+    }
+
+    // Check if invite is expired
+    if (data.invite_expires_at) {
+      const expiresAt = new Date(data.invite_expires_at);
+      if (expiresAt < new Date()) {
+        console.error('[StaffInviteAccept] Invite expired:', expiresAt);
+        setError(t.staff?.inviteExpired || 'This invite has expired. Please request a new one.');
+        setLoading(false);
+        return;
+      }
     }
 
     setStaffData(data);
@@ -116,7 +146,13 @@ export default function StaffInviteAccept({ inviteToken, onComplete, onCancel }:
 
       const userId = authData?.user?.id;
 
-      const { error: updateError } = await supabase
+      // Use anon client to update (RLS policy allows anon to update when accepting invite)
+      const anonSupabase = createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_ANON_KEY
+      );
+
+      const { error: updateError } = await anonSupabase
         .from('club_staff')
         .update({
           user_id: userId,

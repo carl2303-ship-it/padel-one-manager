@@ -94,8 +94,11 @@ Deno.serve(async (req: Request) => {
       throw new Error('Failed to save invite token');
     }
 
-    const appUrl = 'https://padelclubmanagement.netlify.app';
-    const inviteUrl = `${appUrl}?staff-invite=${inviteToken}`;
+    // Get app URL from environment or use default
+    const appUrl = Deno.env.get('MANAGER_APP_URL') || 'https://padelclubmanagement.netlify.app';
+    // Remove trailing slash if present
+    const cleanAppUrl = appUrl.replace(/\/$/, '');
+    const inviteUrl = `${cleanAppUrl}?staff-invite=${encodeURIComponent(inviteToken)}`;
 
     const roleLabels: Record<string, string> = {
       admin: 'Administrador',
