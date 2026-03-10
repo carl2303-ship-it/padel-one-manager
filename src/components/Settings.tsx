@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2 } from 'lucide-react';
+import { usePushNotifications } from '../lib/usePushNotifications';
+import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle } from 'lucide-react';
 import CourtManagement from './CourtManagement';
 import ClubManagement from './ClubManagement';
 
@@ -11,12 +12,21 @@ type SettingsTab = 'general' | 'courts' | 'clubs';
 export default function Settings() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const {
+    permission: pushPermission,
+    isSubscribed: isPushSubscribed,
+    isSupported: isPushSupported,
+    loading: pushLoading,
+    subscribe: subscribePush,
+    unsubscribe: unsubscribePush,
+  } = usePushNotifications();
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pushMessage, setPushMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [logoUrl, setLogoUrl] = useState('');
   const [logoSaving, setLogoSaving] = useState(false);
@@ -132,6 +142,27 @@ export default function Settings() {
       setTimeout(() => setLogoSuccess(''), 3000);
     }
     setLogoSaving(false);
+  };
+
+  const handleTogglePush = async () => {
+    setPushMessage(null);
+    if (isPushSubscribed) {
+      const success = await unsubscribePush();
+      if (success) {
+        setPushMessage({ type: 'success', text: 'Notificações desativadas' });
+      } else {
+        setPushMessage({ type: 'error', text: 'Erro ao desativar notificações' });
+      }
+    } else {
+      const success = await subscribePush();
+      if (success) {
+        setPushMessage({ type: 'success', text: 'Notificações ativadas! Receberá alertas de novas reservas e inscrições em aulas.' });
+      } else if (pushPermission === 'denied') {
+        setPushMessage({ type: 'error', text: 'Permissão negada. Ative as notificações nas definições do navegador.' });
+      } else {
+        setPushMessage({ type: 'error', text: 'Erro ao ativar notificações' });
+      }
+    }
   };
 
   const tabs = [
@@ -339,6 +370,96 @@ export default function Settings() {
               </button>
             </form>
           </div>
+
+          {isPushSupported ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="flex items-center gap-3 p-4 bg-gray-50 border-b border-gray-100">
+                <Bell className="w-5 h-5 text-gray-600" />
+                <h2 className="font-semibold text-gray-900">Notificações Push</h2>
+              </div>
+              <div className="p-4 space-y-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {isPushSubscribed ? (
+                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                          <Bell className="w-5 h-5 text-green-600" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
+                          <BellOff className="w-5 h-5 text-gray-500" />
+                        </div>
+                      )}
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {isPushSubscribed ? 'Notificações ativas' : 'Notificações desativadas'}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {isPushSubscribed
+                            ? 'Receberá alertas de novas reservas e inscrições em aulas'
+                            : 'Ative para receber alertas no telemóvel'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleTogglePush}
+                      disabled={pushLoading}
+                      className={`px-4 py-2 rounded-lg font-medium transition ${
+                        isPushSubscribed
+                          ? 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      } disabled:opacity-50`}
+                    >
+                      {pushLoading ? '...' : isPushSubscribed ? 'Desativar' : 'Ativar'}
+                    </button>
+                  </div>
+                </div>
+
+                {pushPermission === 'denied' && (
+                  <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      As notificações foram bloqueadas. Para ativar, aceda às definições do navegador e permita notificações para este site.
+                    </p>
+                  </div>
+                )}
+
+                {pushMessage && (
+                  <div className={`flex items-center gap-2 p-4 rounded-lg ${
+                    pushMessage.type === 'success'
+                      ? 'bg-green-50 text-green-800'
+                      : 'bg-red-50 text-red-800'
+                  }`}>
+                    {pushMessage.type === 'success' ? (
+                      <CheckCircle className="w-5 h-5" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5" />
+                    )}
+                    <span className="text-sm font-medium">{pushMessage.text}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="flex items-center gap-3 p-4 bg-gray-50 border-b border-gray-100">
+                <BellOff className="w-5 h-5 text-gray-600" />
+                <h2 className="font-semibold text-gray-900">Notificações Push</h2>
+              </div>
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800 mb-2">
+                  <strong>Notificações push não estão disponíveis</strong>
+                </p>
+                <p className="text-xs text-yellow-700">
+                  Para receber notificações de novas reservas e inscrições, certifique-se de que:
+                </p>
+                <ul className="text-xs text-yellow-700 mt-2 list-disc list-inside space-y-1">
+                  <li>Está a usar um navegador que suporta notificações push (Chrome, Firefox, Edge)</li>
+                  <li>O site está a ser acedido via HTTPS</li>
+                  <li>As notificações estão permitidas nas definições do navegador</li>
+                </ul>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
             <h3 className="font-medium text-gray-900 mb-2">Account</h3>

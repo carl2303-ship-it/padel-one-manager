@@ -583,15 +583,40 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         loadData();
       }
     } else {
-      const { error } = await supabase
+      const { error, data: newBooking } = await supabase
         .from('court_bookings')
         .insert({
           ...bookingData,
           user_id: effectiveUserId,
           status: 'confirmed'
-        });
+        })
+        .select()
+        .single();
 
-      if (!error) {
+      if (!error && newBooking && effectiveUserId) {
+        // Notify manager about new booking
+        try {
+          await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+              },
+              body: JSON.stringify({
+                userId: effectiveUserId,
+                type: 'booking_created',
+                bookingId: newBooking.id,
+                courtName: court.name,
+                playerName: players[0].name || players[0].phone || 'Cliente',
+              }),
+            }
+          );
+        } catch (notifyError) {
+          console.error('Error notifying manager:', notifyError);
+        }
+
         setShowNewBooking(false);
         resetBookingForm();
         loadData();
@@ -1493,7 +1518,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     // First, get the booking to check if it's an open_game
     const { data: booking } = await supabase
       .from('court_bookings')
-      .select('id, event_type, notes')
+      .select('id, event_type, notes, player1_name, booked_by_name, court_id')
       .eq('id', bookingId)
       .single();
 
@@ -1502,7 +1527,41 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       .update({ status: 'cancelled' })
       .eq('id', bookingId);
 
-    if (!error) {
+    if (!error && booking && effectiveUserId) {
+      // Get court name
+      let courtName = '';
+      if (booking.court_id) {
+        const { data: court } = await supabase
+          .from('club_courts')
+          .select('name')
+          .eq('id', booking.court_id)
+          .single();
+        if (court) courtName = court.name;
+      }
+
+      // Notify manager about cancelled booking
+      try {
+        await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({
+              userId: effectiveUserId,
+              type: 'booking_cancelled',
+              bookingId: booking.id,
+              courtName: courtName,
+              playerName: booking.player1_name || booking.booked_by_name || 'Cliente',
+            }),
+          }
+        );
+      } catch (notifyError) {
+        console.error('Error notifying manager:', notifyError);
+      }
+
       // If this is an open_game booking, also cancel the linked open_game
       if (booking?.event_type === 'open_game' && booking?.notes) {
         const idMatch = booking.notes.match(/ID:\s*([0-9a-f-]+)/i);

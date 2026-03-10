@@ -500,7 +500,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       }
     }
 
-    await supabase.from('class_enrollments').insert({
+    const { error: enrollmentError } = await supabase.from('class_enrollments').insert({
       class_id: selectedClassForStudent.id,
       student_name: studentName.trim(),
       status: 'enrolled',
@@ -508,6 +508,38 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       student_id: studentId,
       player_account_id: playerAccountId
     });
+
+    if (!enrollmentError && effectiveUserId && selectedClassForStudent) {
+      // Get class details for notification
+      const scheduledAt = new Date(selectedClassForStudent.scheduled_at);
+      const classDate = scheduledAt.toISOString().split('T')[0];
+      const classTime = `${scheduledAt.getHours().toString().padStart(2, '0')}:${scheduledAt.getMinutes().toString().padStart(2, '0')}`;
+      const className = selectedClassForStudent.class_type?.name || 'Aula';
+
+      // Notify manager about new enrollment
+      try {
+        await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({
+              userId: effectiveUserId,
+              type: 'class_enrollment',
+              playerName: studentName.trim(),
+              className: className,
+              classDate: classDate,
+              classTime: classTime,
+            }),
+          }
+        );
+      } catch (notifyError) {
+        console.error('Error notifying manager:', notifyError);
+      }
+    }
 
     setShowStudentForm(false);
     setSelectedClassForStudent(null);
@@ -523,7 +555,66 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
   const handleRemoveStudent = async (enrollmentId: string) => {
     if (!confirm(t.message.confirmDelete)) return;
-    await supabase.from('class_enrollments').delete().eq('id', enrollmentId);
+    
+    // Get enrollment details before deleting
+    const { data: enrollment } = await supabase
+      .from('class_enrollments')
+      .select('id, student_name, class_id')
+      .eq('id', enrollmentId)
+      .single();
+
+    const { error } = await supabase.from('class_enrollments').delete().eq('id', enrollmentId);
+
+    if (!error && enrollment && effectiveUserId && enrollment.class_id) {
+      // Get class details for notification
+      const { data: classData } = await supabase
+        .from('club_classes')
+        .select('scheduled_at, class_type_id')
+        .eq('id', enrollment.class_id)
+        .single();
+
+      if (classData) {
+        // Get class type name
+        let className = 'Aula';
+        if (classData.class_type_id) {
+          const { data: classType } = await supabase
+            .from('class_types')
+            .select('name')
+            .eq('id', classData.class_type_id)
+            .single();
+          if (classType) className = classType.name;
+        }
+
+        const scheduledAt = new Date(classData.scheduled_at);
+        const classDate = scheduledAt.toISOString().split('T')[0];
+        const classTime = `${scheduledAt.getHours().toString().padStart(2, '0')}:${scheduledAt.getMinutes().toString().padStart(2, '0')}`;
+
+        // Notify manager about cancellation
+        try {
+          await fetch(
+            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+              },
+              body: JSON.stringify({
+                userId: effectiveUserId,
+                type: 'class_cancellation',
+                playerName: enrollment.student_name || 'Aluno',
+                className: className,
+                classDate: classDate,
+                classTime: classTime,
+              }),
+            }
+          );
+        } catch (notifyError) {
+          console.error('Error notifying manager:', notifyError);
+        }
+      }
+    }
+
     loadData();
   };
 

@@ -69,7 +69,25 @@ const roleColors = {
 };
 
 const normalizePhone = (phone: string): string => {
-  return phone.replace(/[\s\-\(\)\.]/g, '').replace(/^00/, '+');
+  // Remove espaços, hífens, parênteses e pontos
+  let normalized = phone.replace(/[\s\-\(\)\.]/g, '');
+  
+  // Substitui 00 por +
+  if (normalized.startsWith('00')) {
+    normalized = '+' + normalized.substring(2);
+  }
+  
+  // Se começar só com + sem indicativo, adiciona +351
+  if (normalized === '+' || (normalized.startsWith('+') && normalized.length < 4)) {
+    normalized = '+351' + normalized.substring(1);
+  }
+  
+  // Se não começar com +, adiciona +351
+  if (!normalized.startsWith('+')) {
+    normalized = '+351' + normalized;
+  }
+  
+  return normalized;
 };
 
 export default function StaffManagement() {
@@ -83,6 +101,7 @@ export default function StaffManagement() {
   const [filterRole, setFilterRole] = useState<string>('all');
   const [playerMatch, setPlayerMatch] = useState<TournamentPlayer | null>(null);
   const [checkingPhone, setCheckingPhone] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [sendingInvite, setSendingInvite] = useState<string | null>(null);
 
   const [form, setForm] = useState({
@@ -180,6 +199,24 @@ export default function StaffManagement() {
 
   const handlePhoneChange = (phone: string) => {
     setForm({ ...form, phone });
+    setPhoneError(null);
+    
+    // Validação: detectar números inválidos
+    const trimmed = phone.trim();
+    if (trimmed.length > 0) {
+      // Se começar só com + sem indicativo
+      if (trimmed === '+' || (trimmed.startsWith('+') && trimmed.length < 4)) {
+        setPhoneError('Por favor, adicione o indicativo do país (ex: +351)');
+        return;
+      }
+      
+      // Se começar com + mas não tem indicativo válido (menos de 3 dígitos após +)
+      if (trimmed.startsWith('+') && trimmed.length > 1 && trimmed.length < 5) {
+        setPhoneError('Indicativo do país incompleto. Use +351 para Portugal');
+        return;
+      }
+    }
+    
     if (phone.length >= 9) {
       checkPhoneForPlayer(phone);
     } else {
@@ -193,6 +230,13 @@ export default function StaffManagement() {
 
     if (!form.phone || !form.email) {
       alert(t.staff?.phoneEmailRequired || 'Phone and email are required');
+      return;
+    }
+    
+    // Validar telefone antes de salvar
+    const trimmedPhone = form.phone.trim();
+    if (trimmedPhone === '+' || (trimmedPhone.startsWith('+') && trimmedPhone.length < 4)) {
+      setPhoneError('Por favor, adicione o indicativo do país (ex: +351). O número será corrigido automaticamente.');
       return;
     }
 
@@ -663,6 +707,12 @@ export default function StaffManagement() {
                     </div>
                   )}
                 </div>
+                {phoneError && (
+                  <p className="mt-1 text-sm text-red-600">{phoneError}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  Formato: +351 912 345 678 (o indicativo +351 será adicionado automaticamente se não fornecido)
+                </p>
               </div>
 
               {playerMatch && (
