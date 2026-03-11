@@ -393,7 +393,14 @@ export default function StaffManagement() {
 
   const handleSendInvite = async (member: StaffMember) => {
     if (!member.email) {
-      alert(t.staff?.emailRequired || 'Email is required to send invite');
+      alert(t.staff?.emailRequired || 'Email é obrigatório para enviar convite');
+      return;
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(member.email)) {
+      alert(`Email inválido: "${member.email}". Verifique o formato do email.`);
       return;
     }
 
@@ -402,8 +409,10 @@ export default function StaffManagement() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        throw new Error('Not authenticated');
+        throw new Error('Não autenticado');
       }
+
+      console.log('[StaffInvite] Sending invite to:', member.email, 'for staff:', member.name);
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-staff-invite`,
@@ -422,16 +431,25 @@ export default function StaffManagement() {
       );
 
       const result = await response.json();
+      console.log('[StaffInvite] Response:', response.status, result);
 
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to send invite');
+        console.error('[StaffInvite] Error response:', result);
+        const errorMsg = result.error || 'Falha ao enviar convite';
+        const details = result.sentTo ? `\nEmail: ${result.sentTo}` : '';
+        const resendInfo = result.resendError ? `\nDetalhes: ${JSON.stringify(result.resendError)}` : '';
+        throw new Error(`${errorMsg}${details}${resendInfo}`);
       }
 
-      alert(t.staff?.inviteSent || 'Invite sent successfully!');
+      const sentTo = result.sentTo || member.email;
+      const emailId = result.emailId || 'N/A';
+      console.log('[StaffInvite] Success! Email ID:', emailId, 'Sent to:', sentTo);
+      
+      alert(`Convite enviado com sucesso!\n\nEnviado para: ${sentTo}\nID: ${emailId}\n\nVerifique também a pasta de spam/lixo se não receber o email.`);
       loadStaff();
     } catch (error) {
-      console.error('Error sending invite:', error);
-      alert(error instanceof Error ? error.message : 'Failed to send invite');
+      console.error('[StaffInvite] Error:', error);
+      alert(error instanceof Error ? error.message : 'Falha ao enviar convite');
     } finally {
       setSendingInvite(null);
     }

@@ -22,6 +22,10 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
 
+    console.log('[send-staff-invite] Starting...');
+    console.log('[send-staff-invite] RESEND_API_KEY configured:', !!resendApiKey);
+    console.log('[send-staff-invite] RESEND_API_KEY length:', resendApiKey?.length || 0);
+
     if (!resendApiKey) {
       throw new Error('RESEND_API_KEY not configured');
     }
@@ -40,14 +44,18 @@ Deno.serve(async (req: Request) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
+      console.error('[send-staff-invite] Auth error:', authError);
       return new Response(
         JSON.stringify({ error: 'Invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    console.log('[send-staff-invite] Authenticated user:', user.id, user.email);
+
     const body: StaffInviteRequest = await req.json();
     const { staffId, clubName } = body;
+    console.log('[send-staff-invite] Request body:', { staffId, clubName });
 
     if (!staffId) {
       return new Response(
@@ -63,16 +71,37 @@ Deno.serve(async (req: Request) => {
       .eq('club_owner_id', user.id)
       .maybeSingle();
 
-    if (staffError || !staff) {
+    if (staffError) {
+      console.error('[send-staff-invite] Error fetching staff:', staffError);
+      return new Response(
+        JSON.stringify({ error: 'Staff member not found', details: staffError.message }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!staff) {
+      console.error('[send-staff-invite] No staff found for id:', staffId, 'owner:', user.id);
       return new Response(
         JSON.stringify({ error: 'Staff member not found' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    console.log('[send-staff-invite] Staff found:', { id: staff.id, name: staff.name, email: staff.email, role: staff.role });
+
     if (!staff.email) {
       return new Response(
         JSON.stringify({ error: 'Staff member has no email address' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(staff.email)) {
+      console.error('[send-staff-invite] Invalid email format:', staff.email);
+      return new Response(
+        JSON.stringify({ error: `Invalid email format: ${staff.email}` }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -91,14 +120,34 @@ Deno.serve(async (req: Request) => {
       .eq('id', staffId);
 
     if (updateError) {
+      console.error('[send-staff-invite] Error saving invite token:', updateError);
       throw new Error('Failed to save invite token');
     }
+
+    console.log('[send-staff-invite] Invite token saved, expires:', expiresAt.toISOString());
 
     // Get app URL from environment or use default
     const appUrl = Deno.env.get('MANAGER_APP_URL') || 'https://padelclubmanagement.netlify.app';
     // Remove trailing slash if present
     const cleanAppUrl = appUrl.replace(/\/$/, '');
     const inviteUrl = `${cleanAppUrl}?staff-invite=${encodeURIComponent(inviteToken)}`;
+
+    console.log('[send-staff-invite] Invite URL:', inviteUrl);
+
+    // Also get the club name from the clubs table if not provided
+    let finalClubName = clubName;
+    if (!finalClubName || finalClubName === 'PADEL ONE Manager') {
+      const { data: clubData } = await supabase
+        .from('clubs')
+        .select('name')
+        .eq('owner_id', user.id)
+        .maybeSingle();
+      
+      if (clubData?.name) {
+        finalClubName = clubData.name;
+        console.log('[send-staff-invite] Club name from DB:', finalClubName);
+      }
+    }
 
     const roleLabels: Record<string, string> = {
       admin: 'Administrador',
@@ -124,19 +173,20 @@ Deno.serve(async (req: Request) => {
           <tr>
             <td style="background: linear-gradient(135deg, #059669 0%, #047857 100%); padding: 40px 30px; text-align: center; border-radius: 12px 12px 0 0;">
               <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700;">Convite para Staff</h1>
+              ${finalClubName ? `<p style="margin: 10px 0 0; color: #d1fae5; font-size: 16px;">${finalClubName}</p>` : ''}
             </td>
           </tr>
 
           <tr>
             <td style="padding: 40px 30px;">
-              <h2 style="margin: 0 0 20px; color: #1f2937; font-size: 22px; font-weight: 600;">Ola ${staff.name}!</h2>
+              <h2 style="margin: 0 0 20px; color: #1f2937; font-size: 22px; font-weight: 600;">Olá ${staff.name}!</h2>
 
               <p style="margin: 0 0 20px; color: #4b5563; font-size: 16px; line-height: 1.6;">
-                Foi convidado para fazer parte da equipa ${clubName ? `de <strong style="color: #1f2937;">${clubName}</strong>` : ''} como <strong style="color: #1f2937;">${roleLabels[staff.role] || staff.role}</strong>.
+                Foi convidado para fazer parte da equipa ${finalClubName ? `de <strong style="color: #1f2937;">${finalClubName}</strong>` : ''} como <strong style="color: #1f2937;">${roleLabels[staff.role] || staff.role}</strong>.
               </p>
 
               <p style="margin: 0 0 30px; color: #4b5563; font-size: 16px; line-height: 1.6;">
-                Clique no botao abaixo para criar a sua conta e aceder ao sistema de gestao.
+                Clique no botão abaixo para criar a sua conta e aceder ao sistema de gestão.
               </p>
 
               <table role="presentation" style="margin: 0 auto 30px;">
@@ -163,7 +213,7 @@ Deno.serve(async (req: Request) => {
               </div>
 
               <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                Se nao solicitou este convite, pode ignorar este email.
+                Se não solicitou este convite, pode ignorar este email.
               </p>
             </td>
           </tr>
@@ -183,32 +233,59 @@ Deno.serve(async (req: Request) => {
 </html>
     `;
 
+    const emailPayload = {
+      from: 'Padel Club <noreply@boostpadel.store>',
+      to: [staff.email],
+      subject: `Convite para Staff${finalClubName ? ` - ${finalClubName}` : ''}`,
+      html: emailHtml,
+      reply_to: user.email || undefined,
+    };
+
+    console.log('[send-staff-invite] Sending email via Resend...');
+    console.log('[send-staff-invite] From:', emailPayload.from);
+    console.log('[send-staff-invite] To:', emailPayload.to);
+    console.log('[send-staff-invite] Subject:', emailPayload.subject);
+    console.log('[send-staff-invite] Reply-To:', emailPayload.reply_to);
+
     const resendResponse = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${resendApiKey}`,
       },
-      body: JSON.stringify({
-        from: 'Padel Club <noreply@boostpadel.store>',
-        to: [staff.email],
-        subject: `Convite para Staff${clubName ? ` - ${clubName}` : ''}`,
-        html: emailHtml,
-      }),
+      body: JSON.stringify(emailPayload),
     });
 
     const resendData = await resendResponse.json();
+    console.log('[send-staff-invite] Resend response status:', resendResponse.status);
+    console.log('[send-staff-invite] Resend response data:', JSON.stringify(resendData));
 
     if (!resendResponse.ok) {
-      console.error('Resend error:', resendData);
-      throw new Error(`Failed to send email: ${JSON.stringify(resendData)}`);
+      console.error('[send-staff-invite] Resend API error:', resendResponse.status, JSON.stringify(resendData));
+      
+      // Return detailed error to client
+      return new Response(
+        JSON.stringify({
+          error: `Erro ao enviar email: ${resendData.message || resendData.name || JSON.stringify(resendData)}`,
+          resendStatus: resendResponse.status,
+          resendError: resendData,
+          sentTo: staff.email,
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
     }
+
+    console.log('[send-staff-invite] Email sent successfully! Resend ID:', resendData.id);
 
     return new Response(
       JSON.stringify({
         success: true,
         message: 'Invite email sent successfully',
         emailId: resendData.id,
+        sentTo: staff.email,
       }),
       {
         status: 200,
@@ -216,7 +293,7 @@ Deno.serve(async (req: Request) => {
       }
     );
   } catch (error) {
-    console.error('Error in send-staff-invite:', error);
+    console.error('[send-staff-invite] Error:', error);
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Unknown error occurred'
