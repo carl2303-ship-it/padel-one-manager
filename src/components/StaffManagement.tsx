@@ -21,7 +21,8 @@ import {
   Send,
   Clock,
   CheckCircle,
-  Building2
+  Building2,
+  ChefHat
 } from 'lucide-react';
 
 interface StaffMember {
@@ -29,7 +30,7 @@ interface StaffMember {
   name: string;
   email: string;
   phone: string;
-  role: 'admin' | 'bar_staff' | 'coach' | 'receptionist' | 'club_owner' | 'other';
+  role: 'admin' | 'bar_staff' | 'coach' | 'receptionist' | 'kitchen' | 'club_owner' | 'other';
   permissions: Record<string, boolean>;
   is_active: boolean;
   notes: string | null;
@@ -55,6 +56,7 @@ const roleIcons = {
   bar_staff: Coffee,
   coach: GraduationCap,
   receptionist: UserCheck,
+  kitchen: ChefHat,
   club_owner: Building2,
   other: MoreHorizontal
 };
@@ -64,6 +66,7 @@ const roleColors = {
   bar_staff: 'bg-rose-100 text-rose-700 border-rose-200',
   coach: 'bg-amber-100 text-amber-700 border-amber-200',
   receptionist: 'bg-blue-100 text-blue-700 border-blue-200',
+  kitchen: 'bg-orange-100 text-orange-700 border-orange-200',
   club_owner: 'bg-purple-100 text-purple-700 border-purple-200',
   other: 'bg-gray-100 text-gray-700 border-gray-200'
 };
@@ -125,6 +128,7 @@ export default function StaffManagement() {
     bar_staff: t.staff?.barStaff || 'Bar/Restaurant',
     coach: t.staff?.coach || 'Coach',
     receptionist: t.staff?.receptionist || 'Receptionist',
+    kitchen: t.staff?.kitchen || 'Cozinha',
     club_owner: t.staff?.clubOwner || 'Club Owner',
     other: t.staff?.other || 'Other'
   };
@@ -499,6 +503,7 @@ export default function StaffManagement() {
     bar_staff: staff.filter(s => s.role === 'bar_staff').length,
     coach: staff.filter(s => s.role === 'coach').length,
     receptionist: staff.filter(s => s.role === 'receptionist').length,
+    kitchen: staff.filter(s => s.role === 'kitchen').length,
     club_owner: staff.filter(s => s.role === 'club_owner').length,
     other: staff.filter(s => s.role === 'other').length
   };

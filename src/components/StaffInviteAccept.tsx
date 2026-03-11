@@ -41,6 +41,8 @@ export default function StaffInviteAccept({ inviteToken, onComplete, onCancel }:
     bar_staff: t.staff?.barStaff || 'Bar/Restaurant',
     coach: t.staff?.coach || 'Coach',
     receptionist: t.staff?.receptionist || 'Receptionist',
+    kitchen: t.staff?.kitchen || 'Cozinha',
+    club_owner: t.staff?.clubOwner || 'Club Owner',
     other: t.staff?.other || 'Other'
   };
 
