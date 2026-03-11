@@ -35,7 +35,7 @@ const BarIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="�
 const MetricsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📈" className={className} />;
 const OpenGamesIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎾" className={className} />;
 const RewardsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎁" className={className} />;
-const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🧑‍💼" className={className} />;
+const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="👔" className={className} />;
 const SettingsEmojiIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="⚙️" className={className} />;
 const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🚪" className={className} />;
 
