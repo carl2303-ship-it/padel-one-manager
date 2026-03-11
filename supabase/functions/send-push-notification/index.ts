@@ -20,6 +20,7 @@ interface SendPushRequest {
   userId?: string;
   playerAccountId?: string;
   payload: PushPayload;
+  appSource?: string; // 'manager', 'tour', 'player' - filter by app source
 }
 
 async function sendWebPush(
@@ -239,7 +240,7 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: SendPushRequest = await req.json();
-    const { userId, playerAccountId, payload } = body;
+    const { userId, playerAccountId, payload, appSource } = body;
 
     if ((!userId && !playerAccountId) || !payload) {
       return new Response(
@@ -252,17 +253,31 @@ Deno.serve(async (req: Request) => {
     let subError;
 
     if (userId) {
-      const result = await supabase
+      let query = supabase
         .from('push_subscriptions')
         .select('endpoint, p256dh, auth')
         .eq('user_id', userId);
+      
+      // Filter by app_source if specified
+      if (appSource) {
+        query = query.eq('app_source', appSource);
+      }
+      
+      const result = await query;
       subscriptions = result.data;
       subError = result.error;
     } else if (playerAccountId) {
-      const result = await supabase
+      let query = supabase
         .from('push_subscriptions')
         .select('endpoint, p256dh, auth')
         .eq('player_account_id', playerAccountId);
+      
+      // Filter by app_source if specified
+      if (appSource) {
+        query = query.eq('app_source', appSource);
+      }
+      
+      const result = await query;
       subscriptions = result.data;
       subError = result.error;
     }

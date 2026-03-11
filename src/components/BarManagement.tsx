@@ -565,6 +565,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   };
 
   const handleUpdateQrOrderStatus = async (orderId: string, status: string) => {
+    const order = qrOrders.find(o => o.id === orderId);
+    
     await supabase
       .from('club_orders')
       .update({ status, updated_at: new Date().toISOString() })
@@ -575,6 +577,93 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       .from('club_order_items')
       .update({ status })
       .eq('order_id', orderId);
+
+    // When accepting a QR order, auto-create or add to bar tab for that table
+    if (status === 'preparing' && order && effectiveUserId) {
+      try {
+        // Check if there's an open tab for this table
+        const tableLabel = `Mesa ${order.table_number}`;
+        const { data: existingTab } = await supabase
+          .from('bar_tabs')
+          .select('id')
+          .eq('club_owner_id', effectiveUserId)
+          .eq('player_name', order.customer_name || tableLabel)
+          .eq('status', 'open')
+          .maybeSingle();
+
+        let tabId: string;
+
+        if (existingTab) {
+          tabId = existingTab.id;
+        } else {
+          // Create a new open tab for this table
+          const { data: newTab } = await supabase
+            .from('bar_tabs')
+            .insert({
+              club_owner_id: effectiveUserId,
+              player_name: order.customer_name || tableLabel,
+              notes: `📱 QR — ${tableLabel}`,
+            })
+            .select('id')
+            .single();
+
+          if (!newTab) {
+            console.error('Failed to create bar tab for QR order');
+            loadData();
+            return;
+          }
+          tabId = newTab.id;
+        }
+
+        // Add order items to the tab
+        if (order.items && order.items.length > 0) {
+          for (const item of order.items) {
+            // Check if item already exists in tab
+            const { data: existingItem } = await supabase
+              .from('bar_tab_items')
+              .select('id, quantity, unit_price')
+              .eq('tab_id', tabId)
+              .eq('item_name', item.item_name)
+              .eq('unit_price', item.unit_price)
+              .maybeSingle();
+
+            if (existingItem) {
+              const newQty = existingItem.quantity + item.quantity;
+              await supabase
+                .from('bar_tab_items')
+                .update({
+                  quantity: newQty,
+                  total_price: newQty * existingItem.unit_price,
+                })
+                .eq('id', existingItem.id);
+            } else {
+              await supabase.from('bar_tab_items').insert({
+                tab_id: tabId,
+                menu_item_id: item.menu_item_id,
+                item_name: item.item_name,
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                total_price: item.quantity * item.unit_price,
+              });
+            }
+          }
+
+          // Recalculate tab total
+          const { data: allItems } = await supabase
+            .from('bar_tab_items')
+            .select('total_price')
+            .eq('tab_id', tabId);
+
+          const total = allItems?.reduce((sum, i) => sum + Number(i.total_price), 0) || 0;
+          await supabase
+            .from('bar_tabs')
+            .update({ total, updated_at: new Date().toISOString() })
+            .eq('id', tabId);
+        }
+      } catch (err) {
+        console.error('Error creating bar tab from QR order:', err);
+      }
+    }
 
     loadData();
   };

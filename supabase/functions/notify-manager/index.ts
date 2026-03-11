@@ -23,7 +23,8 @@ async function sendPushNotification(
   supabaseUrl: string,
   supabaseKey: string,
   userId: string,
-  payload: { title: string; body: string; url?: string; tag?: string }
+  payload: { title: string; body: string; url?: string; tag?: string },
+  appSource: string = 'manager'
 ) {
   try {
     const response = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
@@ -32,7 +33,7 @@ async function sendPushNotification(
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${supabaseKey}`,
       },
-      body: JSON.stringify({ userId, payload }),
+      body: JSON.stringify({ userId, payload, appSource }),
     });
     const data = await response.json();
     console.log('Push notification result:', data);

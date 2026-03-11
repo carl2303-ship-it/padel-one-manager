@@ -107,13 +107,29 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       };
     }
 
-    const { data: orders } = await supabase
+    // Fetch manual bar orders
+    const { data: barOrders } = await supabase
       .from('bar_orders')
       .select('id, total, customer_name, created_at')
       .eq('club_owner_id', effectiveUserId)
       .eq('status', 'completed')
       .gte('created_at', startDate)
       .lte('created_at', endDate);
+
+    // Fetch paid bar tabs (includes QR orders that were added to tabs)
+    const { data: paidTabs } = await supabase
+      .from('bar_tabs')
+      .select('id, total, player_name, created_at')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('payment_status', 'paid')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
+
+    // Combine both sources into a unified orders list
+    const orders = [
+      ...(barOrders || []).map(o => ({ id: o.id, total: o.total, customer_name: o.customer_name, created_at: o.created_at })),
+      ...(paidTabs || []).map(t => ({ id: t.id, total: t.total, customer_name: t.player_name, created_at: t.created_at })),
+    ];
 
     const { data: orderItems } = await supabase
       .from('bar_order_items')
@@ -128,21 +144,40 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       .gte('bar_order.created_at', startDate)
       .lte('bar_order.created_at', endDate);
 
+    // Fetch tab items from paid tabs for product/category metrics
+    const paidTabIds = (paidTabs || []).map(t => t.id);
+    let tabItemsForMetrics: { item_name: string; quantity: number; unit_price: number; menu_item_id: string | null }[] = [];
+    if (paidTabIds.length > 0) {
+      const { data: tabItems } = await supabase
+        .from('bar_tab_items')
+        .select('item_name, quantity, unit_price, menu_item_id')
+        .in('tab_id', paidTabIds);
+      tabItemsForMetrics = tabItems || [];
+    }
+
     const { data: categories } = await supabase
       .from('menu_categories')
       .select('id, name')
       .eq('club_owner_id', effectiveUserId);
 
-    const categoryMap = new Map(categories?.map(c => [c.id, c.name]) || []);
+    // Build menu item -> category map
+    const { data: allMenuItems } = await supabase
+      .from('menu_items')
+      .select('id, name, category_id')
+      .eq('club_owner_id', effectiveUserId);
 
-    const totalRevenue = orders?.reduce((sum, o) => sum + (Number(o.total) || 0), 0) || 0;
-    const totalOrders = orders?.length || 0;
+    const categoryMap = new Map(categories?.map(c => [c.id, c.name]) || []);
+    const menuItemCategoryMap = new Map(allMenuItems?.map(m => [m.id, m.category_id]) || []);
+
+    const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const totalOrders = orders.length;
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-    const uniqueCustomers = new Set(orders?.map(o => o.customer_name?.toLowerCase()).filter(Boolean)).size;
+    const uniqueCustomers = new Set(orders.map(o => o.customer_name?.toLowerCase()).filter(Boolean)).size;
 
     const productMap = new Map<string, { quantity: number; revenue: number }>();
     const categoryRevenueMap = new Map<string, number>();
 
+    // Process bar_order_items
     orderItems?.forEach(item => {
       const menuItem = item.menu_item as { name: string; category_id: string } | null;
       if (menuItem) {
@@ -157,6 +192,21 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       }
     });
 
+    // Process bar_tab_items (includes QR orders)
+    tabItemsForMetrics.forEach(item => {
+      const existing = productMap.get(item.item_name) || { quantity: 0, revenue: 0 };
+      productMap.set(item.item_name, {
+        quantity: existing.quantity + item.quantity,
+        revenue: existing.revenue + (item.quantity * item.unit_price)
+      });
+
+      if (item.menu_item_id) {
+        const catId = menuItemCategoryMap.get(item.menu_item_id);
+        const catName = catId ? (categoryMap.get(catId) || 'Other') : 'Other';
+        categoryRevenueMap.set(catName, (categoryRevenueMap.get(catName) || 0) + (item.quantity * item.unit_price));
+      }
+    });
+
     const topProducts = Array.from(productMap.entries())
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.revenue - a.revenue)
@@ -167,7 +217,7 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       .sort((a, b) => b.revenue - a.revenue);
 
     const dailyMap = new Map<string, { revenue: number; orders: number }>();
-    orders?.forEach(order => {
+    orders.forEach(order => {
       const date = order.created_at.split('T')[0];
       const existing = dailyMap.get(date) || { revenue: 0, orders: 0 };
       dailyMap.set(date, {
