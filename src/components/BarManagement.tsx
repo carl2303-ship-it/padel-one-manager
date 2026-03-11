@@ -140,6 +140,9 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   const [expandedTab, setExpandedTab] = useState<string | null>(null);
   const [showNewTabForm, setShowNewTabForm] = useState(false);
   const [newTabForm, setNewTabForm] = useState({ player_name: '', player_phone: '', notes: '' });
+  const [phoneLookupResult, setPhoneLookupResult] = useState<{ found: boolean; name: string | null; source: string | null; discount: number } | null>(null);
+  const [lookingUpPhone, setLookingUpPhone] = useState(false);
+  const phoneLookupTimeout = useState<ReturnType<typeof setTimeout> | null>(null);
   const [addingItemToTab, setAddingItemToTab] = useState<string | null>(null);
   const [tabFilter, setTabFilter] = useState<'open' | 'closed' | 'all'>('open');
 
@@ -314,6 +317,84 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     }
     
     return 0;
+  };
+
+  // Look up player/member by phone number
+  const handlePhoneLookup = async (phone: string) => {
+    if (!effectiveUserId || phone.length < 6) {
+      setPhoneLookupResult(null);
+      return;
+    }
+
+    setLookingUpPhone(true);
+    const normalizedPhone = normalizePhone(phone);
+
+    try {
+      // 1. Look up in player_accounts
+      const { data: playerAccount } = await supabase
+        .from('player_accounts')
+        .select('id, name, phone_number')
+        .eq('phone_number', normalizedPhone)
+        .maybeSingle();
+
+      // 2. Look up in member_subscriptions (club members)
+      const { data: memberSub } = await supabase
+        .from('member_subscriptions')
+        .select('member_name, member_phone, status, plan:membership_plans(name, bar_discount_percent)')
+        .eq('club_owner_id', effectiveUserId)
+        .eq('member_phone', normalizedPhone)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (memberSub) {
+        const discount = (memberSub.plan as any)?.bar_discount_percent || 0;
+        const planName = (memberSub.plan as any)?.name || '';
+        setPhoneLookupResult({
+          found: true,
+          name: memberSub.member_name,
+          source: `Membro do clube — ${planName}`,
+          discount
+        });
+        // Auto-fill name if empty
+        if (!newTabForm.player_name.trim() && memberSub.member_name) {
+          setNewTabForm(prev => ({ ...prev, player_name: memberSub.member_name }));
+        }
+      } else if (playerAccount) {
+        // Check if player has membership
+        const discount = await getMemberBarDiscount(normalizedPhone, playerAccount.id);
+        setPhoneLookupResult({
+          found: true,
+          name: playerAccount.name,
+          source: 'Jogador registado',
+          discount
+        });
+        // Auto-fill name if empty
+        if (!newTabForm.player_name.trim() && playerAccount.name) {
+          setNewTabForm(prev => ({ ...prev, player_name: playerAccount.name }));
+        }
+      } else {
+        setPhoneLookupResult({ found: false, name: null, source: null, discount: 0 });
+      }
+    } catch (err) {
+      console.error('Phone lookup error:', err);
+      setPhoneLookupResult(null);
+    }
+
+    setLookingUpPhone(false);
+  };
+
+  // Debounced phone lookup on input change
+  const handlePhoneChange = (phone: string) => {
+    setNewTabForm(prev => ({ ...prev, player_phone: phone }));
+    setPhoneLookupResult(null);
+
+    // Clear previous timeout
+    if (phoneLookupTimeout[0]) clearTimeout(phoneLookupTimeout[0]);
+
+    if (phone.length >= 6) {
+      const timeout = setTimeout(() => handlePhoneLookup(phone), 500);
+      phoneLookupTimeout[0] = timeout;
+    }
   };
 
   const handleCreateTab = async (e: React.FormEvent) => {
@@ -1741,11 +1822,56 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h2 className="text-lg font-semibold text-gray-900">{t.bar.openTab}</h2>
-              <button onClick={() => setShowNewTabForm(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+              <button onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCreateTab} className="p-4 space-y-4">
+              {/* Phone first - for auto-lookup */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">📱 Telemóvel</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={newTabForm.player_phone}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 ${
+                      phoneLookupResult?.found ? 'border-green-400 bg-green-50' :
+                      phoneLookupResult && !phoneLookupResult.found ? 'border-gray-300' : 'border-gray-300'
+                    }`}
+                    placeholder="+351 912 345 678"
+                  />
+                  {lookingUpPhone && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Introduz o telemóvel para encontrar o jogador ou membro automaticamente</p>
+
+                {/* Lookup result */}
+                {phoneLookupResult?.found && (
+                  <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm text-green-800">
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="font-medium">{phoneLookupResult.name}</span>
+                    </div>
+                    <div className="text-xs text-green-600 mt-0.5">{phoneLookupResult.source}</div>
+                    {phoneLookupResult.discount > 0 && (
+                      <div className="flex items-center gap-1.5 mt-2 text-sm font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md w-fit">
+                        🏷️ Desconto Bar: {phoneLookupResult.discount}%
+                      </div>
+                    )}
+                  </div>
+                )}
+                {phoneLookupResult && !phoneLookupResult.found && newTabForm.player_phone.length >= 6 && (
+                  <div className="mt-2 p-2 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+                    Nenhum jogador ou membro encontrado com este número.
+                  </div>
+                )}
+              </div>
+
+              {/* Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bar.playerName} *</label>
                 <input
@@ -1756,17 +1882,18 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   placeholder="Nome do cliente..."
                   required
                 />
+                {phoneLookupResult?.found && phoneLookupResult.name && newTabForm.player_name !== phoneLookupResult.name && (
+                  <button
+                    type="button"
+                    onClick={() => setNewTabForm(prev => ({ ...prev, player_name: phoneLookupResult.name! }))}
+                    className="text-xs text-orange-600 mt-1 hover:underline"
+                  >
+                    Usar nome encontrado: {phoneLookupResult.name}
+                  </button>
+                )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t.bar.playerPhone}</label>
-                <input
-                  type="text"
-                  value={newTabForm.player_phone}
-                  onChange={(e) => setNewTabForm({ ...newTabForm, player_phone: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                  placeholder="+351..."
-                />
-              </div>
+
+              {/* Notes */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bar.notes}</label>
                 <textarea
@@ -1777,8 +1904,17 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   placeholder="Notas opcionais..."
                 />
               </div>
+
+              {/* Discount info banner */}
+              {phoneLookupResult?.found && phoneLookupResult.discount > 0 && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
+                  <p className="font-medium">🏷️ Este cliente tem desconto de {phoneLookupResult.discount}% no bar!</p>
+                  <p className="text-xs text-emerald-600 mt-1">O desconto será aplicado automaticamente nos items adicionados à conta.</p>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setShowNewTabForm(false)} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                <button type="button" onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
                   {t.common.cancel}
                 </button>
                 <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
