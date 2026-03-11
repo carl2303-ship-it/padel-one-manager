@@ -127,7 +127,7 @@ Deno.serve(async (req: Request) => {
     console.log('[send-staff-invite] Invite token saved, expires:', expiresAt.toISOString());
 
     // Get app URL from environment or use default
-    const appUrl = Deno.env.get('MANAGER_APP_URL') || 'https://padelclubmanagement.netlify.app';
+    const appUrl = Deno.env.get('MANAGER_APP_URL') || 'https://manager.padel1.app';
     // Remove trailing slash if present
     const cleanAppUrl = appUrl.replace(/\/$/, '');
     const inviteUrl = `${cleanAppUrl}?staff-invite=${encodeURIComponent(inviteToken)}`;
