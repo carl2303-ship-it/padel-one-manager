@@ -17,7 +17,10 @@ import {
   CreditCard,
   Banknote,
   Users,
-  LayoutGrid
+  LayoutGrid,
+  Camera,
+  Upload,
+  Loader2
 } from 'lucide-react';
 
 type PaymentMethod = 'at_club' | 'per_player' | 'full_court' | 'at_club_or_per_player' | 'at_club_or_full_court' | 'all';
@@ -27,6 +30,8 @@ interface Club {
   name: string;
   description: string;
   logo_url: string | null;
+  photo_url_1: string | null;
+  photo_url_2: string | null;
   address: string | null;
   city: string | null;
   country: string | null;
@@ -62,6 +67,8 @@ export default function ClubManagement() {
     name: '',
     description: '',
     logo_url: '',
+    photo_url_1: '',
+    photo_url_2: '',
     address: '',
     city: '',
     country: 'Portugal',
@@ -72,6 +79,7 @@ export default function ClubManagement() {
     stripe_publishable_key: '',
     stripe_secret_key: '',
   });
+  const [uploadingPhoto, setUploadingPhoto] = useState<1 | 2 | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -97,6 +105,8 @@ export default function ClubManagement() {
       name: '',
       description: '',
       logo_url: '',
+      photo_url_1: '',
+      photo_url_2: '',
       address: '',
       city: '',
       country: 'Portugal',
@@ -116,6 +126,8 @@ export default function ClubManagement() {
       name: club.name,
       description: club.description || '',
       logo_url: club.logo_url || '',
+      photo_url_1: club.photo_url_1 || '',
+      photo_url_2: club.photo_url_2 || '',
       address: club.address || '',
       city: club.city || '',
       country: club.country || 'Portugal',
@@ -128,6 +140,54 @@ export default function ClubManagement() {
     });
     setEditingClub(club);
     setShowForm(true);
+  };
+
+  const handlePhotoUpload = async (file: File, photoNum: 1 | 2) => {
+    if (!user) return;
+    setUploadingPhoto(photoNum);
+
+    try {
+      // Validate file
+      if (!file.type.startsWith('image/')) {
+        alert('Por favor selecione um ficheiro de imagem');
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        alert('A imagem deve ter menos de 5MB');
+        return;
+      }
+
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}/club-photo-${photoNum}-${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('club-photos')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) {
+        // If bucket doesn't exist, try creating via public URL approach
+        console.error('Upload error:', uploadError);
+        alert(`Erro ao enviar foto: ${uploadError.message}`);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('club-photos')
+        .getPublicUrl(fileName);
+
+      const publicUrl = urlData.publicUrl;
+
+      if (photoNum === 1) {
+        setFormData(prev => ({ ...prev, photo_url_1: publicUrl }));
+      } else {
+        setFormData(prev => ({ ...prev, photo_url_2: publicUrl }));
+      }
+    } catch (error) {
+      console.error('Error uploading photo:', error);
+      alert('Erro ao enviar foto');
+    } finally {
+      setUploadingPhoto(null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -143,6 +203,8 @@ export default function ClubManagement() {
           name: formData.name.trim(),
           description: formData.description.trim(),
           logo_url: formData.logo_url.trim() || null,
+          photo_url_1: formData.photo_url_1.trim() || null,
+          photo_url_2: formData.photo_url_2.trim() || null,
           address: formData.address.trim() || null,
           city: formData.city.trim() || null,
           country: formData.country.trim() || null,
@@ -168,6 +230,8 @@ export default function ClubManagement() {
           name: formData.name.trim(),
           description: formData.description.trim(),
           logo_url: formData.logo_url.trim() || null,
+          photo_url_1: formData.photo_url_1.trim() || null,
+          photo_url_2: formData.photo_url_2.trim() || null,
           address: formData.address.trim() || null,
           city: formData.city.trim() || null,
           country: formData.country.trim() || null,
@@ -298,6 +362,101 @@ export default function ClubManagement() {
                   </div>
                 )}
               </div>
+              {/* Facility Photos */}
+              <div className="md:col-span-2 border-t border-gray-200 pt-4 mt-2">
+                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-blue-600" />
+                  Fotos das Instalações
+                </h4>
+                <p className="text-xs text-gray-500 mb-3">
+                  Adicione até 2 fotos do clube que serão visíveis para os jogadores na app.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Photo 1 */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Foto 1</label>
+                    {formData.photo_url_1 ? (
+                      <div className="relative group">
+                        <img
+                          src={formData.photo_url_1}
+                          alt="Foto 1"
+                          className="w-full h-32 object-cover rounded-lg border border-gray-200"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, photo_url_1: '' })}
+                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition">
+                        {uploadingPhoto === 1 ? (
+                          <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                        ) : (
+                          <>
+                            <Upload className="w-6 h-6 text-gray-400 mb-1" />
+                            <span className="text-xs text-gray-500">Carregar foto</span>
+                          </>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handlePhotoUpload(file, 1);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                  {/* Photo 2 */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Foto 2</label>
+                    {formData.photo_url_2 ? (
+                      <div className="relative group">
+                        <img
+                          src={formData.photo_url_2}
+                          alt="Foto 2"
+                          className="w-full h-32 object-cover rounded-lg border border-gray-200"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, photo_url_2: '' })}
+                          className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition">
+                        {uploadingPhoto === 2 ? (
+                          <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                        ) : (
+                          <>
+                            <Upload className="w-6 h-6 text-gray-400 mb-1" />
+                            <span className="text-xs text-gray-500">Carregar foto</span>
+                          </>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handlePhotoUpload(file, 2);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   <div className="flex items-center gap-2">
@@ -561,6 +720,25 @@ export default function ClubManagement() {
                       {club.payment_method !== 'at_club' && !club.stripe_secret_key && ' (Stripe não configurado)'}
                     </span>
                   </div>
+                  {/* Club Facility Photos */}
+                  {(club.photo_url_1 || club.photo_url_2) && (
+                    <div className="flex gap-2 mt-3">
+                      {club.photo_url_1 && (
+                        <img
+                          src={club.photo_url_1}
+                          alt="Instalação 1"
+                          className="w-24 h-16 object-cover rounded-lg border border-gray-200"
+                        />
+                      )}
+                      {club.photo_url_2 && (
+                        <img
+                          src={club.photo_url_2}
+                          alt="Instalação 2"
+                          className="w-24 h-16 object-cover rounded-lg border border-gray-200"
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
