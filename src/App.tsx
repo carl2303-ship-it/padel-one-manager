@@ -31,9 +31,13 @@ import {
   UserCog,
   Settings as SettingsIcon,
   Shield,
-  Gamepad2,
   Gift
 } from 'lucide-react';
+
+// Tennis ball icon component for "Jogos Abertos"
+const TennisBallIcon = ({ className }: { className?: string }) => (
+  <span className={`inline-flex items-center justify-center ${className || ''}`} style={{ fontSize: '1.25rem', lineHeight: 1 }}>🎾</span>
+);
 
 type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
 
@@ -226,7 +230,7 @@ function App() {
     { id: 'academy' as View, label: t.nav.academy, icon: GraduationCap, permission: 'perm_academy' },
     { id: 'bar' as View, label: t.nav.bar, icon: Coffee, permission: 'perm_bar' },
     { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: BarChart3, permission: 'perm_reports' },
-    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: Gamepad2, permission: 'perm_bookings' },
+    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: TennisBallIcon, permission: 'perm_bookings' },
     { id: 'rewards' as View, label: 'Rewards', icon: Gift, permission: 'perm_bookings' },
     { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: UserCog, permission: 'owner_only' },
   ];
