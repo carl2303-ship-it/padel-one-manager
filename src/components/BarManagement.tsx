@@ -23,9 +23,13 @@ import {
   QrCode,
   Bell,
   ExternalLink,
-  Smartphone
+  Smartphone,
+  Upload,
+  Image,
+  Loader2
 } from 'lucide-react';
 import BarMetricsDashboard from './BarMetricsDashboard';
+import { compressImage } from '../lib/imageCompressor';
 
 interface MenuCategory {
   id: string;
@@ -158,8 +162,10 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     description: '',
     price: 0,
     is_available: true,
-    is_food: false
+    is_food: false,
+    image_url: ''
   });
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
     if (effectiveUserId) {
@@ -642,7 +648,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           description: itemForm.description || null,
           price: itemForm.price,
           is_available: itemForm.is_available,
-          is_food: itemForm.is_food
+          is_food: itemForm.is_food,
+          image_url: itemForm.image_url.trim() || null
         })
         .eq('id', editingItem.id);
     } else {
@@ -653,7 +660,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         description: itemForm.description || null,
         price: itemForm.price,
         is_available: itemForm.is_available,
-        is_food: itemForm.is_food
+        is_food: itemForm.is_food,
+        image_url: itemForm.image_url.trim() || null
       });
     }
 
@@ -678,13 +686,68 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       description: item.description || '',
       price: item.price,
       is_available: item.is_available,
-      is_food: item.is_food || false
+      is_food: item.is_food || false,
+      image_url: item.image_url || ''
     });
     setShowItemForm(true);
   };
 
   const resetItemForm = () => {
-    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false });
+    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false, image_url: '' });
+  };
+
+  const handleMenuImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      // Compress the image
+      const compressed = await compressImage(file);
+      
+      const fileExt = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const fileName = `${effectiveUserId}/${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('menu-images')
+        .upload(fileName, compressed, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        alert('Erro ao carregar imagem: ' + uploadError.message);
+        return;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('menu-images')
+        .getPublicUrl(fileName);
+
+      setItemForm(prev => ({ ...prev, image_url: urlData.publicUrl }));
+    } catch (err) {
+      console.error('Image upload error:', err);
+      alert('Erro ao processar imagem');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveMenuImage = async () => {
+    if (itemForm.image_url) {
+      // Try to delete from storage
+      try {
+        const url = new URL(itemForm.image_url);
+        const pathParts = url.pathname.split('/menu-images/');
+        if (pathParts[1]) {
+          await supabase.storage.from('menu-images').remove([decodeURIComponent(pathParts[1])]);
+        }
+      } catch (err) {
+        console.warn('Could not delete old image:', err);
+      }
+    }
+    setItemForm(prev => ({ ...prev, image_url: '' }));
   };
 
   const handleDeleteCategory = async (id: string) => {
@@ -709,7 +772,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       description: item.description,
       price: item.price,
       is_available: item.is_available,
-      is_food: item.is_food
+      is_food: item.is_food,
+      image_url: item.image_url
     });
     loadData();
   };
@@ -1247,11 +1311,20 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                     <div className="divide-y divide-gray-100">
                       {categoryItems.map(item => (
                         <div key={item.id} className="p-4 flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="font-medium text-gray-900">{item.name}</div>
-                            {item.description && (
-                              <div className="text-sm text-gray-500">{item.description}</div>
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            {item.image_url ? (
+                              <img src={item.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                                {item.is_food ? <ChefHat className="w-5 h-5 text-gray-400" /> : <Coffee className="w-5 h-5 text-gray-400" />}
+                              </div>
                             )}
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">{item.name}</div>
+                              {item.description && (
+                                <div className="text-sm text-gray-500 truncate">{item.description}</div>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-4">
                             <span className="font-bold text-gray-900">{item.price.toFixed(2)} EUR</span>
@@ -1693,6 +1766,51 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   rows={2}
                 />
+              </div>
+              {/* Photo Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
+                  <Image className="w-4 h-4" />
+                  Foto do Item
+                </label>
+                {itemForm.image_url ? (
+                  <div className="relative">
+                    <img
+                      src={itemForm.image_url}
+                      alt="Preview"
+                      className="w-full h-32 object-cover rounded-lg border border-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleRemoveMenuImage}
+                      className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition shadow-sm"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition">
+                    {uploadingImage ? (
+                      <div className="flex items-center gap-2 text-blue-600">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span className="text-sm">A carregar...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <Upload className="w-6 h-6 text-gray-400 mb-1" />
+                        <span className="text-xs text-gray-500">Carregar foto</span>
+                        <span className="text-xs text-gray-400">JPG, PNG (max 5MB)</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleMenuImageUpload}
+                      className="hidden"
+                      disabled={uploadingImage}
+                    />
+                  </label>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bar.price} (EUR)</label>
