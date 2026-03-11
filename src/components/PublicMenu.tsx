@@ -515,9 +515,8 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
               setOrderId(null);
               setOrderStatus('pending');
               setOrderReady(false);
-              setCustomerName('');
-              setCustomerPhone('');
               setOrderNotes('');
+              // Keep customerName, customerPhone and phoneLookupResult for repeat orders
             }}
             className="w-full px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition"
           >
