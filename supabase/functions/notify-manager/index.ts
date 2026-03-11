@@ -9,13 +9,14 @@ const corsHeaders = {
 
 interface NotifyRequest {
   userId: string;
-  type: 'booking_created' | 'booking_cancelled' | 'class_enrollment' | 'class_cancellation';
+  type: 'booking_created' | 'booking_cancelled' | 'class_enrollment' | 'class_cancellation' | 'qr_order';
   bookingId?: string;
   courtName?: string;
   playerName?: string;
   className?: string;
   classDate?: string;
   classTime?: string;
+  scheduledAt?: string;
 }
 
 async function sendPushNotification(
@@ -112,6 +113,15 @@ Deno.serve(async (req: Request) => {
         };
         break;
 
+      case 'qr_order':
+        pushPayload = {
+          title: '🔔 Novo Pedido QR!',
+          body: `${courtName || 'Mesa'} — ${playerName || 'Cliente'} fez um novo pedido`,
+          url: '/',
+          tag: `qr-order-${bookingId || Date.now()}`,
+        };
+        break;
+
       default:
         return new Response(
           JSON.stringify({ error: 'Invalid notification type' }),
@@ -125,6 +135,37 @@ Deno.serve(async (req: Request) => {
       userId,
       pushPayload
     );
+
+    // For QR orders, also notify bar_staff and kitchen staff
+    if (type === 'qr_order') {
+      try {
+        const { data: staffMembers } = await supabase
+          .from('club_staff')
+          .select('user_id, role')
+          .eq('club_owner_id', userId)
+          .eq('is_active', true)
+          .in('role', ['bar_staff', 'kitchen', 'admin']);
+
+        if (staffMembers && staffMembers.length > 0) {
+          for (const staff of staffMembers) {
+            if (staff.user_id) {
+              const staffPayload = staff.role === 'kitchen'
+                ? { 
+                    title: '👨‍🍳 Novo Pedido (Cozinha)!',
+                    body: `${courtName || 'Mesa'} — Novo pedido com comida`,
+                    url: '/',
+                    tag: `kitchen-order-${bookingId || Date.now()}`
+                  }
+                : pushPayload;
+              
+              await sendPushNotification(supabaseUrl, supabaseServiceKey, staff.user_id, staffPayload);
+            }
+          }
+        }
+      } catch (staffErr) {
+        console.warn('Error notifying staff:', staffErr);
+      }
+    }
 
     return new Response(
       JSON.stringify({ 

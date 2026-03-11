@@ -14,6 +14,7 @@ import Settings from './components/Settings';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
 import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
+import PublicMenu from './components/PublicMenu';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -172,6 +173,16 @@ function App() {
 
     setCheckingPermissions(false);
   };
+
+  // Check if this is a public menu page (no auth needed)
+  const pathname = window.location.pathname;
+  const menuMatch = pathname.match(/^\/menu\/([a-f0-9-]+)$/i);
+  if (menuMatch) {
+    const menuClubId = menuMatch[1];
+    const urlParams = new URLSearchParams(window.location.search);
+    const tableNum = urlParams.get('mesa') || urlParams.get('table');
+    return <PublicMenu clubId={menuClubId} tableNumber={tableNum} />;
+  }
 
   if (authLoading || checkingPermissions) {
     return (

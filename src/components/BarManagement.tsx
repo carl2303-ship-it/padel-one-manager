@@ -19,7 +19,11 @@ import {
   ChevronDown,
   ChevronUp,
   Minus,
-  Euro
+  Euro,
+  QrCode,
+  Bell,
+  ExternalLink,
+  Smartphone
 } from 'lucide-react';
 import BarMetricsDashboard from './BarMetricsDashboard';
 
@@ -37,6 +41,7 @@ interface MenuItem {
   description: string | null;
   price: number;
   is_available: boolean;
+  is_food: boolean;
   image_url: string | null;
 }
 
@@ -78,6 +83,38 @@ interface BarTabItem {
   created_at: string;
 }
 
+interface ClubTable {
+  id: string;
+  club_id: string;
+  table_number: string;
+  is_active: boolean;
+}
+
+interface QrOrder {
+  id: string;
+  club_id: string;
+  table_number: string;
+  status: string;
+  total: number;
+  customer_name: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  items?: QrOrderItem[];
+}
+
+interface QrOrderItem {
+  id: string;
+  order_id: string;
+  menu_item_id: string | null;
+  item_name: string;
+  quantity: number;
+  unit_price: number;
+  is_food: boolean;
+  notes: string | null;
+  status: string;
+}
+
 interface BarManagementProps {
   staffClubOwnerId?: string | null;
 }
@@ -86,7 +123,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'tabs' | 'orders' | 'menu' | 'analytics'>('tabs');
+  const [activeTab, setActiveTab] = useState<'tabs' | 'orders' | 'menu' | 'qr-orders' | 'qr-codes' | 'analytics'>('tabs');
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -106,13 +143,22 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   const [addingItemToTab, setAddingItemToTab] = useState<string | null>(null);
   const [tabFilter, setTabFilter] = useState<'open' | 'closed' | 'all'>('open');
 
+  // QR Orders & Tables state
+  const [qrOrders, setQrOrders] = useState<QrOrder[]>([]);
+  const [clubTables, setClubTables] = useState<ClubTable[]>([]);
+  const [clubId, setClubId] = useState<string | null>(null);
+  const [showTableForm, setShowTableForm] = useState(false);
+  const [newTableNumber, setNewTableNumber] = useState('');
+  const [qrOrderFilter, setQrOrderFilter] = useState<'pending' | 'preparing' | 'all'>('pending');
+
   const [categoryForm, setCategoryForm] = useState({ name: '' });
   const [itemForm, setItemForm] = useState({
     category_id: '',
     name: '',
     description: '',
     price: 0,
-    is_available: true
+    is_available: true,
+    is_food: false
   });
 
   useEffect(() => {
@@ -123,6 +169,50 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
   const loadData = async () => {
     if (!effectiveUserId) return;
+
+    // Get club ID for QR features
+    const { data: clubData } = await supabase
+      .from('clubs')
+      .select('id')
+      .eq('owner_id', effectiveUserId)
+      .limit(1)
+      .maybeSingle();
+    
+    if (clubData) {
+      setClubId(clubData.id);
+
+      // Load QR orders
+      const { data: qrOrdersData } = await supabase
+        .from('club_orders')
+        .select('*')
+        .eq('club_id', clubData.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      
+      if (qrOrdersData) {
+        // Load items for each order
+        const ordersWithItems = await Promise.all(
+          qrOrdersData.map(async (order) => {
+            const { data: items } = await supabase
+              .from('club_order_items')
+              .select('*')
+              .eq('order_id', order.id)
+              .order('created_at');
+            return { ...order, items: items || [] };
+          })
+        );
+        setQrOrders(ordersWithItems);
+      }
+
+      // Load tables
+      const { data: tablesData } = await supabase
+        .from('club_tables')
+        .select('*')
+        .eq('club_id', clubData.id)
+        .order('table_number');
+      
+      if (tablesData) setClubTables(tablesData);
+    }
 
     const [categoriesResult, itemsResult, ordersResult, tabsResult] = await Promise.all([
       supabase
@@ -440,6 +530,75 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     setBarTabs(prev => prev.map(t => t.id === tabId ? { ...t, total } : t));
   };
 
+  // ---- QR Tables & Orders Functions ----
+
+  const handleAddTable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clubId || !newTableNumber.trim()) return;
+    setSaving(true);
+
+    const { error } = await supabase.from('club_tables').insert({
+      club_id: clubId,
+      table_number: newTableNumber.trim()
+    });
+
+    if (error) {
+      alert(error.message.includes('duplicate') ? 'Esta mesa já existe!' : `Erro: ${error.message}`);
+    } else {
+      setShowTableForm(false);
+      setNewTableNumber('');
+      loadData();
+    }
+    setSaving(false);
+  };
+
+  const handleDeleteTable = async (tableId: string) => {
+    if (!confirm('Eliminar esta mesa?')) return;
+    await supabase.from('club_tables').delete().eq('id', tableId);
+    loadData();
+  };
+
+  const handleUpdateQrOrderStatus = async (orderId: string, status: string) => {
+    await supabase
+      .from('club_orders')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', orderId);
+    
+    // Also update all items
+    await supabase
+      .from('club_order_items')
+      .update({ status })
+      .eq('order_id', orderId);
+
+    loadData();
+  };
+
+  const handleUpdateQrOrderItemStatus = async (itemId: string, status: string) => {
+    await supabase
+      .from('club_order_items')
+      .update({ status })
+      .eq('id', itemId);
+    loadData();
+  };
+
+  const getMenuPublicUrl = () => {
+    if (!clubId) return '';
+    return `${window.location.origin}/menu/${clubId}`;
+  };
+
+  const getTableQrUrl = (tableNumber: string) => {
+    if (!clubId) return '';
+    return `${window.location.origin}/menu/${clubId}?mesa=${encodeURIComponent(tableNumber)}`;
+  };
+
+  const filteredQrOrders = qrOrders.filter(o => {
+    if (qrOrderFilter === 'pending') return o.status === 'pending';
+    if (qrOrderFilter === 'preparing') return o.status === 'preparing';
+    return true;
+  });
+
+  const pendingQrCount = qrOrders.filter(o => o.status === 'pending').length;
+
   // ---- Original Menu/Orders Functions ----
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -482,7 +641,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           name: itemForm.name,
           description: itemForm.description || null,
           price: itemForm.price,
-          is_available: itemForm.is_available
+          is_available: itemForm.is_available,
+          is_food: itemForm.is_food
         })
         .eq('id', editingItem.id);
     } else {
@@ -492,7 +652,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         name: itemForm.name,
         description: itemForm.description || null,
         price: itemForm.price,
-        is_available: itemForm.is_available
+        is_available: itemForm.is_available,
+        is_food: itemForm.is_food
       });
     }
 
@@ -516,13 +677,14 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       name: item.name,
       description: item.description || '',
       price: item.price,
-      is_available: item.is_available
+      is_available: item.is_available,
+      is_food: item.is_food || false
     });
     setShowItemForm(true);
   };
 
   const resetItemForm = () => {
-    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true });
+    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false });
   };
 
   const handleDeleteCategory = async (id: string) => {
@@ -546,7 +708,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       name: `${item.name} (Copia)`,
       description: item.description,
       price: item.price,
-      is_available: item.is_available
+      is_available: item.is_available,
+      is_food: item.is_food
     });
     loadData();
   };
@@ -644,6 +807,29 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               }`}
             >
               {t.bar.menu}
+            </button>
+            <button
+              onClick={() => setActiveTab('qr-orders')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                activeTab === 'qr-orders' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+              }`}
+            >
+              <Smartphone className="w-4 h-4" />
+              Pedidos QR
+              {pendingQrCount > 0 && (
+                <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
+                  {pendingQrCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('qr-codes')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                activeTab === 'qr-codes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+              }`}
+            >
+              <QrCode className="w-4 h-4" />
+              QR Codes
             </button>
             <button
               onClick={() => setActiveTab('analytics')}
@@ -1069,6 +1255,12 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                           </div>
                           <div className="flex items-center gap-4">
                             <span className="font-bold text-gray-900">{item.price.toFixed(2)} EUR</span>
+                            {item.is_food && (
+                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 flex items-center gap-1">
+                                <ChefHat className="w-3 h-3" />
+                                Cozinha
+                              </span>
+                            )}
                             <button
                               onClick={() => handleToggleItemAvailability(item)}
                               className={`px-2 py-1 rounded text-xs font-medium ${
@@ -1105,6 +1297,256 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               );
             })
           )}
+        </div>
+      )}
+
+      {/* ============ QR ORDERS ============ */}
+      {activeTab === 'qr-orders' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex gap-2">
+              {(['pending', 'preparing', 'all'] as const).map(filter => (
+                <button
+                  key={filter}
+                  onClick={() => setQrOrderFilter(filter)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                    qrOrderFilter === filter
+                      ? 'bg-red-100 text-red-700 border border-red-300'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  {filter === 'pending' ? 'Pendentes' : filter === 'preparing' ? 'Em preparação' : 'Todos'}
+                  {filter === 'pending' && pendingQrCount > 0 && (
+                    <span className="ml-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{pendingQrCount}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => loadData()}
+              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg border border-gray-200 flex items-center gap-1"
+            >
+              🔄 Atualizar
+            </button>
+          </div>
+
+          {filteredQrOrders.length === 0 ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <Smartphone className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Sem pedidos QR</h3>
+              <p className="text-sm text-gray-500">Os pedidos feitos pelos clientes via QR Code aparecerão aqui.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {filteredQrOrders.map(order => (
+                <div key={order.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden ${
+                  order.status === 'pending' ? 'border-red-300 ring-2 ring-red-100' :
+                  order.status === 'preparing' ? 'border-blue-300' :
+                  order.status === 'ready' ? 'border-green-300' : 'border-gray-200'
+                }`}>
+                  <div className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                          order.status === 'pending' ? 'bg-red-500 animate-pulse' :
+                          order.status === 'preparing' ? 'bg-blue-500' :
+                          order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
+                        }`}>
+                          M{order.table_number}
+                        </div>
+                        <div>
+                          <div className="font-semibold text-gray-900 flex items-center gap-2">
+                            Mesa {order.table_number}
+                            {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
+                          </div>
+                          <div className="text-xs text-gray-500 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatDate(order.created_at)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-lg text-gray-900">{order.total.toFixed(2)} €</div>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(order.status)}`}>
+                          {order.status === 'pending' ? '🔴 Novo!' :
+                           order.status === 'preparing' ? '🔵 Preparando' :
+                           order.status === 'ready' ? '🟢 Pronto' :
+                           order.status === 'delivered' ? '✅ Entregue' : '❌ Cancelado'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Order items */}
+                    {order.items && order.items.length > 0 && (
+                      <div className="border-t border-gray-100 pt-3 space-y-1.5">
+                        {order.items.map(item => (
+                          <div key={item.id} className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              {item.is_food ? (
+                                <ChefHat className="w-4 h-4 text-orange-500" />
+                              ) : (
+                                <Coffee className="w-4 h-4 text-blue-500" />
+                              )}
+                              <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
+                              {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
+                            </div>
+                            <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {order.notes && (
+                      <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800">
+                        📝 {order.notes}
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 pt-3 mt-3 border-t border-gray-100">
+                      {order.status === 'pending' && (
+                        <>
+                          <button
+                            onClick={() => handleUpdateQrOrderStatus(order.id, 'preparing')}
+                            className="flex-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition flex items-center justify-center gap-1"
+                          >
+                            <ChefHat className="w-4 h-4" />
+                            Aceitar / Preparar
+                          </button>
+                          <button
+                            onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
+                            className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                      {order.status === 'preparing' && (
+                        <button
+                          onClick={() => handleUpdateQrOrderStatus(order.id, 'ready')}
+                          className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition flex items-center justify-center gap-1"
+                        >
+                          <Check className="w-4 h-4" />
+                          Pronto para servir
+                        </button>
+                      )}
+                      {order.status === 'ready' && (
+                        <button
+                          onClick={() => handleUpdateQrOrderStatus(order.id, 'delivered')}
+                          className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-center gap-1"
+                        >
+                          <Check className="w-4 h-4" />
+                          Entregue
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============ QR CODES / TABLES ============ */}
+      {activeTab === 'qr-codes' && (
+        <div className="space-y-6">
+          {/* Menu Public URL */}
+          {clubId && (
+            <div className="bg-gradient-to-r from-emerald-50 to-lime-50 rounded-xl border border-emerald-200 p-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-2">
+                <ExternalLink className="w-4 h-4 text-emerald-600" />
+                Link do Menu Digital
+              </h3>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={getMenuPublicUrl()}
+                  readOnly
+                  className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono text-gray-600"
+                />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(getMenuPublicUrl());
+                    alert('Link copiado!');
+                  }}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition flex items-center gap-1"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copiar
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Este é o link geral do menu. Para mesas específicas, crie mesas abaixo e gere QR codes individuais.
+              </p>
+            </div>
+          )}
+
+          {/* Tables Management */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-gray-600" />
+                Mesas ({clubTables.length})
+              </h3>
+              <button
+                onClick={() => { setShowTableForm(true); setNewTableNumber(''); }}
+                className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center gap-1"
+              >
+                <Plus className="w-4 h-4" />
+                Adicionar Mesa
+              </button>
+            </div>
+
+            {clubTables.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+                <QrCode className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <h4 className="font-medium text-gray-900 mb-1">Sem mesas configuradas</h4>
+                <p className="text-sm text-gray-500">Adicione mesas para gerar QR codes individuais.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {clubTables.map(table => (
+                  <div key={table.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 text-center">
+                    <div className="w-16 h-16 mx-auto mb-3 bg-gray-100 rounded-xl flex items-center justify-center">
+                      <span className="text-2xl font-bold text-gray-600">{table.table_number}</span>
+                    </div>
+                    <p className="font-semibold text-gray-900 mb-1">Mesa {table.table_number}</p>
+                    <div className="flex flex-col gap-2 mt-3">
+                      <button
+                        onClick={() => {
+                          const url = getTableQrUrl(table.table_number);
+                          // Open QR code generator
+                          window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`, '_blank');
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition flex items-center justify-center gap-1"
+                      >
+                        <QrCode className="w-4 h-4" />
+                        Ver QR Code
+                      </button>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(getTableQrUrl(table.table_number));
+                          alert(`Link da Mesa ${table.table_number} copiado!`);
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center justify-center gap-1"
+                      >
+                        <Copy className="w-4 h-4" />
+                        Copiar Link
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTable(table.id)}
+                        className="px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition flex items-center justify-center gap-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1264,15 +1706,30 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   required
                 />
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="item_available"
-                  checked={itemForm.is_available}
-                  onChange={(e) => setItemForm({ ...itemForm, is_available: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <label htmlFor="item_available" className="text-sm text-gray-700">{t.bar.available}</label>
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="item_available"
+                    checked={itemForm.is_available}
+                    onChange={(e) => setItemForm({ ...itemForm, is_available: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="item_available" className="text-sm text-gray-700">{t.bar.available}</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="item_is_food"
+                    checked={itemForm.is_food}
+                    onChange={(e) => setItemForm({ ...itemForm, is_food: e.target.checked })}
+                    className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                  />
+                  <label htmlFor="item_is_food" className="text-sm text-gray-700 flex items-center gap-1">
+                    <ChefHat className="w-4 h-4 text-orange-500" />
+                    Comida (vai para cozinha)
+                  </label>
+                </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setShowItemForm(false); setEditingItem(null); resetItemForm(); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
@@ -1281,6 +1738,41 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                 <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
                   <Check className="w-4 h-4" />
                   {saving ? (t.message?.saving || 'Saving...') : t.common.save}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ============ TABLE FORM MODAL ============ */}
+      {showTableForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">Adicionar Mesa</h2>
+              <button onClick={() => setShowTableForm(false)} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleAddTable} className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Número da Mesa *</label>
+                <input
+                  type="text"
+                  value={newTableNumber}
+                  onChange={(e) => setNewTableNumber(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="1, 2, 3... ou A1, B2..."
+                  required
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowTableForm(false)} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                  {t.common.cancel}
+                </button>
+                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Plus className="w-4 h-4" />
+                  {saving ? (t.message?.saving || 'Saving...') : 'Adicionar'}
                 </button>
               </div>
             </form>
