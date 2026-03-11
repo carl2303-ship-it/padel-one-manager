@@ -585,6 +585,28 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         // Check if there's an open tab for this table + customer combination
         const tableLabel = order.table_number === 'Balcão' ? '🏪 Balcão' : `Mesa ${order.table_number}`;
         const tabName = order.customer_name ? `${order.customer_name} — ${tableLabel}` : tableLabel;
+        const customerPhone = order.customer_phone || null;
+
+        // Look up member discount if phone is provided
+        let playerAccountId: string | null = null;
+        let discountPercent = 0;
+
+        if (customerPhone) {
+          const normalizedPhone = normalizePhone(customerPhone);
+          // Find player account by phone
+          const { data: playerAccount } = await supabase
+            .from('player_accounts')
+            .select('id')
+            .eq('phone_number', normalizedPhone)
+            .maybeSingle();
+
+          if (playerAccount) {
+            playerAccountId = playerAccount.id;
+          }
+
+          // Check for membership discount
+          discountPercent = await getMemberBarDiscount(customerPhone, playerAccountId);
+        }
         
         const { data: existingTab } = await supabase
           .from('bar_tabs')
@@ -600,15 +622,19 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           tabId = existingTab.id;
         } else {
           // Create a new open tab for this table + customer
-          const customerPhone = (order as { customer_phone?: string }).customer_phone || null;
+          const tabInsertData: Record<string, unknown> = {
+            club_owner_id: effectiveUserId,
+            player_name: tabName,
+            player_phone: customerPhone,
+            notes: discountPercent > 0 
+              ? `📱 QR — ${tableLabel} | 🏷️ Membro -${discountPercent}%`
+              : `📱 QR — ${tableLabel}`,
+          };
+          if (playerAccountId) tabInsertData.player_account_id = playerAccountId;
+
           const { data: newTab } = await supabase
             .from('bar_tabs')
-            .insert({
-              club_owner_id: effectiveUserId,
-              player_name: tabName,
-              player_phone: customerPhone,
-              notes: `📱 QR — ${tableLabel}`,
-            })
+            .insert(tabInsertData)
             .select('id')
             .single();
 
@@ -620,16 +646,20 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           tabId = newTab.id;
         }
 
-        // Add order items to the tab
+        // Add order items to the tab (with discount applied if member)
         if (order.items && order.items.length > 0) {
           for (const item of order.items) {
+            const discountedPrice = discountPercent > 0
+              ? item.unit_price * (1 - discountPercent / 100)
+              : item.unit_price;
+
             // Check if item already exists in tab
             const { data: existingItem } = await supabase
               .from('bar_tab_items')
               .select('id, quantity, unit_price')
               .eq('tab_id', tabId)
               .eq('item_name', item.item_name)
-              .eq('unit_price', item.unit_price)
+              .eq('unit_price', discountedPrice)
               .maybeSingle();
 
             if (existingItem) {
@@ -647,8 +677,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                 menu_item_id: item.menu_item_id,
                 item_name: item.item_name,
                 quantity: item.quantity,
-                unit_price: item.unit_price,
-                total_price: item.quantity * item.unit_price,
+                unit_price: discountedPrice,
+                total_price: item.quantity * discountedPrice,
               });
             }
           }
