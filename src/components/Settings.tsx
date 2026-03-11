@@ -337,9 +337,14 @@ export default function Settings() {
                     onChange={(e) => setBookingSlotDuration(Number(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
+                    <option value={30}>30 min</option>
                     <option value={60}>60 min (1h)</option>
                     <option value={90}>90 min (1h30)</option>
                     <option value={120}>120 min (2h)</option>
+                    <option value={150}>150 min (2h30)</option>
+                    <option value={180}>180 min (3h)</option>
+                    <option value={210}>210 min (3h30)</option>
+                    <option value={240}>240 min (4h)</option>
                   </select>
                 </div>
                 <div>
