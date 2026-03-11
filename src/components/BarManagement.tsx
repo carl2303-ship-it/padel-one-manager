@@ -101,6 +101,7 @@ interface QrOrder {
   status: string;
   total: number;
   customer_name: string | null;
+  customer_phone: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -581,13 +582,15 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     // When accepting a QR order, auto-create or add to bar tab for that table
     if (status === 'preparing' && order && effectiveUserId) {
       try {
-        // Check if there's an open tab for this table
-        const tableLabel = `Mesa ${order.table_number}`;
+        // Check if there's an open tab for this table + customer combination
+        const tableLabel = order.table_number === 'Balcão' ? '🏪 Balcão' : `Mesa ${order.table_number}`;
+        const tabName = order.customer_name ? `${order.customer_name} — ${tableLabel}` : tableLabel;
+        
         const { data: existingTab } = await supabase
           .from('bar_tabs')
           .select('id')
           .eq('club_owner_id', effectiveUserId)
-          .eq('player_name', order.customer_name || tableLabel)
+          .eq('player_name', tabName)
           .eq('status', 'open')
           .maybeSingle();
 
@@ -596,12 +599,14 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         if (existingTab) {
           tabId = existingTab.id;
         } else {
-          // Create a new open tab for this table
+          // Create a new open tab for this table + customer
+          const customerPhone = (order as { customer_phone?: string }).customer_phone || null;
           const { data: newTab } = await supabase
             .from('bar_tabs')
             .insert({
               club_owner_id: effectiveUserId,
-              player_name: order.customer_name || tableLabel,
+              player_name: tabName,
+              player_phone: customerPhone,
               notes: `📱 QR — ${tableLabel}`,
             })
             .select('id')
@@ -947,11 +952,16 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
             </button>
             <button
               onClick={() => setActiveTab('orders')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
                 activeTab === 'orders' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
               }`}
             >
               {t.bar.orders}
+              {pendingQrCount > 0 && (
+                <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
+                  {pendingQrCount}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab('menu')}
@@ -960,20 +970,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               }`}
             >
               {t.bar.menu}
-            </button>
-            <button
-              onClick={() => setActiveTab('qr-orders')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'qr-orders' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              <Smartphone className="w-4 h-4" />
-              Pedidos QR
-              {pendingQrCount > 0 && (
-                <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
-                  {pendingQrCount}
-                </span>
-              )}
             </button>
             <button
               onClick={() => setActiveTab('qr-codes')}
@@ -1290,73 +1286,192 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       )}
 
       {/* ============ ORDERS ============ */}
-      {activeTab === 'orders' && (
-        orders.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-            <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">{t.bar.noOrders}</h3>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {orders.map(order => (
-              <div key={order.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-rose-100 rounded-lg">
-                      <ShoppingBag className="w-5 h-5 text-rose-600" />
-                    </div>
-                    <div>
-                      <div className="font-medium text-gray-900">
-                        {order.customer_name || 'Guest'}
-                        {order.table_number && <span className="text-gray-500"> - {t.bar.tableNumber} {order.table_number}</span>}
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {formatTime(order.created_at)}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(order.status)}`}>
-                      {t.bar[`order${order.status.charAt(0).toUpperCase() + order.status.slice(1)}` as keyof typeof t.bar] || order.status}
-                    </span>
-                    <span className="font-bold text-gray-900">{order.total.toFixed(2)} EUR</span>
-                  </div>
-                </div>
-                <div className="flex gap-2 pt-3 border-t border-gray-100">
-                  {order.status === 'pending' && (
-                    <button
-                      onClick={() => handleUpdateOrderStatus(order.id, 'preparing')}
-                      className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-1"
-                    >
-                      <ChefHat className="w-4 h-4" />
-                      Start Preparing
-                    </button>
-                  )}
-                  {order.status === 'preparing' && (
-                    <button
-                      onClick={() => handleUpdateOrderStatus(order.id, 'ready')}
-                      className="px-3 py-1.5 text-sm font-medium text-green-600 hover:bg-green-50 rounded-lg transition flex items-center gap-1"
-                    >
-                      <Check className="w-4 h-4" />
-                      {t.bar.markReady}
-                    </button>
-                  )}
-                  {order.status === 'ready' && (
-                    <button
-                      onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
-                      className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition flex items-center gap-1"
-                    >
-                      <Check className="w-4 h-4" />
-                      {t.bar.markDelivered}
-                    </button>
-                  )}
-                </div>
+      {activeTab === 'orders' && (() => {
+        // Merge bar_orders and QR orders into a single list, sorted by date (newest first)
+        const allOrders = [
+          ...orders.map(o => ({ ...o, source: 'manual' as const })),
+          ...qrOrders.map(o => ({ ...o, source: 'qr' as const })),
+        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+        const orderFilter = qrOrderFilter;
+
+        const filteredOrders = allOrders.filter(o => {
+          if (orderFilter === 'pending') return o.status === 'pending';
+          if (orderFilter === 'preparing') return o.status === 'preparing';
+          return true;
+        });
+
+        return (
+          <div className="space-y-4">
+            {/* Filters */}
+            <div className="flex items-center justify-between">
+              <div className="flex gap-2">
+                {(['pending', 'preparing', 'all'] as const).map(filter => (
+                  <button
+                    key={filter}
+                    onClick={() => setQrOrderFilter(filter)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                      qrOrderFilter === filter
+                        ? 'bg-red-100 text-red-700 border border-red-300'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {filter === 'pending' ? 'Pendentes' : filter === 'preparing' ? 'Em preparação' : 'Todos'}
+                    {filter === 'pending' && pendingQrCount > 0 && (
+                      <span className="ml-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{pendingQrCount}</span>
+                    )}
+                  </button>
+                ))}
               </div>
-            ))}
+              <button
+                onClick={() => loadData()}
+                className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg border border-gray-200 flex items-center gap-1"
+              >
+                🔄 Atualizar
+              </button>
+            </div>
+
+            {filteredOrders.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+                <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Sem pedidos</h3>
+                <p className="text-sm text-gray-500">Os pedidos feitos via QR Code e manuais aparecerão aqui.</p>
+              </div>
+            ) : (
+              <div className="grid gap-4">
+                {filteredOrders.map(order => (
+                  <div key={order.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden ${
+                    order.status === 'pending' ? 'border-red-300 ring-2 ring-red-100' :
+                    order.status === 'preparing' ? 'border-blue-300' :
+                    order.status === 'ready' ? 'border-green-300' : 'border-gray-200'
+                  }`}>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                            order.status === 'pending' ? 'bg-red-500 animate-pulse' :
+                            order.status === 'preparing' ? 'bg-blue-500' :
+                            order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
+                          }`}>
+                            {order.source === 'qr' ? `M${(order as typeof qrOrders[0]).table_number}` : '🛒'}
+                          </div>
+                          <div>
+                            <div className="font-semibold text-gray-900 flex items-center gap-2">
+                              {order.source === 'qr' ? (
+                                <>
+                                  Mesa {(order as typeof qrOrders[0]).table_number}
+                                  {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
+                                  <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">📱 QR</span>
+                                </>
+                              ) : (
+                                <>
+                                  {order.customer_name || 'Pedido'}
+                                  {(order as typeof orders[0]).table_number && (
+                                    <span className="text-gray-500 text-sm">— Mesa {(order as typeof orders[0]).table_number}</span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500 flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {formatDate(order.created_at)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-lg text-gray-900">{order.total.toFixed(2)} €</div>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(order.status)}`}>
+                            {order.status === 'pending' ? '🔴 Novo!' :
+                             order.status === 'preparing' ? '🔵 Aceite' :
+                             order.status === 'ready' ? '🟢 Pronto' :
+                             order.status === 'delivered' ? '✅ Entregue' : '❌ Cancelado'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Order items (for QR orders) */}
+                      {order.source === 'qr' && (order as typeof qrOrders[0]).items && (order as typeof qrOrders[0]).items!.length > 0 && (
+                        <div className="border-t border-gray-100 pt-3 space-y-1.5">
+                          {(order as typeof qrOrders[0]).items!.map(item => (
+                            <div key={item.id} className="flex items-center justify-between text-sm">
+                              <div className="flex items-center gap-2">
+                                {item.is_food ? (
+                                  <ChefHat className="w-4 h-4 text-orange-500" />
+                                ) : (
+                                  <Coffee className="w-4 h-4 text-blue-500" />
+                                )}
+                                <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
+                                {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
+                              </div>
+                              <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {order.notes && (
+                        <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800">
+                          📝 {order.notes}
+                        </div>
+                      )}
+
+                      {/* Action buttons */}
+                      <div className="flex gap-2 pt-3 mt-3 border-t border-gray-100">
+                        {order.status === 'pending' && (
+                          <>
+                            <button
+                              onClick={() => order.source === 'qr'
+                                ? handleUpdateQrOrderStatus(order.id, 'preparing')
+                                : handleUpdateOrderStatus(order.id, 'preparing')
+                              }
+                              className="flex-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition flex items-center justify-center gap-1"
+                            >
+                              <Check className="w-4 h-4" />
+                              Aceitar
+                            </button>
+                            {order.source === 'qr' && (
+                              <button
+                                onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
+                                className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {order.status === 'preparing' && (
+                          <button
+                            onClick={() => order.source === 'qr'
+                              ? handleUpdateQrOrderStatus(order.id, 'ready')
+                              : handleUpdateOrderStatus(order.id, 'ready')
+                            }
+                            className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition flex items-center justify-center gap-1"
+                          >
+                            <Bell className="w-4 h-4" />
+                            🔔 Pronto para servir
+                          </button>
+                        )}
+                        {order.status === 'ready' && (
+                          <button
+                            onClick={() => order.source === 'qr'
+                              ? handleUpdateQrOrderStatus(order.id, 'delivered')
+                              : handleUpdateOrderStatus(order.id, 'delivered')
+                            }
+                            className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-center gap-1"
+                          >
+                            <Check className="w-4 h-4" />
+                            Entregue
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )
-      )}
+        );
+      })()}
 
       {/* ============ MENU ============ */}
       {activeTab === 'menu' && (
@@ -1462,154 +1577,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         </div>
       )}
 
-      {/* ============ QR ORDERS ============ */}
-      {activeTab === 'qr-orders' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex gap-2">
-              {(['pending', 'preparing', 'all'] as const).map(filter => (
-                <button
-                  key={filter}
-                  onClick={() => setQrOrderFilter(filter)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                    qrOrderFilter === filter
-                      ? 'bg-red-100 text-red-700 border border-red-300'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  {filter === 'pending' ? 'Pendentes' : filter === 'preparing' ? 'Em preparação' : 'Todos'}
-                  {filter === 'pending' && pendingQrCount > 0 && (
-                    <span className="ml-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{pendingQrCount}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => loadData()}
-              className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg border border-gray-200 flex items-center gap-1"
-            >
-              🔄 Atualizar
-            </button>
-          </div>
-
-          {filteredQrOrders.length === 0 ? (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-              <Smartphone className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Sem pedidos QR</h3>
-              <p className="text-sm text-gray-500">Os pedidos feitos pelos clientes via QR Code aparecerão aqui.</p>
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              {filteredQrOrders.map(order => (
-                <div key={order.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden ${
-                  order.status === 'pending' ? 'border-red-300 ring-2 ring-red-100' :
-                  order.status === 'preparing' ? 'border-blue-300' :
-                  order.status === 'ready' ? 'border-green-300' : 'border-gray-200'
-                }`}>
-                  <div className="p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                          order.status === 'pending' ? 'bg-red-500 animate-pulse' :
-                          order.status === 'preparing' ? 'bg-blue-500' :
-                          order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
-                        }`}>
-                          M{order.table_number}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-gray-900 flex items-center gap-2">
-                            Mesa {order.table_number}
-                            {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
-                          </div>
-                          <div className="text-xs text-gray-500 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {formatDate(order.created_at)}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-lg text-gray-900">{order.total.toFixed(2)} €</div>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(order.status)}`}>
-                          {order.status === 'pending' ? '🔴 Novo!' :
-                           order.status === 'preparing' ? '🔵 Preparando' :
-                           order.status === 'ready' ? '🟢 Pronto' :
-                           order.status === 'delivered' ? '✅ Entregue' : '❌ Cancelado'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Order items */}
-                    {order.items && order.items.length > 0 && (
-                      <div className="border-t border-gray-100 pt-3 space-y-1.5">
-                        {order.items.map(item => (
-                          <div key={item.id} className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              {item.is_food ? (
-                                <ChefHat className="w-4 h-4 text-orange-500" />
-                              ) : (
-                                <Coffee className="w-4 h-4 text-blue-500" />
-                              )}
-                              <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
-                              {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
-                            </div>
-                            <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {order.notes && (
-                      <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800">
-                        📝 {order.notes}
-                      </div>
-                    )}
-
-                    {/* Action buttons */}
-                    <div className="flex gap-2 pt-3 mt-3 border-t border-gray-100">
-                      {order.status === 'pending' && (
-                        <>
-                          <button
-                            onClick={() => handleUpdateQrOrderStatus(order.id, 'preparing')}
-                            className="flex-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition flex items-center justify-center gap-1"
-                          >
-                            <ChefHat className="w-4 h-4" />
-                            Aceitar / Preparar
-                          </button>
-                          <button
-                            onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
-                            className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
-                      {order.status === 'preparing' && (
-                        <button
-                          onClick={() => handleUpdateQrOrderStatus(order.id, 'ready')}
-                          className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition flex items-center justify-center gap-1"
-                        >
-                          <Check className="w-4 h-4" />
-                          Pronto para servir
-                        </button>
-                      )}
-                      {order.status === 'ready' && (
-                        <button
-                          onClick={() => handleUpdateQrOrderStatus(order.id, 'delivered')}
-                          className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-center gap-1"
-                        >
-                          <Check className="w-4 h-4" />
-                          Entregue
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ============ QR CODES / TABLES ============ */}
       {activeTab === 'qr-codes' && (
         <div className="space-y-6">
@@ -1641,6 +1608,39 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               <p className="text-xs text-gray-500 mt-2">
                 Este é o link geral do menu. Para mesas específicas, crie mesas abaixo e gere QR codes individuais.
               </p>
+            </div>
+          )}
+
+          {/* Bar Counter QR Code */}
+          {clubId && (
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-2">
+                🏪 QR Code — Balcão
+              </h3>
+              <p className="text-sm text-gray-600 mb-3">Para clientes que pedem diretamente ao bar, sem mesa.</p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}/menu/${clubId}?mesa=Balc%C3%A3o`;
+                    window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(url)}`, '_blank');
+                  }}
+                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition flex items-center gap-1"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Ver QR Code Balcão
+                </button>
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}/menu/${clubId}?mesa=Balc%C3%A3o`;
+                    navigator.clipboard.writeText(url);
+                    alert('Link do balcão copiado!');
+                  }}
+                  className="px-4 py-2 bg-white border border-amber-300 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-50 transition flex items-center gap-1"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copiar Link
+                </button>
+              </div>
             </div>
           )}
 

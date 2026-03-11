@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import {
   Plus,
@@ -9,8 +9,10 @@ import {
   Coffee,
   Send,
   Check,
-  ArrowLeft,
-  Loader2
+  Loader2,
+  Bell,
+  Clock,
+  Phone
 } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -61,21 +63,86 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   const [loading, setLoading] = useState(true);
   const [showCart, setShowCart] = useState(false);
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [orderSubmitted, setOrderSubmitted] = useState(false);
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [orderStatus, setOrderStatus] = useState<string>('pending');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [mesa, setMesa] = useState(tableNumber || '');
+  const [orderReady, setOrderReady] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     loadMenu();
   }, [clubId]);
 
+  // Subscribe to order status changes via Supabase Realtime
+  useEffect(() => {
+    if (!orderId) return;
+
+    const channel = anonSupabase
+      .channel(`order-status-${orderId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'club_orders',
+          filter: `id=eq.${orderId}`
+        },
+        (payload) => {
+          const newStatus = payload.new?.status;
+          if (newStatus) {
+            setOrderStatus(newStatus);
+            if (newStatus === 'ready') {
+              setOrderReady(true);
+              // Play notification sound
+              try {
+                const audio = new Audio('data:audio/wav;base64,UklGRl9vT19teleVBRlQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
+                // Use a simple beep
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.value = 880;
+                gain.gain.value = 0.3;
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+                // Second beep
+                setTimeout(() => {
+                  const osc2 = ctx.createOscillator();
+                  const gain2 = ctx.createGain();
+                  osc2.connect(gain2);
+                  gain2.connect(ctx.destination);
+                  osc2.frequency.value = 1100;
+                  gain2.gain.value = 0.3;
+                  osc2.start();
+                  osc2.stop(ctx.currentTime + 0.5);
+                }, 600);
+              } catch {
+                // Audio not supported
+              }
+              // Vibrate if supported
+              if (navigator.vibrate) {
+                navigator.vibrate([300, 200, 300, 200, 300]);
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      anonSupabase.removeChannel(channel);
+    };
+  }, [orderId]);
+
   const loadMenu = async () => {
     setLoading(true);
 
-    // Fetch club info
     const { data: clubData } = await anonSupabase
       .from('clubs')
       .select('id, name, logo_url, photo_url_1, photo_url_2, owner_id')
@@ -90,7 +157,6 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
     setClub(clubData);
 
-    // Fetch categories
     const { data: categoriesData } = await anonSupabase
       .from('menu_categories')
       .select('id, name, sort_order')
@@ -98,7 +164,6 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       .eq('is_active', true)
       .order('sort_order');
 
-    // Fetch menu items
     const { data: itemsData } = await anonSupabase
       .from('menu_items')
       .select('id, category_id, name, description, price, image_url, is_food')
@@ -146,7 +211,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   const totalPrice = cart.reduce((sum, c) => sum + c.quantity * c.menuItem.price, 0);
 
   const handleSubmitOrder = async () => {
-    if (!club || !mesa.trim() || cart.length === 0) return;
+    if (!club || !mesa.trim() || !customerName.trim() || cart.length === 0) return;
 
     setSubmitting(true);
 
@@ -156,7 +221,8 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       .insert({
         club_id: club.id,
         table_number: mesa.trim(),
-        customer_name: customerName.trim() || null,
+        customer_name: customerName.trim(),
+        customer_phone: customerPhone.trim() || null,
         notes: orderNotes.trim() || null,
         total: totalPrice,
         status: 'pending'
@@ -203,7 +269,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
           userId: club.owner_id,
           type: 'qr_order',
           bookingId: orderData.id,
-          playerName: customerName.trim() || `Mesa ${mesa}`,
+          playerName: `${customerName.trim()} — Mesa ${mesa}`,
           courtName: `Mesa ${mesa}`,
           scheduledAt: new Date().toISOString()
         })
@@ -213,7 +279,9 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
     }
 
     setOrderId(orderData.id);
+    setOrderStatus('pending');
     setOrderSubmitted(true);
+    setOrderReady(false);
     setCart([]);
     setShowCart(false);
     setSubmitting(false);
@@ -241,25 +309,97 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
     );
   }
 
+  // Order status tracking page
   if (orderSubmitted) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-emerald-50 to-white flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Check className="w-10 h-10 text-emerald-600" />
+          {/* Ready notification overlay */}
+          {orderReady && (
+            <div className="fixed inset-0 bg-emerald-600/95 z-50 flex items-center justify-center p-6 animate-pulse">
+              <div className="text-center text-white">
+                <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce">
+                  <Bell className="w-12 h-12 text-white" />
+                </div>
+                <h2 className="text-3xl font-bold mb-4">🎉 Pedido Pronto!</h2>
+                <p className="text-xl mb-2">O seu pedido está pronto.</p>
+                <p className="text-lg mb-8 opacity-90">Pode vir buscar ao bar!</p>
+                <button
+                  onClick={() => setOrderReady(false)}
+                  className="px-8 py-3 bg-white text-emerald-700 rounded-xl font-bold text-lg hover:bg-gray-100 transition"
+                >
+                  OK, obrigado! 👍
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${
+            orderStatus === 'pending' ? 'bg-amber-100' :
+            orderStatus === 'preparing' ? 'bg-blue-100' :
+            orderStatus === 'ready' ? 'bg-emerald-100' :
+            orderStatus === 'delivered' ? 'bg-gray-100' : 'bg-emerald-100'
+          }`}>
+            {orderStatus === 'pending' && <Clock className="w-10 h-10 text-amber-600 animate-pulse" />}
+            {orderStatus === 'preparing' && <ChefHat className="w-10 h-10 text-blue-600 animate-bounce" />}
+            {orderStatus === 'ready' && <Bell className="w-10 h-10 text-emerald-600 animate-bounce" />}
+            {orderStatus === 'delivered' && <Check className="w-10 h-10 text-gray-600" />}
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Pedido Enviado!</h2>
-          <p className="text-gray-600 mb-4">
-            O seu pedido para a <strong>Mesa {mesa}</strong> foi recebido.
+
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            {orderStatus === 'pending' && '⏳ Pedido Enviado'}
+            {orderStatus === 'preparing' && '👨‍🍳 Em Preparação'}
+            {orderStatus === 'ready' && '🔔 Pronto para levantar!'}
+            {orderStatus === 'delivered' && '✅ Entregue'}
+          </h2>
+
+          <p className="text-gray-600 mb-2">
+            <strong>Mesa {mesa}</strong> — {customerName}
           </p>
+
+          <div className="my-6">
+            {/* Progress bar */}
+            <div className="flex items-center gap-1">
+              <div className={`flex-1 h-2 rounded-full ${
+                ['pending', 'preparing', 'ready', 'delivered'].includes(orderStatus) ? 'bg-emerald-500' : 'bg-gray-200'
+              }`} />
+              <div className={`flex-1 h-2 rounded-full ${
+                ['preparing', 'ready', 'delivered'].includes(orderStatus) ? 'bg-emerald-500' : 'bg-gray-200'
+              }`} />
+              <div className={`flex-1 h-2 rounded-full ${
+                ['ready', 'delivered'].includes(orderStatus) ? 'bg-emerald-500' : 'bg-gray-200'
+              }`} />
+              <div className={`flex-1 h-2 rounded-full ${
+                orderStatus === 'delivered' ? 'bg-emerald-500' : 'bg-gray-200'
+              }`} />
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className="text-xs text-gray-500">Enviado</span>
+              <span className="text-xs text-gray-500">Aceite</span>
+              <span className="text-xs text-gray-500">Pronto</span>
+              <span className="text-xs text-gray-500">Entregue</span>
+            </div>
+          </div>
+
           <p className="text-sm text-gray-500 mb-6">
-            O staff do bar será notificado e o seu pedido será preparado em breve.
+            {orderStatus === 'pending' && 'A aguardar confirmação do bar...'}
+            {orderStatus === 'preparing' && 'O seu pedido está a ser preparado! 🍹'}
+            {orderStatus === 'ready' && 'O seu pedido está pronto! Pode vir buscar ao bar. 🎉'}
+            {orderStatus === 'delivered' && 'Obrigado! Bom apetite! 😄'}
           </p>
+
+          <p className="text-xs text-gray-400 mb-4">
+            💡 Mantenha esta página aberta — será notificado quando o seu pedido estiver pronto.
+          </p>
+
           <button
             onClick={() => {
               setOrderSubmitted(false);
               setOrderId(null);
+              setOrderStatus('pending');
+              setOrderReady(false);
               setCustomerName('');
+              setCustomerPhone('');
               setOrderNotes('');
             }}
             className="w-full px-6 py-3 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition"
@@ -296,7 +436,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
           )}
           <div className="flex-1">
             <h1 className="font-bold text-gray-900">{club.name}</h1>
-            {mesa && <p className="text-xs text-gray-500">Mesa {mesa}</p>}
+            {mesa && <p className="text-xs text-gray-500">{mesa === 'Balcão' ? '🏪 Balcão' : `Mesa ${mesa}`}</p>}
           </div>
           {totalItems > 0 && (
             <button
@@ -335,7 +475,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       {!tableNumber && !mesa && (
         <div className="p-4">
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-            <p className="text-sm font-medium text-amber-800 mb-2">Qual é a sua mesa?</p>
+            <p className="text-sm font-medium text-amber-800 mb-2">📍 Qual é a sua mesa?</p>
             <input
               type="text"
               value={mesa}
@@ -483,7 +623,9 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
               {/* Mesa */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mesa *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {mesa === 'Balcão' ? '🏪 Balcão' : 'Mesa *'}
+                </label>
                 <input
                   type="text"
                   value={mesa}
@@ -495,16 +637,37 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
                 />
               </div>
 
-              {/* Customer Name */}
+              {/* Customer Name (mandatory) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nome (opcional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   placeholder="O seu nome"
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 ${
+                    !customerName.trim() ? 'border-red-300' : 'border-gray-300'
+                  }`}
+                  required
+                />
+              </div>
+
+              {/* Customer Phone (optional - for membership discounts) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5" />
+                  Telemóvel (opcional)
+                </label>
+                <input
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="+351 912 345 678"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                 />
+                <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                  🏷️ Se já és cliente do clube, coloca o teu telemóvel para usufruíres de descontos!
+                </p>
               </div>
 
               {/* Notes */}
@@ -528,7 +691,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
               {/* Submit */}
               <button
                 onClick={handleSubmitOrder}
-                disabled={submitting || !mesa.trim() || cart.length === 0}
+                disabled={submitting || !mesa.trim() || !customerName.trim() || cart.length === 0}
                 className="w-full py-3.5 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (
