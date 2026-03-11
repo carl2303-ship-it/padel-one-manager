@@ -2135,14 +2135,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     onChange={(e) => setNewBooking({ ...newBooking, duration: parseFloat(e.target.value) })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    <option value={0.5}>30 min</option>
                     <option value={1}>1h</option>
                     <option value={1.5}>1h30</option>
                     <option value={2}>2h</option>
-                    <option value={2.5}>2h30</option>
-                    <option value={3}>3h</option>
-                    <option value={3.5}>3h30</option>
-                    <option value={4}>4h</option>
                   </select>
                 </div>
               </div>

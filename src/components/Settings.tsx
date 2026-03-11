@@ -36,6 +36,7 @@ export default function Settings() {
   const [bookingEndTime, setBookingEndTime] = useState('22:00');
   const [bookingSlotDuration, setBookingSlotDuration] = useState(90);
   const [maxAdvanceDays, setMaxAdvanceDays] = useState(7);
+  const [availableBookingSlots, setAvailableBookingSlots] = useState<string[]>([]);
   const [hoursSaving, setHoursSaving] = useState(false);
   const [hoursSuccess, setHoursSuccess] = useState('');
 
@@ -49,7 +50,7 @@ export default function Settings() {
     if (!user) return;
     const { data } = await supabase
       .from('user_logo_settings')
-      .select('logo_url, booking_start_time, booking_end_time, booking_slot_duration, max_advance_days')
+      .select('logo_url, booking_start_time, booking_end_time, booking_slot_duration, max_advance_days, available_booking_slots')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -59,7 +60,61 @@ export default function Settings() {
       if (data.booking_end_time) setBookingEndTime(data.booking_end_time);
       if (data.booking_slot_duration) setBookingSlotDuration(data.booking_slot_duration);
       if (data.max_advance_days) setMaxAdvanceDays(data.max_advance_days);
+      if (data.available_booking_slots && Array.isArray(data.available_booking_slots)) {
+        setAvailableBookingSlots(data.available_booking_slots);
+      } else {
+        // Default: all slots between start and end are available
+        setAvailableBookingSlots(generateSlotsForRange(data.booking_start_time || '08:00', data.booking_end_time || '22:00'));
+      }
     }
+  };
+
+  // Generate all 30-min slots between two times
+  const generateSlotsForRange = (start: string, end: string): string[] => {
+    const slots: string[] = [];
+    const [startH, startM] = start.split(':').map(Number);
+    const [endH, endM] = end.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    for (let m = startMinutes; m < endMinutes; m += 30) {
+      const h = Math.floor(m / 60);
+      const min = m % 60;
+      slots.push(`${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`);
+    }
+    return slots;
+  };
+
+  // All possible 30-min slots between opening and closing
+  const allPossibleSlots = generateSlotsForRange(bookingStartTime, bookingEndTime);
+
+  // When opening/closing time changes, update available slots
+  const handleStartTimeChange = (newStart: string) => {
+    setBookingStartTime(newStart);
+    // Remove any selected slots that are now outside the range
+    const newAllSlots = generateSlotsForRange(newStart, bookingEndTime);
+    setAvailableBookingSlots(prev => prev.filter(s => newAllSlots.includes(s)));
+  };
+
+  const handleEndTimeChange = (newEnd: string) => {
+    setBookingEndTime(newEnd);
+    const newAllSlots = generateSlotsForRange(bookingStartTime, newEnd);
+    setAvailableBookingSlots(prev => prev.filter(s => newAllSlots.includes(s)));
+  };
+
+  const toggleSlot = (slot: string) => {
+    setAvailableBookingSlots(prev => 
+      prev.includes(slot) 
+        ? prev.filter(s => s !== slot)
+        : [...prev, slot].sort()
+    );
+  };
+
+  const selectAllSlots = () => {
+    setAvailableBookingSlots([...allPossibleSlots]);
+  };
+
+  const deselectAllSlots = () => {
+    setAvailableBookingSlots([]);
   };
 
   const handleSaveHours = async (e: React.FormEvent) => {
@@ -74,11 +129,12 @@ export default function Settings() {
         booking_start_time: bookingStartTime,
         booking_end_time: bookingEndTime,
         booking_slot_duration: bookingSlotDuration,
-        max_advance_days: maxAdvanceDays
+        max_advance_days: maxAdvanceDays,
+        available_booking_slots: availableBookingSlots
       }, { onConflict: 'user_id' });
 
     if (!error) {
-      setHoursSuccess(t.settings?.hoursSaved || 'Operating hours saved');
+      setHoursSuccess(t.settings?.hoursSaved || 'Horário guardado com sucesso');
       setTimeout(() => setHoursSuccess(''), 3000);
     }
     setHoursSaving(false);
@@ -296,15 +352,17 @@ export default function Settings() {
               <h2 className="font-semibold text-gray-900">{t.settings?.operatingHours || 'Operating Hours'}</h2>
             </div>
             <form onSubmit={handleSaveHours} className="p-4 space-y-4">
-              <p className="text-sm text-gray-600">{t.settings?.operatingHoursDesc || 'Define the hours when courts can be booked'}</p>
+              <p className="text-sm text-gray-600">{t.settings?.operatingHoursDesc || 'Defina o horário de funcionamento e os slots disponíveis para reserva'}</p>
+              
+              {/* Opening / Closing time */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.openingTime || 'Opening Time'}
+                    {t.settings?.openingTime || 'Hora de Abertura'}
                   </label>
                   <select
                     value={bookingStartTime}
-                    onChange={(e) => setBookingStartTime(e.target.value)}
+                    onChange={(e) => handleStartTimeChange(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
                     {timeOptions.map(time => (
@@ -314,11 +372,11 @@ export default function Settings() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.closingTime || 'Closing Time'}
+                    {t.settings?.closingTime || 'Hora de Fecho'}
                   </label>
                   <select
                     value={bookingEndTime}
-                    onChange={(e) => setBookingEndTime(e.target.value)}
+                    onChange={(e) => handleEndTimeChange(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
                     {timeOptions.map(time => (
@@ -327,43 +385,94 @@ export default function Settings() {
                   </select>
                 </div>
               </div>
+
+              {/* Selectable time slots grid */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    {t.settings?.availableSlots || 'Slots Disponíveis para Reserva'}
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={selectAllSlots}
+                      className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
+                    >
+                      Selecionar Todos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deselectAllSlots}
+                      className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100 transition"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mb-2">
+                  Selecione os horários em que os jogadores podem reservar. Cada slot = 30 minutos.
+                </p>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                  {allPossibleSlots.map(slot => {
+                    const isSelected = availableBookingSlots.includes(slot);
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => toggleSlot(slot)}
+                        className={`px-2 py-2 text-sm font-medium rounded-lg border transition-all ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600'
+                        }`}
+                      >
+                        {slot}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  {availableBookingSlots.length} de {allPossibleSlots.length} slots selecionados
+                </p>
+              </div>
+
+              {/* Slot Duration & Max Advance Days */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.slotDuration || 'Slot Duration'}
+                    {t.settings?.slotDuration || 'Duração da Reserva'}
                   </label>
                   <select
                     value={bookingSlotDuration}
                     onChange={(e) => setBookingSlotDuration(Number(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    <option value={30}>30 min</option>
                     <option value={60}>60 min (1h)</option>
                     <option value={90}>90 min (1h30)</option>
                     <option value={120}>120 min (2h)</option>
-                    <option value={150}>150 min (2h30)</option>
-                    <option value={180}>180 min (3h)</option>
-                    <option value={210}>210 min (3h30)</option>
-                    <option value={240}>240 min (4h)</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.maxAdvanceDays || 'Max Advance Booking (days)'}
+                    {t.settings?.maxAdvanceDays || 'Reserva antecipada (dias)'}
                   </label>
                   <select
                     value={maxAdvanceDays}
                     onChange={(e) => setMaxAdvanceDays(Number(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    {[3, 5, 7, 10, 14].map(d => (
-                      <option key={d} value={d}>{d} {t.settings?.days || 'days'}</option>
+                    {[3, 5, 7, 10, 14, 21, 30].map(d => (
+                      <option key={d} value={d}>{d} {t.settings?.days || 'dias'}</option>
                     ))}
                   </select>
                 </div>
               </div>
+
               {hoursSuccess && (
-                <div className="text-green-600 text-sm">{hoursSuccess}</div>
+                <div className="text-green-600 text-sm flex items-center gap-1">
+                  <Check className="w-4 h-4" />
+                  {hoursSuccess}
+                </div>
               )}
               <button
                 type="submit"
@@ -371,7 +480,7 @@ export default function Settings() {
                 className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <Check className="w-4 h-4" />
-                {hoursSaving ? t.message.saving : (t.common?.save || 'Save')}
+                {hoursSaving ? t.message.saving : (t.common?.save || 'Guardar')}
               </button>
             </form>
           </div>
