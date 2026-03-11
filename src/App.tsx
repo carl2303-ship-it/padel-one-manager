@@ -19,25 +19,25 @@ import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
 import {
-  LogOut,
   Menu,
   X,
-  LayoutDashboard,
-  CalendarDays,
-  Users,
-  GraduationCap,
-  Coffee,
-  BarChart3,
-  UserCog,
-  Settings as SettingsIcon,
-  Shield,
-  Gift
 } from 'lucide-react';
 
-// Tennis ball icon component for "Jogos Abertos"
-const TennisBallIcon = ({ className }: { className?: string }) => (
-  <span className={`inline-flex items-center justify-center ${className || ''}`} style={{ fontSize: '1.25rem', lineHeight: 1 }}>🎾</span>
+// Emoji icon components for sidebar menu
+const EmojiIcon = ({ emoji, className }: { emoji: string; className?: string }) => (
+  <span className={`inline-flex items-center justify-center w-5 h-5 ${className || ''}`} style={{ fontSize: '1.15rem', lineHeight: 1 }}>{emoji}</span>
 );
+const DashboardIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📊" className={className} />;
+const BookingsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📅" className={className} />;
+const MembersIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="👥" className={className} />;
+const AcademyIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎓" className={className} />;
+const BarIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🍹" className={className} />;
+const MetricsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📈" className={className} />;
+const OpenGamesIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎾" className={className} />;
+const RewardsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎁" className={className} />;
+const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🧑‍💼" className={className} />;
+const SettingsEmojiIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="⚙️" className={className} />;
+const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🚪" className={className} />;
 
 type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
 
@@ -224,15 +224,15 @@ function App() {
   }
 
   const allNavItems = [
-    { id: 'dashboard' as View, label: t.nav.dashboard, icon: LayoutDashboard, permission: 'always' },
-    { id: 'bookings' as View, label: t.nav.bookings, icon: CalendarDays, permission: 'perm_bookings' },
-    { id: 'members' as View, label: t.nav.members, icon: Users, permission: 'perm_members' },
-    { id: 'academy' as View, label: t.nav.academy, icon: GraduationCap, permission: 'perm_academy' },
-    { id: 'bar' as View, label: t.nav.bar, icon: Coffee, permission: 'perm_bar' },
-    { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: BarChart3, permission: 'perm_reports' },
-    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: TennisBallIcon, permission: 'perm_bookings' },
-    { id: 'rewards' as View, label: 'Rewards', icon: Gift, permission: 'perm_bookings' },
-    { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: UserCog, permission: 'owner_only' },
+    { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always' },
+    { id: 'bookings' as View, label: t.nav.bookings, icon: BookingsIcon, permission: 'perm_bookings' },
+    { id: 'members' as View, label: t.nav.members, icon: MembersIcon, permission: 'perm_members' },
+    { id: 'academy' as View, label: t.nav.academy, icon: AcademyIcon, permission: 'perm_academy' },
+    { id: 'bar' as View, label: t.nav.bar, icon: BarIcon, permission: 'perm_bar' },
+    { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: MetricsIcon, permission: 'perm_reports' },
+    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: OpenGamesIcon, permission: 'perm_bookings' },
+    { id: 'rewards' as View, label: 'Rewards', icon: RewardsIcon, permission: 'perm_bookings' },
+    { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: StaffIcon, permission: 'owner_only' },
   ];
 
   const navItems = allNavItems.filter(item => {
@@ -283,7 +283,7 @@ function App() {
                 : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            <SettingsIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
+            <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
             {t.nav.settings}
           </button>
 
@@ -294,7 +294,7 @@ function App() {
           {staffPermissions.isStaff && (
             <div className="px-4 py-2 bg-blue-50 rounded-lg mx-2 mb-2">
               <div className="flex items-center gap-2 text-blue-700 text-sm font-medium">
-                <Shield className="w-4 h-4" />
+                <EmojiIcon emoji="🛡️" className="w-4 h-4" />
                 {staffPermissions.staffName}
               </div>
               <div className="text-xs text-blue-600 capitalize">{staffPermissions.role}</div>
@@ -309,7 +309,7 @@ function App() {
             onClick={handleSignOut}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all"
           >
-            <LogOut className="w-5 h-5 text-gray-500" />
+            <LogOutIcon className="w-5 h-5 text-gray-500" />
             {t.auth.signOut}
           </button>
         </div>
@@ -367,7 +367,7 @@ function App() {
                     : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                <SettingsIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
+                <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
                 {t.nav.settings}
               </button>
               <div className="px-4 py-2">
@@ -376,7 +376,7 @@ function App() {
               {staffPermissions.isStaff && (
                 <div className="px-4 py-2 bg-blue-50 rounded-lg mx-2 my-2">
                   <div className="flex items-center gap-2 text-blue-700 text-sm font-medium">
-                    <Shield className="w-4 h-4" />
+                    <EmojiIcon emoji="🛡️" className="w-4 h-4" />
                     {staffPermissions.staffName}
                   </div>
                   <div className="text-xs text-blue-600 capitalize">{staffPermissions.role}</div>
@@ -389,7 +389,7 @@ function App() {
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all"
               >
-                <LogOut className="w-5 h-5 text-gray-500" />
+                <LogOutIcon className="w-5 h-5 text-gray-500" />
                 {t.auth.signOut}
               </button>
             </nav>
