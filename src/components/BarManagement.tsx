@@ -1293,33 +1293,47 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
       {/* ============ ORDERS (unified club_orders) ============ */}
       {activeTab === 'orders' && (() => {
-        const filteredOrders = qrOrders.filter(o => {
-          if (qrOrderFilter === 'pending') return o.status === 'pending';
-          if (qrOrderFilter === 'preparing') return o.status === 'preparing';
-          return true;
-        });
+        // Active = all orders not yet delivered/cancelled
+        const activeOrders = qrOrders.filter(o => !['delivered', 'cancelled'].includes(o.status));
+        // Finished = delivered orders
+        const finishedOrders = qrOrders.filter(o => o.status === 'delivered');
+        const showingActive = qrOrderFilter !== 'all';
+
+        const displayedOrders = showingActive ? activeOrders : finishedOrders;
 
         return (
           <div className="space-y-4">
-            {/* Filters */}
+            {/* Tabs: Em preparação / Terminados */}
             <div className="flex items-center justify-between">
               <div className="flex gap-2">
-                {(['pending', 'preparing', 'all'] as const).map(filter => (
-                  <button
-                    key={filter}
-                    onClick={() => setQrOrderFilter(filter)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                      qrOrderFilter === filter
-                        ? 'bg-red-100 text-red-700 border border-red-300'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    {filter === 'pending' ? 'Pendentes' : filter === 'preparing' ? 'Em preparação' : 'Todos'}
-                    {filter === 'pending' && pendingQrCount > 0 && (
-                      <span className="ml-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded-full">{pendingQrCount}</span>
-                    )}
-                  </button>
-                ))}
+                <button
+                  onClick={() => setQrOrderFilter('pending')}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
+                    showingActive
+                      ? 'bg-orange-100 text-orange-800 border-2 border-orange-300'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  🔥 Em preparação
+                  {activeOrders.length > 0 && (
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                      showingActive ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-600'
+                    }`}>{activeOrders.length}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setQrOrderFilter('all')}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition flex items-center gap-2 ${
+                    !showingActive
+                      ? 'bg-gray-200 text-gray-800 border-2 border-gray-300'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  ✅ Terminados
+                  {finishedOrders.length > 0 && (
+                    <span className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded-full font-bold">{finishedOrders.length}</span>
+                  )}
+                </button>
               </div>
               <button
                 onClick={() => loadData()}
@@ -1329,124 +1343,149 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               </button>
             </div>
 
-            {filteredOrders.length === 0 ? (
+            {displayedOrders.length === 0 ? (
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
                 <ShoppingBag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">Sem pedidos</h3>
-                <p className="text-sm text-gray-500">Os pedidos feitos via QR Code e manuais aparecerão aqui.</p>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  {showingActive ? 'Sem pedidos ativos' : 'Sem pedidos terminados'}
+                </h3>
+                <p className="text-sm text-gray-500">
+                  {showingActive 
+                    ? 'Os novos pedidos aparecerão aqui automaticamente.' 
+                    : 'Os pedidos entregues aparecerão aqui.'}
+                </p>
               </div>
             ) : (
               <div className="grid gap-4">
-                {filteredOrders.map(order => (
-                  <div key={order.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden ${
-                    order.status === 'pending' ? 'border-red-300 ring-2 ring-red-100' :
-                    order.status === 'preparing' ? 'border-blue-300' :
-                    order.status === 'ready' ? 'border-green-300' : 'border-gray-200'
-                  }`}>
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                            order.status === 'pending' ? 'bg-red-500 animate-pulse' :
-                            order.status === 'preparing' ? 'bg-blue-500' :
-                            order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
-                          }`}>
-                            {order.source === 'qr' ? `M${order.table_number}` : '🛒'}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-gray-900 flex items-center gap-2">
-                              {order.table_number && (
-                                <>Mesa {order.table_number}</>
-                              )}
-                              {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
-                              {order.source === 'qr' && (
-                                <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">📱 QR</span>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-500 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatDate(order.created_at)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-bold text-lg text-gray-900">{order.total.toFixed(2)} €</div>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusColor(order.status)}`}>
-                            {order.status === 'pending' ? '🔴 Novo!' :
-                             order.status === 'preparing' ? '🔵 Aceite' :
-                             order.status === 'ready' ? '🟢 Pronto' :
-                             order.status === 'delivered' ? '✅ Entregue' : '❌ Cancelado'}
-                          </span>
-                        </div>
-                      </div>
+                {displayedOrders.map(order => {
+                  // Card background color based on status
+                  const cardBg = order.status === 'pending' ? 'bg-red-50 border-red-300 ring-2 ring-red-200' :
+                                 order.status === 'preparing' ? 'bg-orange-50 border-orange-300' :
+                                 order.status === 'ready' ? 'bg-green-50 border-green-300' :
+                                 'bg-gray-50 border-gray-200';
 
-                      {/* Order items */}
-                      {order.items && order.items.length > 0 && (
-                        <div className="border-t border-gray-100 pt-3 space-y-1.5">
-                          {order.items.map(item => (
-                            <div key={item.id} className="flex items-center justify-between text-sm">
-                              <div className="flex items-center gap-2">
-                                {item.is_food ? (
-                                  <ChefHat className="w-4 h-4 text-orange-500" />
-                                ) : (
-                                  <Coffee className="w-4 h-4 text-blue-500" />
+                  const statusIcon = order.status === 'pending' ? '🔴' :
+                                     order.status === 'preparing' ? '🟠' :
+                                     order.status === 'ready' ? '🟢' : '✅';
+
+                  const statusLabel = order.status === 'pending' ? 'Novo pedido!' :
+                                      order.status === 'preparing' ? 'Em preparação' :
+                                      order.status === 'ready' ? 'Pronto para entrega' : 'Entregue';
+
+                  return (
+                    <div key={order.id} className={`rounded-xl shadow-sm border overflow-hidden transition-all duration-300 ${cardBg}`}>
+                      <div className="p-4">
+                        {/* Header */}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-sm ${
+                              order.status === 'pending' ? 'bg-red-500 animate-pulse' :
+                              order.status === 'preparing' ? 'bg-orange-500' :
+                              order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
+                            }`}>
+                              {order.table_number === 'Balcão' ? '🏪' : `M${order.table_number}`}
+                            </div>
+                            <div>
+                              <div className="font-bold text-gray-900 flex items-center gap-2">
+                                {order.table_number === 'Balcão' ? '🏪 Balcão' : `Mesa ${order.table_number}`}
+                                {order.source === 'qr' && (
+                                  <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">📱 QR</span>
                                 )}
-                                <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
-                                {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
                               </div>
-                              <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
+                              {order.customer_name && (
+                                <div className="text-sm text-gray-600 font-medium">{order.customer_name}</div>
+                              )}
+                              <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                <Clock className="w-3 h-3" />
+                                {formatDate(order.created_at)}
+                              </div>
                             </div>
-                          ))}
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-xl text-gray-900">{order.total.toFixed(2)} €</div>
+                            <div className="text-xs font-semibold mt-1">
+                              {statusIcon} {statusLabel}
+                            </div>
+                          </div>
                         </div>
-                      )}
 
-                      {order.notes && (
-                        <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800">
-                          📝 {order.notes}
-                        </div>
-                      )}
+                        {/* Order items */}
+                        {order.items && order.items.length > 0 && (
+                          <div className="border-t border-gray-200/50 pt-3 space-y-1.5">
+                            {order.items.map(item => (
+                              <div key={item.id} className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  {item.is_food ? (
+                                    <ChefHat className="w-4 h-4 text-orange-500" />
+                                  ) : (
+                                    <Coffee className="w-4 h-4 text-blue-500" />
+                                  )}
+                                  <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
+                                  {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
+                                </div>
+                                <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
-                      {/* Action buttons */}
-                      <div className="flex gap-2 pt-3 mt-3 border-t border-gray-100">
-                        {order.status === 'pending' && (
-                          <>
-                            <button
-                              onClick={() => handleUpdateQrOrderStatus(order.id, 'preparing')}
-                              className="flex-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition flex items-center justify-center gap-1"
-                            >
-                              <Check className="w-4 h-4" />
-                              Aceitar
-                            </button>
-                            <button
-                              onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
-                              className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </>
+                        {order.notes && (
+                          <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800 border border-yellow-200">
+                            📝 {order.notes}
+                          </div>
                         )}
-                        {order.status === 'preparing' && (
-                          <button
-                            onClick={() => handleUpdateQrOrderStatus(order.id, 'ready')}
-                            className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition flex items-center justify-center gap-1"
-                          >
-                            <Bell className="w-4 h-4" />
-                            🔔 Pronto para servir
-                          </button>
-                        )}
-                        {order.status === 'ready' && (
-                          <button
-                            onClick={() => handleUpdateQrOrderStatus(order.id, 'delivered')}
-                            className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-center gap-1"
-                          >
-                            <Check className="w-4 h-4" />
-                            Entregue
-                          </button>
+
+                        {/* 3 Action buttons */}
+                        {order.status !== 'delivered' && order.status !== 'cancelled' && (
+                          <div className="flex gap-2 pt-3 mt-3 border-t border-gray-200/50">
+                            {/* Button 1: Recebido */}
+                            <button
+                              onClick={() => order.status === 'pending' ? handleUpdateQrOrderStatus(order.id, 'preparing') : null}
+                              disabled={order.status !== 'pending'}
+                              className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                order.status === 'pending'
+                                  ? 'bg-orange-500 text-white hover:bg-orange-600 shadow-sm cursor-pointer'
+                                  : 'bg-orange-200 text-orange-800 cursor-default opacity-60'
+                              }`}
+                            >
+                              {order.status === 'pending' ? '📥' : '✓'}
+                              Recebido
+                            </button>
+
+                            {/* Button 2: Pronto para entrega */}
+                            <button
+                              onClick={() => order.status === 'preparing' ? handleUpdateQrOrderStatus(order.id, 'ready') : null}
+                              disabled={order.status !== 'preparing'}
+                              className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                order.status === 'preparing'
+                                  ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm cursor-pointer'
+                                  : order.status === 'ready'
+                                    ? 'bg-green-200 text-green-800 cursor-default opacity-60'
+                                    : 'bg-gray-100 text-gray-400 cursor-default'
+                              }`}
+                            >
+                              {order.status === 'preparing' ? '🔔' : order.status === 'ready' ? '✓' : '🔔'}
+                              Pronto
+                            </button>
+
+                            {/* Button 3: Retirado */}
+                            <button
+                              onClick={() => order.status === 'ready' ? handleUpdateQrOrderStatus(order.id, 'delivered') : null}
+                              disabled={order.status !== 'ready'}
+                              className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                order.status === 'ready'
+                                  ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-sm cursor-pointer'
+                                  : 'bg-gray-100 text-gray-400 cursor-default'
+                              }`}
+                            >
+                              🤝 Retirado
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
