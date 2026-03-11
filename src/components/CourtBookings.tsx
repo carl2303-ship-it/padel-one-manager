@@ -744,10 +744,101 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   };
 
+  // Helper: notify all players in an open game that it was cancelled by the club
+  const notifyPlayersGameCancelled = async (gameId: string) => {
+    try {
+      // Get game details (court, club, scheduled time)
+      const { data: game } = await supabase
+        .from('open_games')
+        .select('id, court_id, club_id, scheduled_at')
+        .eq('id', gameId)
+        .maybeSingle();
+
+      if (!game) return;
+
+      // Get court name
+      let courtName = 'Campo';
+      if (game.court_id) {
+        const { data: court } = await supabase
+          .from('club_courts')
+          .select('name')
+          .eq('id', game.court_id)
+          .maybeSingle();
+        if (court) courtName = court.name;
+      }
+
+      // Get club name
+      let clubName = 'Clube';
+      if (game.club_id) {
+        const { data: club } = await supabase
+          .from('clubs')
+          .select('name')
+          .eq('id', game.club_id)
+          .maybeSingle();
+        if (club) clubName = club.name;
+      }
+
+      // Format date/time
+      const gameDate = new Date(game.scheduled_at);
+      const dateStr = gameDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
+      const timeStr = gameDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+
+      // Get all players in the game
+      const { data: gamePlayers } = await supabase
+        .from('open_game_players')
+        .select('player_account_id, user_id')
+        .eq('game_id', gameId);
+
+      if (!gamePlayers || gamePlayers.length === 0) return;
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      // Send push notification to each player
+      for (const player of gamePlayers) {
+        const pushBody: Record<string, unknown> = {
+          payload: {
+            title: '❌ Jogo Cancelado pelo Clube',
+            body: `O teu jogo em ${courtName} (${clubName}) dia ${dateStr} às ${timeStr} foi cancelado pelo clube.`,
+            url: '/',
+            tag: `game-cancelled-${gameId}`
+          },
+          appSource: 'player'
+        };
+
+        if (player.player_account_id) {
+          pushBody.playerAccountId = player.player_account_id;
+        } else if (player.user_id) {
+          pushBody.userId = player.user_id;
+        } else {
+          continue;
+        }
+
+        try {
+          await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${supabaseAnonKey}`
+            },
+            body: JSON.stringify(pushBody)
+          });
+        } catch (pushErr) {
+          console.error('[Notify] Error sending push to player:', pushErr);
+        }
+      }
+    } catch (err) {
+      console.error('[Notify] Error notifying players about game cancellation:', err);
+    }
+  };
+
   const handleCancelOpenGame = async (gameId: string) => {
     if (!confirm('Cancelar este jogo? Todos os jogadores serão notificados.')) {
       return;
     }
+
+    // Notify players BEFORE cancelling (so we can still read game data)
+    await notifyPlayersGameCancelled(gameId);
 
     const { error } = await supabase
       .from('open_games')
@@ -778,6 +869,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     if (!confirm('Eliminar este jogo permanentemente? Esta ação não pode ser revertida.')) {
       return;
     }
+
+    // Notify players BEFORE deleting (so we can still read game data)
+    await notifyPlayersGameCancelled(gameId);
 
     // Delete the court booking first
     const { data: bookings } = await supabase
@@ -1562,10 +1656,13 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         console.error('Error notifying manager:', notifyError);
       }
 
-      // If this is an open_game booking, also cancel the linked open_game
+      // If this is an open_game booking, also cancel the linked open_game and notify players
       if (booking?.event_type === 'open_game' && booking?.notes) {
         const idMatch = booking.notes.match(/ID:\s*([0-9a-f-]+)/i);
         if (idMatch?.[1]) {
+          // Notify players BEFORE cancelling
+          await notifyPlayersGameCancelled(idMatch[1]);
+
           await supabase
             .from('open_games')
             .update({ status: 'cancelled' })
