@@ -64,6 +64,9 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   const [showCart, setShowCart] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [phoneLookupResult, setPhoneLookupResult] = useState<{ found: boolean; name: string | null; source: string | null; discount: number; playerAccountId: string | null } | null>(null);
+  const [lookingUpPhone, setLookingUpPhone] = useState(false);
+  const phoneLookupTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [orderNotes, setOrderNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [orderSubmitted, setOrderSubmitted] = useState(false);
@@ -210,12 +213,117 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   const totalItems = cart.reduce((sum, c) => sum + c.quantity, 0);
   const totalPrice = cart.reduce((sum, c) => sum + c.quantity * c.menuItem.price, 0);
 
+  // Normalize phone number
+  const normalizePhone = (phone: string): string => {
+    if (!phone) return '';
+    let cleaned = phone.replace(/\s+/g, '').trim();
+    if (cleaned.startsWith('00')) cleaned = '+' + cleaned.substring(2);
+    if (!cleaned.startsWith('+') && cleaned.length === 9) cleaned = '+351' + cleaned;
+    return cleaned;
+  };
+
+  // Look up player/member by phone number
+  const handlePhoneLookup = async (phone: string) => {
+    if (!club || phone.replace(/\s+/g, '').length < 6) {
+      setPhoneLookupResult(null);
+      return;
+    }
+
+    setLookingUpPhone(true);
+    const normalizedPhone = normalizePhone(phone);
+
+    try {
+      // 1. Look up in player_accounts
+      const { data: playerAccount } = await anonSupabase
+        .from('player_accounts')
+        .select('id, name, phone_number')
+        .eq('phone_number', normalizedPhone)
+        .maybeSingle();
+
+      // 2. Look up in member_subscriptions (club members with active subscription)
+      const { data: memberSub } = await anonSupabase
+        .from('member_subscriptions')
+        .select('member_name, member_phone, status, player_account_id, plan:membership_plans(name, bar_discount_percent)')
+        .eq('club_owner_id', club.owner_id)
+        .eq('member_phone', normalizedPhone)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      // Also try by player_account_id if we found the player
+      let memberSubByAccount = null;
+      if (!memberSub && playerAccount) {
+        const { data } = await anonSupabase
+          .from('member_subscriptions')
+          .select('member_name, member_phone, status, player_account_id, plan:membership_plans(name, bar_discount_percent)')
+          .eq('club_owner_id', club.owner_id)
+          .eq('player_account_id', playerAccount.id)
+          .eq('status', 'active')
+          .maybeSingle();
+        memberSubByAccount = data;
+      }
+
+      const activeMember = memberSub || memberSubByAccount;
+
+      if (activeMember) {
+        const discount = (activeMember.plan as any)?.bar_discount_percent || 0;
+        const planName = (activeMember.plan as any)?.name || '';
+        setPhoneLookupResult({
+          found: true,
+          name: activeMember.member_name || playerAccount?.name || null,
+          source: `Membro — ${planName}`,
+          discount,
+          playerAccountId: playerAccount?.id || activeMember.player_account_id || null
+        });
+        // Auto-fill name if empty
+        const foundName = activeMember.member_name || playerAccount?.name;
+        if (!customerName.trim() && foundName) {
+          setCustomerName(foundName);
+        }
+      } else if (playerAccount) {
+        setPhoneLookupResult({
+          found: true,
+          name: playerAccount.name,
+          source: 'Jogador registado',
+          discount: 0,
+          playerAccountId: playerAccount.id
+        });
+        // Auto-fill name if empty
+        if (!customerName.trim() && playerAccount.name) {
+          setCustomerName(playerAccount.name);
+        }
+      } else {
+        setPhoneLookupResult({ found: false, name: null, source: null, discount: 0, playerAccountId: null });
+      }
+    } catch (err) {
+      console.error('Phone lookup error:', err);
+      setPhoneLookupResult(null);
+    }
+
+    setLookingUpPhone(false);
+  };
+
+  // Debounced phone lookup
+  const handlePhoneChange = (phone: string) => {
+    setCustomerPhone(phone);
+    setPhoneLookupResult(null);
+    if (phoneLookupTimeout.current) clearTimeout(phoneLookupTimeout.current);
+    if (phone.replace(/\s+/g, '').length >= 6) {
+      phoneLookupTimeout.current = setTimeout(() => handlePhoneLookup(phone), 500);
+    }
+  };
+
+  // Calculate total with discount
+  const discountPercent = phoneLookupResult?.discount || 0;
+  const totalPriceWithDiscount = discountPercent > 0
+    ? totalPrice * (1 - discountPercent / 100)
+    : totalPrice;
+
   const handleSubmitOrder = async () => {
     if (!club || !mesa.trim() || !customerName.trim() || cart.length === 0) return;
 
     setSubmitting(true);
 
-    // Create the order
+    // Create the order (with discount applied if member)
     const { data: orderData, error: orderError } = await anonSupabase
       .from('club_orders')
       .insert({
@@ -224,8 +332,10 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
         table_number: mesa.trim(),
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim() || null,
-        notes: orderNotes.trim() || null,
-        total: totalPrice,
+        notes: discountPercent > 0
+          ? `${orderNotes.trim() ? orderNotes.trim() + ' | ' : ''}🏷️ Membro -${discountPercent}%`
+          : (orderNotes.trim() || null),
+        total: totalPriceWithDiscount,
         status: 'pending',
         source: 'qr'
       })
@@ -239,17 +349,22 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       return;
     }
 
-    // Create order items
-    const items = cart.map(c => ({
-      order_id: orderData.id,
-      menu_item_id: c.menuItem.id,
-      item_name: c.menuItem.name,
-      quantity: c.quantity,
-      unit_price: c.menuItem.price,
-      is_food: c.menuItem.is_food,
-      notes: c.notes.trim() || null,
-      status: 'pending'
-    }));
+    // Create order items (with discounted prices if member)
+    const items = cart.map(c => {
+      const unitPrice = discountPercent > 0
+        ? Math.round(c.menuItem.price * (1 - discountPercent / 100) * 100) / 100
+        : c.menuItem.price;
+      return {
+        order_id: orderData.id,
+        menu_item_id: c.menuItem.id,
+        item_name: c.menuItem.name,
+        quantity: c.quantity,
+        unit_price: unitPrice,
+        is_food: c.menuItem.is_food,
+        notes: c.notes.trim() || null,
+        status: 'pending'
+      };
+    });
 
     const { error: itemsError } = await anonSupabase
       .from('club_order_items')
@@ -660,16 +775,46 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
                   <Phone className="w-3.5 h-3.5" />
                   Telemóvel (opcional)
                 </label>
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="+351 912 345 678"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                />
-                <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
-                  🏷️ Se já és cliente do clube, coloca o teu telemóvel para usufruíres de descontos!
-                </p>
+                <div className="relative">
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder="+351 912 345 678"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 ${
+                      phoneLookupResult?.found ? 'border-green-400 bg-green-50' : 'border-gray-300'
+                    }`}
+                  />
+                  {lookingUpPhone && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Lookup result */}
+                {phoneLookupResult?.found && (
+                  <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm text-green-800">
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="font-medium">{phoneLookupResult.name}</span>
+                    </div>
+                    <div className="text-xs text-green-600 mt-0.5">{phoneLookupResult.source}</div>
+                    {phoneLookupResult.discount > 0 && (
+                      <div className="flex items-center gap-1.5 mt-2 text-sm font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md w-fit">
+                        🏷️ Desconto: {phoneLookupResult.discount}%
+                      </div>
+                    )}
+                  </div>
+                )}
+                {phoneLookupResult && !phoneLookupResult.found && customerPhone.replace(/\s+/g, '').length >= 6 && (
+                  <p className="text-xs text-gray-500 mt-1">Nenhuma conta encontrada com este número.</p>
+                )}
+                {!phoneLookupResult && (
+                  <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                    🏷️ Se já és cliente do clube, coloca o teu telemóvel para usufruíres de descontos!
+                  </p>
+                )}
               </div>
 
               {/* Notes */}
@@ -685,9 +830,28 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
               </div>
 
               {/* Total */}
-              <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl">
-                <span className="font-semibold text-gray-700">Total</span>
-                <span className="text-xl font-bold text-emerald-700">{totalPrice.toFixed(2)}€</span>
+              <div className={`p-3 rounded-xl ${discountPercent > 0 ? 'bg-emerald-100 border border-emerald-300' : 'bg-emerald-50'}`}>
+                {discountPercent > 0 ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-sm text-gray-500">
+                      <span>Subtotal</span>
+                      <span className="line-through">{totalPrice.toFixed(2)}€</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-emerald-600">
+                      <span>🏷️ Desconto Membro ({discountPercent}%)</span>
+                      <span>-{(totalPrice - totalPriceWithDiscount).toFixed(2)}€</span>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t border-emerald-200">
+                      <span className="font-semibold text-gray-700">Total</span>
+                      <span className="text-xl font-bold text-emerald-700">{totalPriceWithDiscount.toFixed(2)}€</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-700">Total</span>
+                    <span className="text-xl font-bold text-emerald-700">{totalPrice.toFixed(2)}€</span>
+                  </div>
+                )}
               </div>
 
               {/* Submit */}

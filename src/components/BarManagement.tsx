@@ -1476,6 +1476,11 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                               {order.customer_name && (
                                 <div className="text-sm text-gray-600 font-medium">{order.customer_name}</div>
                               )}
+                              {order.customer_phone && (
+                                <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                  📱 {order.customer_phone}
+                                </div>
+                              )}
                               <div className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                                 <Clock className="w-3 h-3" />
                                 {formatDate(order.created_at)}
@@ -1510,11 +1515,27 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                           </div>
                         )}
 
-                        {order.notes && (
-                          <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800 border border-yellow-200">
-                            📝 {order.notes}
-                          </div>
-                        )}
+                        {/* Member discount badge + notes */}
+                        {order.notes && (() => {
+                          const hasDiscount = order.notes!.includes('🏷️ Membro');
+                          const parts = order.notes!.split('|').map(p => p.trim());
+                          const userNotes = hasDiscount ? parts.filter(p => !p.includes('🏷️ Membro')).join(' ').trim() : order.notes;
+                          const discountNote = hasDiscount ? parts.find(p => p.includes('🏷️ Membro')) : null;
+                          return (
+                            <>
+                              {discountNote && (
+                                <div className="mt-2 p-2 bg-emerald-50 rounded-lg text-xs text-emerald-700 border border-emerald-200 font-semibold">
+                                  {discountNote}
+                                </div>
+                              )}
+                              {userNotes && (
+                                <div className="mt-1 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-800 border border-yellow-200">
+                                  📝 {userNotes}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
 
                         {/* 3 Action buttons */}
                         {order.status !== 'delivered' && order.status !== 'cancelled' && (
