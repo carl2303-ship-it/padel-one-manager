@@ -49,15 +49,7 @@ interface MenuItem {
   image_url: string | null;
 }
 
-interface Order {
-  id: string;
-  customer_name: string | null;
-  table_number: string | null;
-  status: string;
-  total: number;
-  payment_status: string;
-  created_at: string;
-}
+// Orders are now unified in club_orders (QrOrder interface used for all)
 
 interface BarTab {
   id: string;
@@ -97,12 +89,15 @@ interface ClubTable {
 interface QrOrder {
   id: string;
   club_id: string;
+  club_owner_id: string | null;
   table_number: string;
   status: string;
   total: number;
   customer_name: string | null;
   customer_phone: string | null;
   notes: string | null;
+  source: 'qr' | 'manual';
+  payment_status: string;
   created_at: string;
   updated_at: string;
   items?: QrOrderItem[];
@@ -131,7 +126,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   const [activeTab, setActiveTab] = useState<'tabs' | 'orders' | 'menu' | 'qr-orders' | 'qr-codes' | 'analytics'>('tabs');
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  // orders state removed - using unified qrOrders (club_orders) for everything
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -188,29 +183,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     if (clubData) {
       setClubId(clubData.id);
 
-      // Load QR orders
-      const { data: qrOrdersData } = await supabase
-        .from('club_orders')
-        .select('*')
-        .eq('club_id', clubData.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      
-      if (qrOrdersData) {
-        // Load items for each order
-        const ordersWithItems = await Promise.all(
-          qrOrdersData.map(async (order) => {
-            const { data: items } = await supabase
-              .from('club_order_items')
-              .select('*')
-              .eq('order_id', order.id)
-              .order('created_at');
-            return { ...order, items: items || [] };
-          })
-        );
-        setQrOrders(ordersWithItems);
-      }
-
       // Load tables
       const { data: tablesData } = await supabase
         .from('club_tables')
@@ -221,7 +193,30 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       if (tablesData) setClubTables(tablesData);
     }
 
-    const [categoriesResult, itemsResult, ordersResult, tabsResult] = await Promise.all([
+    // Load ALL orders from unified club_orders table (both manual and QR)
+    const { data: allOrdersData } = await supabase
+      .from('club_orders')
+      .select('*')
+      .or(`club_owner_id.eq.${effectiveUserId},club_id.eq.${clubData?.id || '00000000-0000-0000-0000-000000000000'}`)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (allOrdersData) {
+      // Load items for each order
+      const ordersWithItems = await Promise.all(
+        allOrdersData.map(async (order) => {
+          const { data: items } = await supabase
+            .from('club_order_items')
+            .select('*')
+            .eq('order_id', order.id)
+            .order('created_at');
+          return { ...order, items: items || [] };
+        })
+      );
+      setQrOrders(ordersWithItems);
+    }
+
+    const [categoriesResult, itemsResult, tabsResult] = await Promise.all([
       supabase
         .from('menu_categories')
         .select('*')
@@ -233,12 +228,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         .eq('club_owner_id', effectiveUserId)
         .order('name'),
       supabase
-        .from('bar_orders')
-        .select('*')
-        .eq('club_owner_id', effectiveUserId)
-        .order('created_at', { ascending: false })
-        .limit(20),
-      supabase
         .from('bar_tabs')
         .select('*')
         .eq('club_owner_id', effectiveUserId)
@@ -247,7 +236,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
     if (categoriesResult.data) setCategories(categoriesResult.data);
     if (itemsResult.data) setMenuItems(itemsResult.data);
-    if (ordersResult.data) setOrders(ordersResult.data);
     if (tabsResult.data) {
       setBarTabs(tabsResult.data);
       // Load items for all open tabs
@@ -721,12 +709,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     return `${window.location.origin}/menu/${clubId}?mesa=${encodeURIComponent(tableNumber)}`;
   };
 
-  const filteredQrOrders = qrOrders.filter(o => {
-    if (qrOrderFilter === 'pending') return o.status === 'pending';
-    if (qrOrderFilter === 'preparing') return o.status === 'preparing';
-    return true;
-  });
-
   const pendingQrCount = qrOrders.filter(o => o.status === 'pending').length;
 
   // ---- Original Menu/Orders Functions ----
@@ -910,13 +892,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     loadData();
   };
 
-  const handleUpdateOrderStatus = async (orderId: string, status: string) => {
-    await supabase
-      .from('bar_orders')
-      .update({ status })
-      .eq('id', orderId);
-    loadData();
-  };
+  // All orders now use handleUpdateQrOrderStatus via unified club_orders table
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -1315,19 +1291,11 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         </div>
       )}
 
-      {/* ============ ORDERS ============ */}
+      {/* ============ ORDERS (unified club_orders) ============ */}
       {activeTab === 'orders' && (() => {
-        // Merge bar_orders and QR orders into a single list, sorted by date (newest first)
-        const allOrders = [
-          ...orders.map(o => ({ ...o, source: 'manual' as const })),
-          ...qrOrders.map(o => ({ ...o, source: 'qr' as const })),
-        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-        const orderFilter = qrOrderFilter;
-
-        const filteredOrders = allOrders.filter(o => {
-          if (orderFilter === 'pending') return o.status === 'pending';
-          if (orderFilter === 'preparing') return o.status === 'preparing';
+        const filteredOrders = qrOrders.filter(o => {
+          if (qrOrderFilter === 'pending') return o.status === 'pending';
+          if (qrOrderFilter === 'preparing') return o.status === 'preparing';
           return true;
         });
 
@@ -1383,23 +1351,16 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                             order.status === 'preparing' ? 'bg-blue-500' :
                             order.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
                           }`}>
-                            {order.source === 'qr' ? `M${(order as typeof qrOrders[0]).table_number}` : '🛒'}
+                            {order.source === 'qr' ? `M${order.table_number}` : '🛒'}
                           </div>
                           <div>
                             <div className="font-semibold text-gray-900 flex items-center gap-2">
-                              {order.source === 'qr' ? (
-                                <>
-                                  Mesa {(order as typeof qrOrders[0]).table_number}
-                                  {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
-                                  <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">📱 QR</span>
-                                </>
-                              ) : (
-                                <>
-                                  {order.customer_name || 'Pedido'}
-                                  {(order as typeof orders[0]).table_number && (
-                                    <span className="text-gray-500 text-sm">— Mesa {(order as typeof orders[0]).table_number}</span>
-                                  )}
-                                </>
+                              {order.table_number && (
+                                <>Mesa {order.table_number}</>
+                              )}
+                              {order.customer_name && <span className="text-gray-500 text-sm">— {order.customer_name}</span>}
+                              {order.source === 'qr' && (
+                                <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">📱 QR</span>
                               )}
                             </div>
                             <div className="text-xs text-gray-500 flex items-center gap-1">
@@ -1419,10 +1380,10 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                         </div>
                       </div>
 
-                      {/* Order items (for QR orders) */}
-                      {order.source === 'qr' && (order as typeof qrOrders[0]).items && (order as typeof qrOrders[0]).items!.length > 0 && (
+                      {/* Order items */}
+                      {order.items && order.items.length > 0 && (
                         <div className="border-t border-gray-100 pt-3 space-y-1.5">
-                          {(order as typeof qrOrders[0]).items!.map(item => (
+                          {order.items.map(item => (
                             <div key={item.id} className="flex items-center justify-between text-sm">
                               <div className="flex items-center gap-2">
                                 {item.is_food ? (
@@ -1450,31 +1411,23 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                         {order.status === 'pending' && (
                           <>
                             <button
-                              onClick={() => order.source === 'qr'
-                                ? handleUpdateQrOrderStatus(order.id, 'preparing')
-                                : handleUpdateOrderStatus(order.id, 'preparing')
-                              }
+                              onClick={() => handleUpdateQrOrderStatus(order.id, 'preparing')}
                               className="flex-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition flex items-center justify-center gap-1"
                             >
                               <Check className="w-4 h-4" />
                               Aceitar
                             </button>
-                            {order.source === 'qr' && (
-                              <button
-                                onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
-                                className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => handleUpdateQrOrderStatus(order.id, 'cancelled')}
+                              className="px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
                           </>
                         )}
                         {order.status === 'preparing' && (
                           <button
-                            onClick={() => order.source === 'qr'
-                              ? handleUpdateQrOrderStatus(order.id, 'ready')
-                              : handleUpdateOrderStatus(order.id, 'ready')
-                            }
+                            onClick={() => handleUpdateQrOrderStatus(order.id, 'ready')}
                             className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition flex items-center justify-center gap-1"
                           >
                             <Bell className="w-4 h-4" />
@@ -1483,10 +1436,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                         )}
                         {order.status === 'ready' && (
                           <button
-                            onClick={() => order.source === 'qr'
-                              ? handleUpdateQrOrderStatus(order.id, 'delivered')
-                              : handleUpdateOrderStatus(order.id, 'delivered')
-                            }
+                            onClick={() => handleUpdateQrOrderStatus(order.id, 'delivered')}
                             className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition flex items-center justify-center gap-1"
                           >
                             <Check className="w-4 h-4" />

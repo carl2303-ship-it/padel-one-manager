@@ -220,12 +220,14 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       .from('club_orders')
       .insert({
         club_id: club.id,
+        club_owner_id: club.owner_id,
         table_number: mesa.trim(),
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim() || null,
         notes: orderNotes.trim() || null,
         total: totalPrice,
-        status: 'pending'
+        status: 'pending',
+        source: 'qr'
       })
       .select('id')
       .single();

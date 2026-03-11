@@ -107,16 +107,7 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       };
     }
 
-    // Fetch manual bar orders
-    const { data: barOrders } = await supabase
-      .from('bar_orders')
-      .select('id, total, customer_name, created_at')
-      .eq('club_owner_id', effectiveUserId)
-      .eq('status', 'completed')
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
-
-    // Fetch paid bar tabs (includes QR orders that were added to tabs)
+    // Fetch paid bar tabs (all orders now go through bar_tabs)
     const { data: paidTabs } = await supabase
       .from('bar_tabs')
       .select('id, total, player_name, created_at')
@@ -125,24 +116,7 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       .gte('created_at', startDate)
       .lte('created_at', endDate);
 
-    // Combine both sources into a unified orders list
-    const orders = [
-      ...(barOrders || []).map(o => ({ id: o.id, total: o.total, customer_name: o.customer_name, created_at: o.created_at })),
-      ...(paidTabs || []).map(t => ({ id: t.id, total: t.total, customer_name: t.player_name, created_at: t.created_at })),
-    ];
-
-    const { data: orderItems } = await supabase
-      .from('bar_order_items')
-      .select(`
-        quantity,
-        price,
-        menu_item:menu_items(name, category_id),
-        bar_order:bar_orders!inner(club_owner_id, status, created_at)
-      `)
-      .eq('bar_order.club_owner_id', effectiveUserId)
-      .eq('bar_order.status', 'completed')
-      .gte('bar_order.created_at', startDate)
-      .lte('bar_order.created_at', endDate);
+    const orders = (paidTabs || []).map(t => ({ id: t.id, total: t.total, customer_name: t.player_name, created_at: t.created_at }));
 
     // Fetch tab items from paid tabs for product/category metrics
     const paidTabIds = (paidTabs || []).map(t => t.id);
@@ -177,22 +151,7 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
     const productMap = new Map<string, { quantity: number; revenue: number }>();
     const categoryRevenueMap = new Map<string, number>();
 
-    // Process bar_order_items
-    orderItems?.forEach(item => {
-      const menuItem = item.menu_item as { name: string; category_id: string } | null;
-      if (menuItem) {
-        const existing = productMap.get(menuItem.name) || { quantity: 0, revenue: 0 };
-        productMap.set(menuItem.name, {
-          quantity: existing.quantity + item.quantity,
-          revenue: existing.revenue + (item.quantity * item.price)
-        });
-
-        const catName = categoryMap.get(menuItem.category_id) || 'Other';
-        categoryRevenueMap.set(catName, (categoryRevenueMap.get(catName) || 0) + (item.quantity * item.price));
-      }
-    });
-
-    // Process bar_tab_items (includes QR orders)
+    // Process bar_tab_items (all orders now go through tabs)
     tabItemsForMetrics.forEach(item => {
       const existing = productMap.get(item.item_name) || { quantity: 0, revenue: 0 };
       productMap.set(item.item_name, {

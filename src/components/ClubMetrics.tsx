@@ -471,81 +471,85 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     const { startDate, endDate } = getDateRange();
 
-    const { data: orders } = await supabase
-      .from('bar_orders')
-      .select(`
-        id,
-        customer_name,
-        user_id,
-        total,
-        status
-      `)
+    // All bar orders now go through bar_tabs (unified)
+    const { data: paidTabs } = await supabase
+      .from('bar_tabs')
+      .select('id, total, player_name, created_at')
       .eq('club_owner_id', effectiveUserId)
-      .neq('status', 'cancelled')
+      .eq('payment_status', 'paid')
       .gte('created_at', startDate)
       .lte('created_at', endDate);
 
-    const { data: orderItems } = await supabase
-      .from('bar_order_items')
-      .select(`
-        id,
-        order_id,
-        menu_item_id,
-        quantity,
-        price,
-        menu_item:menu_items(id, name, category_id, category:menu_categories(id, name))
-      `)
-      .in('order_id', orders?.map(o => o.id) || []);
+    const tabIds = (paidTabs || []).map(t => t.id);
+
+    let tabItems: { item_name: string; quantity: number; unit_price: number; menu_item_id: string | null }[] = [];
+    if (tabIds.length > 0) {
+      const { data } = await supabase
+        .from('bar_tab_items')
+        .select('item_name, quantity, unit_price, menu_item_id')
+        .in('tab_id', tabIds);
+      tabItems = data || [];
+    }
+
+    // Fetch menu items for category mapping
+    const { data: allMenuItems } = await supabase
+      .from('menu_items')
+      .select('id, name, category_id, category:menu_categories(id, name)')
+      .eq('club_owner_id', effectiveUserId);
+
+    const menuItemMap = new Map(allMenuItems?.map(m => [m.id, m]) || []);
 
     const productMap = new Map<string, ProductMetric>();
     const categoryMap = new Map<string, CategoryMetric>();
     const customerMap = new Map<string, CustomerMetric>();
 
-    orderItems?.forEach(item => {
-      const menuItem = item.menu_item as { id: string; name: string; category_id: string; category: { id: string; name: string } | null } | null;
-      if (menuItem) {
-        const existing = productMap.get(menuItem.id);
-        if (existing) {
-          existing.quantity += item.quantity;
-          existing.revenue += Number(item.price) * item.quantity;
-        } else {
-          productMap.set(menuItem.id, {
-            productId: menuItem.id,
-            productName: menuItem.name,
-            category: menuItem.category?.name || 'N/A',
-            quantity: item.quantity,
-            revenue: Number(item.price) * item.quantity
-          });
-        }
+    tabItems.forEach(item => {
+      const menuItem = item.menu_item_id ? menuItemMap.get(item.menu_item_id) as { id: string; name: string; category_id: string; category: { id: string; name: string } | null } | undefined : undefined;
+      const productName = menuItem?.name || item.item_name;
+      const productId = menuItem?.id || item.item_name;
+      const categoryInfo = menuItem?.category;
 
-        if (menuItem.category) {
-          const catExisting = categoryMap.get(menuItem.category.id);
-          if (catExisting) {
-            catExisting.quantity += item.quantity;
-            catExisting.revenue += Number(item.price) * item.quantity;
-          } else {
-            categoryMap.set(menuItem.category.id, {
-              categoryId: menuItem.category.id,
-              categoryName: menuItem.category.name,
-              quantity: item.quantity,
-              revenue: Number(item.price) * item.quantity
-            });
-          }
+      const existing = productMap.get(productId);
+      if (existing) {
+        existing.quantity += item.quantity;
+        existing.revenue += Number(item.unit_price) * item.quantity;
+      } else {
+        productMap.set(productId, {
+          productId,
+          productName,
+          category: categoryInfo?.name || 'N/A',
+          quantity: item.quantity,
+          revenue: Number(item.unit_price) * item.quantity
+        });
+      }
+
+      if (categoryInfo) {
+        const catExisting = categoryMap.get(categoryInfo.id);
+        if (catExisting) {
+          catExisting.quantity += item.quantity;
+          catExisting.revenue += Number(item.unit_price) * item.quantity;
+        } else {
+          categoryMap.set(categoryInfo.id, {
+            categoryId: categoryInfo.id,
+            categoryName: categoryInfo.name,
+            quantity: item.quantity,
+            revenue: Number(item.unit_price) * item.quantity
+          });
         }
       }
     });
 
-    orders?.forEach(o => {
-      const customerKey = (o.customer_name || 'Guest').toLowerCase();
+    paidTabs?.forEach(t => {
+      const customerKey = (t.player_name || 'Guest').toLowerCase();
       const existing = customerMap.get(customerKey);
       if (existing) {
         existing.totalOrders++;
-        existing.totalSpent += Number(o.total) || 0;
+        existing.totalSpent += Number(t.total) || 0;
       } else {
         customerMap.set(customerKey, {
-          customerName: o.customer_name || 'Guest',
+          customerName: t.player_name || 'Guest',
           totalOrders: 1,
-          totalSpent: Number(o.total) || 0
+          totalSpent: Number(t.total) || 0
         });
       }
     });

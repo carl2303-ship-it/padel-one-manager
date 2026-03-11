@@ -126,9 +126,9 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
         .gte('scheduled_at', today.toISOString())
         .lt('scheduled_at', tomorrow.toISOString()),
       supabase
-        .from('bar_orders')
+        .from('club_orders')
         .select('id')
-        .eq('club_owner_id', effectiveUserId)
+        .or(`club_owner_id.eq.${effectiveUserId}`)
         .in('status', ['pending', 'preparing']),
       supabase
         .from('court_bookings')
