@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v3-20251216';
+const CACHE_VERSION = 'v4-20260311';
 const STATIC_CACHE = `padel-hub-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `padel-hub-dynamic-${CACHE_VERSION}`;
 
@@ -6,8 +6,7 @@ const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
+  '/icon.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -89,10 +88,10 @@ self.addEventListener('push', (event) => {
   console.log('[SW] Push notification received');
 
   let data = {
-    title: 'Nova Inscricao',
-    body: 'Tem uma nova inscricao no seu torneio!',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    title: 'Nova Notificação',
+    body: 'Tem uma nova notificação!',
+    icon: '/icon.png',
+    badge: '/icon.png',
     tag: 'registration',
   };
 
@@ -110,8 +109,8 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: data.body,
-    icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/icon-192.png',
+    icon: data.icon || '/icon.png',
+    badge: data.badge || '/icon.png',
     tag: data.tag || 'notification',
     vibrate: [200, 100, 200],
     data: {
