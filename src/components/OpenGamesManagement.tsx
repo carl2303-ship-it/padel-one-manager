@@ -23,7 +23,8 @@ import {
   TrendingUp,
   Search,
   Trash2,
-  Loader2
+  Loader2,
+  CreditCard
 } from 'lucide-react';
 
 interface OpenGame {
@@ -461,6 +462,51 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
       }
     } catch (err) {
       console.error('[Notify] Error notifying players about game cancellation:', err);
+    }
+  }
+
+  async function handleOpenBarTabsForGame(game: OpenGame) {
+    if (!effectiveUserId) return;
+
+    const confirmedPlayers = game.players.filter(p => p.status === 'confirmed');
+    if (confirmedPlayers.length === 0) {
+      alert('Nenhum jogador confirmado neste jogo.');
+      return;
+    }
+
+    // Check which players already have a tab for this game
+    const { data: existingTabs } = await supabase
+      .from('bar_tabs')
+      .select('player_name')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('notes', `open_game:${game.id}`);
+
+    const existingNames = new Set(existingTabs?.map(t => t.player_name.toLowerCase()) || []);
+    const newPlayers = confirmedPlayers.filter(p => p.name && !existingNames.has(p.name.toLowerCase()));
+
+    if (newPlayers.length === 0) {
+      alert('Todos os jogadores já têm conta aberta no bar para este jogo.');
+      return;
+    }
+
+    const tabsToCreate = await Promise.all(newPlayers.map(async (p) => {
+      let playerAccountId = p.player_account_id || null;
+      return {
+        club_owner_id: effectiveUserId,
+        player_name: p.name || 'Jogador',
+        player_phone: null as string | null,
+        player_account_id: playerAccountId,
+        notes: `open_game:${game.id}`,
+      };
+    }));
+
+    const { error } = await supabase.from('bar_tabs').insert(tabsToCreate);
+
+    if (error) {
+      console.error('[BarTabs] Error creating tabs for open game:', error);
+      alert('Erro ao criar contas no bar.');
+    } else {
+      alert(`${newPlayers.length} conta(s) criada(s) no bar com sucesso!`);
     }
   }
 
@@ -954,7 +1000,16 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                                 Criado em {formatDateTime(game.created_at)}
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {confirmedPlayers.length > 0 && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleOpenBarTabsForGame(game); }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-600 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors"
+                                >
+                                  <CreditCard className="w-4 h-4" />
+                                  Abrir contas bar
+                                </button>
+                              )}
                               {(game.status === 'open') && confirmedPlayers.length < game.max_players && (
                                 <button
                                   onClick={(e) => {

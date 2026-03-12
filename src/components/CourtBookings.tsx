@@ -1434,6 +1434,63 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   };
 
+  const handleOpenBarTabsForOpenGame = async () => {
+    if (!selectedOpenGame || !effectiveUserId) return;
+
+    const confirmedPlayers = selectedOpenGame.players.filter(p => p.status === 'confirmed');
+    if (confirmedPlayers.length === 0) {
+      alert('Nenhum jogador confirmado neste jogo.');
+      return;
+    }
+
+    // Check which players already have a tab for this game
+    const { data: existingTabs } = await supabase
+      .from('bar_tabs')
+      .select('player_name')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('notes', `open_game:${selectedOpenGame.id}`);
+
+    const existingNames = new Set(existingTabs?.map(t => t.player_name.toLowerCase()) || []);
+    const newPlayers = confirmedPlayers.filter(p => p.name && !existingNames.has(p.name.toLowerCase()));
+
+    if (newPlayers.length === 0) {
+      alert('Todos os jogadores já têm conta aberta no bar para este jogo.');
+      return;
+    }
+
+    const tabsToCreate = await Promise.all(newPlayers.map(async (p) => {
+      let playerAccountId = p.player_account_id || null;
+
+      // If no player_account_id, try lookup by phone
+      if (!playerAccountId && p.phone_number) {
+        const normalizedPhone = p.phone_number.replace(/\s+/g, '');
+        const { data: existingAccount } = await supabase
+          .from('player_accounts')
+          .select('id')
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+        playerAccountId = existingAccount?.id || null;
+      }
+
+      return {
+        club_owner_id: effectiveUserId,
+        player_name: p.name || 'Jogador',
+        player_phone: p.phone_number || null,
+        player_account_id: playerAccountId,
+        notes: `open_game:${selectedOpenGame.id}`,
+      };
+    }));
+
+    const { error } = await supabase.from('bar_tabs').insert(tabsToCreate);
+
+    if (error) {
+      console.error('[BarTabs] Error creating tabs for open game:', error);
+      alert('Erro ao criar contas no bar. Verifique a consola.');
+    } else {
+      alert(`${newPlayers.length} conta(s) criada(s) no bar com sucesso!`);
+    }
+  };
+
   const handleEditBooking = async (booking: Booking) => {
     // Se for open_game, mostrar modal dedicado
     if (booking.event_type === 'open_game') {
@@ -2594,37 +2651,48 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 </div>
               </div>
 
-              {/* Notes & Actions */}
-              {(selectedOpenGame.notes || selectedOpenGame.status === 'open') && (
+              {/* Bar Tab for Players */}
+              {selectedOpenGame.players.filter(p => p.status === 'confirmed').length > 0 && (
                 <div className="mt-6 pt-6 border-t border-gray-200">
-                  {selectedOpenGame.notes && (
-                    <p className="text-sm text-gray-600 italic mb-4">
-                      <span className="font-medium">Notas:</span> {selectedOpenGame.notes}
-                    </p>
-                  )}
-                  <p className="text-xs text-gray-400 mb-4">
-                    Criado em {formatDateTime(selectedOpenGame.created_at)}
-                  </p>
-                  <div className="flex items-center gap-3">
-                    {selectedOpenGame.status === 'open' && (
-                      <button
-                        onClick={() => handleCancelOpenGame(selectedOpenGame.id)}
-                        className="flex items-center gap-2 px-4 py-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
-                      >
-                        <X className="w-4 h-4" />
-                        Cancelar jogo
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteOpenGame(selectedOpenGame.id)}
-                      className="flex items-center gap-2 px-4 py-2 text-sm text-red-700 bg-red-100 border border-red-300 rounded-lg hover:bg-red-200 transition"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Eliminar
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleOpenBarTabsForOpenGame}
+                    className="w-full px-4 py-2.5 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center justify-center gap-2 font-medium"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                    Abrir Contas no Bar para Jogadores
+                  </button>
                 </div>
               )}
+
+              {/* Notes & Actions */}
+              <div className="mt-6 pt-6 border-t border-gray-200">
+                {selectedOpenGame.notes && (
+                  <p className="text-sm text-gray-600 italic mb-4">
+                    <span className="font-medium">Notas:</span> {selectedOpenGame.notes}
+                  </p>
+                )}
+                <p className="text-xs text-gray-400 mb-4">
+                  Criado em {formatDateTime(selectedOpenGame.created_at)}
+                </p>
+                <div className="flex items-center gap-3">
+                  {selectedOpenGame.status === 'open' && (
+                    <button
+                      onClick={() => handleCancelOpenGame(selectedOpenGame.id)}
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition"
+                    >
+                      <X className="w-4 h-4" />
+                      Cancelar jogo
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDeleteOpenGame(selectedOpenGame.id)}
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-red-700 bg-red-100 border border-red-300 rounded-lg hover:bg-red-200 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Eliminar
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
