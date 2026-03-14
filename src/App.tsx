@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from './lib/supabase';
 import AuthForm from './components/AuthForm';
 import LanguageSelector from './components/LanguageSelector';
@@ -62,6 +62,26 @@ function App() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [staffInviteToken, setStaffInviteToken] = useState<string | null>(null);
   const [showSuperAdmin, setShowSuperAdmin] = useState(false);
+  // Refresh key: incrementing this forces child components to re-mount and reload data
+  const [refreshKey, setRefreshKey] = useState(0);
+  const lastForegroundRefresh = useRef(Date.now());
+
+  // Auto-refresh when tab/window regains focus
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastForegroundRefresh.current;
+        // Only refresh if more than 15 seconds have passed
+        if (elapsed > 15_000 && user) {
+          lastForegroundRefresh.current = Date.now();
+          console.log('[Manager] Foreground refresh triggered');
+          setRefreshKey(k => k + 1);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user]);
   const [staffPermissions, setStaffPermissions] = useState<StaffPermissions>({
     isStaff: false,
     isOwner: true,
@@ -400,14 +420,14 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 lg:ml-64">
         <div className="pt-16 lg:pt-0 min-h-screen">
-          {view === 'dashboard' && <Dashboard onNavigate={setView} staffPermissions={staffPermissions} />}
-          {view === 'bookings' && staffPermissions.perm_bookings && <CourtBookings staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'members' && staffPermissions.perm_members && <MemberManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'academy' && staffPermissions.perm_academy && <AcademyManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'bar' && staffPermissions.perm_bar && <BarManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'metrics' && staffPermissions.perm_reports && <ClubMetrics staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'open-games' && staffPermissions.perm_bookings && <OpenGamesManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'rewards' && staffPermissions.perm_bookings && <RewardsManagement staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'dashboard' && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
+          {view === 'bookings' && staffPermissions.perm_bookings && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'members' && staffPermissions.perm_members && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'academy' && staffPermissions.perm_academy && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'bar' && staffPermissions.perm_bar && <BarManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'metrics' && staffPermissions.perm_reports && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'open-games' && staffPermissions.perm_bookings && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'rewards' && staffPermissions.perm_bookings && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'staff' && staffPermissions.isOwner && <StaffManagement />}
           {view === 'settings' && staffPermissions.isOwner && <Settings />}
         </div>

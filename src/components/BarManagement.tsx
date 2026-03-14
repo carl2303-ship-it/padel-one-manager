@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -171,6 +171,104 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       loadData();
     }
   }, [effectiveUserId]);
+
+  // Real-time subscription for new/updated orders (QR + manual)
+  useEffect(() => {
+    if (!clubId && !effectiveUserId) return;
+
+    const channelFilter = clubId
+      ? `club_id=eq.${clubId}`
+      : `club_owner_id=eq.${effectiveUserId}`;
+
+    const channel = supabase
+      .channel('bar-orders-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'club_orders', filter: channelFilter },
+        async (payload) => {
+          console.log('[Bar] Realtime order event:', payload.eventType, payload.new);
+          // Reload all orders on any change
+          await reloadOrders();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [clubId, effectiveUserId]);
+
+  // Auto-refresh when the tab/window regains focus
+  const lastForegroundRefresh = useRef(Date.now());
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastForegroundRefresh.current;
+        if (elapsed > 15_000 && effectiveUserId) {
+          lastForegroundRefresh.current = Date.now();
+          console.log('[Bar] Foreground refresh triggered');
+          reloadOrders();
+          reloadTabs();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [effectiveUserId, clubId]);
+
+  // Lightweight reload functions (don't reload menu/categories)
+  const reloadOrders = async () => {
+    if (!effectiveUserId) return;
+    const { data: allOrdersData } = await supabase
+      .from('club_orders')
+      .select('*')
+      .or(`club_owner_id.eq.${effectiveUserId},club_id.eq.${clubId || '00000000-0000-0000-0000-000000000000'}`)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (allOrdersData) {
+      const ordersWithItems = await Promise.all(
+        allOrdersData.map(async (order) => {
+          const { data: items } = await supabase
+            .from('club_order_items')
+            .select('*')
+            .eq('order_id', order.id)
+            .order('created_at');
+          return { ...order, items: items || [] };
+        })
+      );
+      setQrOrders(ordersWithItems);
+    }
+  };
+
+  const reloadTabs = async () => {
+    if (!effectiveUserId) return;
+    const { data: tabsData } = await supabase
+      .from('bar_tabs')
+      .select('*')
+      .eq('club_owner_id', effectiveUserId)
+      .order('created_at', { ascending: false });
+
+    if (tabsData) {
+      setBarTabs(tabsData);
+      const openTabIds = tabsData.filter(t => t.status === 'open').map(t => t.id);
+      if (openTabIds.length > 0) {
+        const { data: allItems } = await supabase
+          .from('bar_tab_items')
+          .select('*')
+          .in('tab_id', openTabIds)
+          .order('created_at', { ascending: true });
+        if (allItems) {
+          const grouped: Record<string, BarTabItem[]> = {};
+          allItems.forEach(item => {
+            if (!grouped[item.tab_id]) grouped[item.tab_id] = [];
+            grouped[item.tab_id].push(item);
+          });
+          setTabItems(grouped);
+        }
+      }
+    }
+  };
 
   const loadData = async () => {
     if (!effectiveUserId) return;
