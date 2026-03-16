@@ -1265,6 +1265,25 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
   };
 
+  const handleDeletePack = async (packId: string) => {
+    if (!confirm('Tem a certeza que deseja eliminar este pack? As aulas associadas serão mantidas mas desvinculadas do pack.')) return;
+
+    // Delete pack purchase (lesson_completions will be deleted automatically via CASCADE)
+    // club_classes will have pack_purchase_id set to NULL automatically
+    const { error } = await supabase
+      .from('pack_purchases')
+      .delete()
+      .eq('id', packId);
+
+    if (error) {
+      alert('Erro ao eliminar pack: ' + error.message);
+      return;
+    }
+
+    loadPackPurchases();
+    loadData(); // Reload classes to update the list
+  };
+
   const resetTypeForm = () => {
     setTypeForm({
       name: '',
@@ -2477,18 +2496,27 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                           <span className="text-xs text-gray-400">Comprado: {new Date(pack.purchased_at).toLocaleDateString('pt-PT')}</span>
                         </div>
                       </div>
-                      {remaining > 0 && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {remaining > 0 && (
+                          <button
+                            onClick={() => {
+                              setSelectedPack(pack);
+                              setShowCompletionModal(true);
+                            }}
+                            className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center gap-1.5"
+                          >
+                            <Check className="w-4 h-4" />
+                            Marcar Aula
+                          </button>
+                        )}
                         <button
-                          onClick={() => {
-                            setSelectedPack(pack);
-                            setShowCompletionModal(true);
-                          }}
-                          className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center gap-1.5 flex-shrink-0"
+                          onClick={() => handleDeletePack(pack.id)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                          title="Eliminar pack"
                         >
-                          <Check className="w-4 h-4" />
-                          Marcar Aula
+                          <Trash2 className="w-4 h-4" />
                         </button>
-                      )}
+                      </div>
                     </div>
                     
                     {/* Progress bar */}
