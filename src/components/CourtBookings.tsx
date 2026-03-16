@@ -296,6 +296,12 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [searchingPlayer, setSearchingPlayer] = useState<number | null>(null);
+  const [playerSearchResults, setPlayerSearchResults] = useState<Map<number, Array<{
+    member_name: string;
+    member_phone: string;
+    plan: { name: string; court_discount_percent: number } | null;
+  }>>>(new Map());
+  const [focusedPlayerInput, setFocusedPlayerInput] = useState<number | null>(null);
   const [draggingBooking, setDraggingBooking] = useState<Booking | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<{ courtId: string; time: string } | null>(null);
   const [selectedOpenGame, setSelectedOpenGame] = useState<OpenGame | null>(null);
@@ -423,13 +429,26 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       const newPlayers = [...players];
       newPlayers[playerIndex] = { ...newPlayers[playerIndex], isMember: false, discount: 0, planName: '' };
       setPlayers(newPlayers);
+      setPlayerSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
       return;
     }
 
     setSearchingPlayer(playerIndex);
     const normalizedPhone = phone ? normalizePhone(phone) : '';
 
-    let query = supabase
+    // Buscar em múltiplas fontes: membros, torneios e jogos abertos
+    const allResults: Array<{
+      member_name: string;
+      member_phone: string;
+      plan: { name: string; court_discount_percent: number } | null;
+    }> = [];
+
+    // 1. Buscar membros ativos
+    let memberQuery = supabase
       .from('member_subscriptions')
       .select(`
         id,
@@ -441,26 +460,140 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       .eq('status', 'active');
 
     if (normalizedPhone && normalizedPhone.length >= 6) {
-      query = query.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
+      memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
     } else if (name && name.length >= 2) {
-      query = query.ilike('member_name', `%${name}%`);
+      memberQuery = memberQuery.ilike('member_name', `%${name}%`);
     }
 
-    const { data } = await query.limit(1).maybeSingle();
+    const { data: membersData } = await memberQuery.limit(10).order('member_name');
+    if (membersData) {
+      membersData.forEach((item: any) => {
+        allResults.push({
+          member_name: item.member_name,
+          member_phone: item.member_phone,
+          plan: item.plan
+        });
+      });
+    }
 
-    const newPlayers = [...players];
-    if (data && data.plan) {
-      newPlayers[playerIndex] = {
-        name: data.member_name || name,
-        phone: data.member_phone || phone,
-        isMember: true,
-        discount: (data.plan as any).court_discount_percent || 0,
-        planName: (data.plan as any).name || ''
-      };
+    // 2. Buscar jogadores de torneios do clube
+    const { data: clubsData } = await supabase
+      .from('clubs')
+      .select('id')
+      .eq('owner_id', effectiveUserId)
+      .limit(1)
+      .maybeSingle();
+
+    if (clubsData) {
+      // Primeiro buscar os IDs dos torneios do clube
+      const { data: tournamentsData } = await supabase
+        .from('tournaments')
+        .select('id')
+        .eq('club_id', clubsData.id)
+        .limit(100);
+
+      if (tournamentsData && tournamentsData.length > 0) {
+        const tournamentIds = tournamentsData.map(t => t.id);
+        
+        // Buscar jogadores desses torneios
+        let tournamentPlayersQuery = supabase
+          .from('players')
+          .select('name, phone_number')
+          .in('tournament_id', tournamentIds);
+
+        if (normalizedPhone && normalizedPhone.length >= 6) {
+          tournamentPlayersQuery = tournamentPlayersQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+        } else if (name && name.length >= 2) {
+          tournamentPlayersQuery = tournamentPlayersQuery.ilike('name', `%${name}%`);
+        }
+
+        const { data: tournamentPlayersData } = await tournamentPlayersQuery.limit(10).order('name');
+        if (tournamentPlayersData) {
+          tournamentPlayersData.forEach((item: any) => {
+            // Verificar se já não está na lista (evitar duplicados)
+            const exists = allResults.some(r => 
+              r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+              r.member_phone === (item.phone_number || '')
+            );
+            if (!exists && item.name) {
+              allResults.push({
+                member_name: item.name,
+                member_phone: item.phone_number || '',
+                plan: null
+              });
+            }
+          });
+        }
+      }
+    }
+
+    // 3. Buscar jogadores de jogos abertos do clube
+    if (clubsData) {
+      // Primeiro buscar os IDs dos jogos abertos do clube
+      const { data: openGamesData } = await supabase
+        .from('open_games')
+        .select('id')
+        .eq('club_id', clubsData.id)
+        .limit(100);
+
+      if (openGamesData && openGamesData.length > 0) {
+        const gameIds = openGamesData.map(g => g.id);
+        
+        // Buscar jogadores desses jogos
+        const { data: openGamePlayersData } = await supabase
+          .from('open_game_players')
+          .select('user_id')
+          .in('game_id', gameIds);
+
+        if (openGamePlayersData && openGamePlayersData.length > 0) {
+          const userIds = [...new Set(openGamePlayersData.map(p => p.user_id))];
+          
+          // Buscar detalhes dos jogadores
+          let playerAccountsQuery = supabase
+            .from('player_accounts')
+            .select('user_id, name, phone_number')
+            .in('user_id', userIds);
+
+          if (normalizedPhone && normalizedPhone.length >= 6) {
+            playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+          } else if (name && name.length >= 2) {
+            playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
+          }
+
+          const { data: playerAccountsData } = await playerAccountsQuery.limit(10).order('name');
+          
+          if (playerAccountsData) {
+            playerAccountsData.forEach((item: any) => {
+              // Verificar se já não está na lista (evitar duplicados)
+              const exists = allResults.some(r => 
+                r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+                r.member_phone === (item.phone_number || '')
+              );
+              if (!exists && item.name) {
+                allResults.push({
+                  member_name: item.name,
+                  member_phone: item.phone_number || '',
+                  plan: null
+                });
+              }
+            });
+          }
+        }
+      }
+    }
+
+    // Ordenar resultados e limitar a 10
+    const sortedResults = allResults
+      .sort((a, b) => a.member_name.localeCompare(b.member_name))
+      .slice(0, 10);
+
+    const newResults = new Map(playerSearchResults);
+    if (sortedResults.length > 0) {
+      newResults.set(playerIndex, sortedResults);
     } else {
-      newPlayers[playerIndex] = { ...newPlayers[playerIndex], isMember: false, discount: 0, planName: '' };
+      newResults.delete(playerIndex);
     }
-    setPlayers(newPlayers);
+    setPlayerSearchResults(newResults);
     setSearchingPlayer(null);
   };
 
@@ -470,7 +603,48 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     setPlayers(newPlayers);
     if (name.length >= 2) {
       searchMemberForPlayer(playerIndex, name, players[playerIndex].phone);
+    } else {
+      setPlayerSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
     }
+  };
+
+  const handleSelectPlayer = (playerIndex: number, result: {
+    member_name: string;
+    member_phone: string;
+    plan: { name: string; court_discount_percent: number } | null;
+  }) => {
+    const newPlayers = [...players];
+    const isMember = result.plan !== null;
+    newPlayers[playerIndex] = {
+      name: result.member_name,
+      phone: result.member_phone,
+      isMember: isMember,
+      discount: result.plan?.court_discount_percent || 0,
+      planName: result.plan?.name || ''
+    };
+    setPlayers(newPlayers);
+    setPlayerSearchResults(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(playerIndex);
+      return newMap;
+    });
+    setFocusedPlayerInput(null);
+  };
+
+  const handleClearPlayer = (playerIndex: number) => {
+    const newPlayers = [...players];
+    newPlayers[playerIndex] = { ...emptyPlayer };
+    setPlayers(newPlayers);
+    setPlayerSearchResults(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(playerIndex);
+      return newMap;
+    });
+    setFocusedPlayerInput(null);
   };
 
   const handlePlayerPhoneChange = (playerIndex: number, phone: string) => {
@@ -479,6 +653,12 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     setPlayers(newPlayers);
     if (phone.length >= 6) {
       searchMemberForPlayer(playerIndex, players[playerIndex].name, phone);
+    } else {
+      setPlayerSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
     }
   };
 
@@ -1547,7 +1727,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       event_type: booking.event_type || 'match'
     });
 
-    setPlayers([
+    const loadedPlayers: PlayerData[] = [
       {
         name: booking.player1_name || booking.booked_by_name || '',
         phone: booking.player1_phone || booking.booked_by_phone || '',
@@ -1576,7 +1756,48 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         discount: booking.player4_discount || 0,
         planName: ''
       }
-    ]);
+    ];
+
+    setPlayers(loadedPlayers);
+    setPlayerSearchResults(new Map());
+    setFocusedPlayerInput(null);
+
+    // Buscar planName para jogadores que são membros
+    if (effectiveUserId) {
+      const playersWithPlan = await Promise.all(
+        loadedPlayers.map(async (player, idx) => {
+          if (player.isMember && player.name && player.name.length >= 2) {
+            const normalizedPhone = player.phone ? normalizePhone(player.phone) : '';
+            let query = supabase
+              .from('member_subscriptions')
+              .select(`
+                id,
+                member_name,
+                member_phone,
+                plan:membership_plans(name, court_discount_percent)
+              `)
+              .eq('club_owner_id', effectiveUserId)
+              .eq('status', 'active');
+
+            if (normalizedPhone && normalizedPhone.length >= 6) {
+              query = query.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${player.phone}%`);
+            } else if (player.name && player.name.length >= 2) {
+              query = query.ilike('member_name', `%${player.name}%`);
+            }
+
+            const { data } = await query.limit(1).maybeSingle();
+            if (data && data.plan) {
+              return {
+                ...player,
+                planName: (data.plan as any).name || ''
+              };
+            }
+          }
+          return player;
+        })
+      );
+      setPlayers(playersWithPlan);
+    }
 
     setShowNewBooking(true);
   };
@@ -1597,6 +1818,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       { ...emptyPlayer },
       { ...emptyPlayer }
     ]);
+    setPlayerSearchResults(new Map());
+    setFocusedPlayerInput(null);
   };
 
   const generateTimeSlots = () => {
@@ -2303,15 +2526,27 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                   </div>
                   {players.map((player, idx) => (
                   <div key={idx} className={`p-3 rounded-lg border ${player.isMember ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-xs font-medium text-gray-500">
-                        {t.bookings?.player || 'Player'} {idx + 1} {idx === 0 ? `(${t.bookings?.booker || 'Booker'})` : `(${t.common?.optional || 'optional'})`}
-                      </span>
-                      {player.isMember && (
-                        <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                          <Award className="w-3 h-3" />
-                          {player.planName} - {player.discount}% {t.members?.discount || 'discount'}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <span className="text-xs font-medium text-gray-500">
+                          {t.bookings?.player || 'Player'} {idx + 1} {idx === 0 ? `(${t.bookings?.booker || 'Booker'})` : `(${t.common?.optional || 'optional'})`}
                         </span>
+                        {player.isMember && (
+                          <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                            <Award className="w-3 h-3" />
+                            {player.planName} - {player.discount}% {t.members?.discount || 'discount'}
+                          </span>
+                        )}
+                      </div>
+                      {(player.name || player.phone) && (
+                        <button
+                          type="button"
+                          onClick={() => handleClearPlayer(idx)}
+                          className="p-1 text-red-600 hover:bg-red-100 rounded transition flex-shrink-0"
+                          title={t.common?.clear || 'Clear'}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -2321,6 +2556,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                           type="text"
                           value={player.name}
                           onChange={(e) => handlePlayerNameChange(idx, e.target.value)}
+                          onFocus={() => setFocusedPlayerInput(idx)}
+                          onBlur={() => {
+                            // Delay to allow click on dropdown item
+                            setTimeout(() => setFocusedPlayerInput(null), 200);
+                          }}
                           className="w-full pl-8 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           placeholder={t.bookings?.name || 'Name'}
                           required={idx === 0}
@@ -2328,6 +2568,32 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                         {searchingPlayer === idx && (
                           <div className="absolute right-2 top-1/2 -translate-y-1/2">
                             <div className="animate-spin w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full" />
+                          </div>
+                        )}
+                        {focusedPlayerInput === idx && playerSearchResults.has(idx) && playerSearchResults.get(idx)!.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            {playerSearchResults.get(idx)!.map((result, resultIdx) => (
+                              <div
+                                key={resultIdx}
+                                onClick={() => handleSelectPlayer(idx, result)}
+                                className="px-3 py-2.5 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1">
+                                      <div className="text-sm font-medium text-gray-900 break-words">{result.member_name}</div>
+                                      <div className="text-xs text-gray-500 break-words">{result.member_phone}</div>
+                                    </div>
+                                    {result.plan && (
+                                      <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                                        <Award className="w-3 h-3" />
+                                        {result.plan.name} - {result.plan.court_discount_percent}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>

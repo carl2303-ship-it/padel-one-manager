@@ -18,7 +18,10 @@ import {
   Search,
   UserCheck,
   TrendingUp,
-  Building2
+  Building2,
+  Phone,
+  User,
+  Award
 } from 'lucide-react';
 
 interface Court {
@@ -27,6 +30,10 @@ interface Court {
   type: string;
   hourly_rate: number;
 }
+
+const normalizePhone = (phone: string): string => {
+  return phone.replace(/[\s\-\(\)\.]/g, '').replace(/^00/, '+');
+};
 
 interface StaffCoach {
   id: string;
@@ -44,6 +51,11 @@ interface ClassType {
   max_students: number;
   price_per_class: number;
   is_active: boolean;
+  class_category: 'single' | 'pack' | 'group';
+  pack_size?: number | null;
+  group_size?: number | null;
+  frequency_per_week?: number | null;
+  monthly_price_per_player?: number | null;
 }
 
 interface ClassEnrollment {
@@ -79,6 +91,46 @@ interface ScheduledClass {
   class_type?: ClassType;
   court?: Court;
   enrollments?: ClassEnrollment[];
+  group_series_id?: string | null;
+  series_week_number?: number | null;
+}
+
+interface PackClass {
+  id: string;
+  scheduled_at: string;
+  status: string;
+  notes: string | null;
+  coach_id: string | null;
+  court_id: string | null;
+  pack_purchase_id: string;
+}
+
+interface PackPurchase {
+  id: string;
+  class_type_id: string;
+  student_name: string;
+  student_phone: string | null;
+  student_email: string | null;
+  organizer_player_id: string | null;
+  member_subscription_id: string | null;
+  pack_size: number;
+  price_paid: number;
+  purchased_at: string;
+  expires_at: string | null;
+  is_active: boolean;
+  class_type?: ClassType;
+  completions?: LessonCompletion[];
+  scheduled_classes?: PackClass[];
+}
+
+interface LessonCompletion {
+  id: string;
+  pack_purchase_id: string;
+  class_id: string | null;
+  completed_at: string;
+  completed_by: string | null;
+  notes: string | null;
+  class?: ScheduledClass;
 }
 
 interface AcademyManagementProps {
@@ -89,7 +141,12 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'classes' | 'types'>('classes');
+  const [activeTab, setActiveTab] = useState<'classes' | 'types' | 'packs'>('classes');
+  const [packPurchases, setPackPurchases] = useState<PackPurchase[]>([]);
+  const [showPackForm, setShowPackForm] = useState(false);
+  const [selectedPack, setSelectedPack] = useState<PackPurchase | null>(null);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [selectedPackType, setSelectedPackType] = useState<string>('');
   const [coaches, setCoaches] = useState<StaffCoach[]>([]);
   const [classTypes, setClassTypes] = useState<ClassType[]>([]);
   const [classes, setClasses] = useState<ScheduledClass[]>([]);
@@ -118,7 +175,12 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     description: '',
     duration_minutes: 60,
     max_students: 4,
-    price_per_class: 25
+    price_per_class: 25,
+    class_category: 'single' as 'single' | 'pack' | 'group',
+    pack_size: 5,
+    group_size: 2,
+    frequency_per_week: 1,
+    monthly_price_per_player: 50
   });
 
   const [classForm, setClassForm] = useState({
@@ -132,11 +194,92 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     gender: 'Misto' as 'M' | 'F' | 'Misto'
   });
 
+  const [groupClassParticipants, setGroupClassParticipants] = useState<Array<{
+    name: string;
+    phone: string;
+    email: string;
+    isMember: boolean;
+    discount: number;
+    planName: string;
+    organizer_player_id?: string | null;
+    member_subscription_id?: string | null;
+  }>>([]);
+
+  const [groupClassSearchResults, setGroupClassSearchResults] = useState<Map<number, Array<{
+    member_name: string;
+    member_phone: string;
+    plan: { name: string; court_discount_percent: number } | null;
+  }>>>(new Map());
+
+  const [focusedGroupInput, setFocusedGroupInput] = useState<number | null>(null);
+  const [searchingGroupPlayer, setSearchingGroupPlayer] = useState<number | null>(null);
+
+  // Pack creation with scheduling
+  const [packCoachId, setPackCoachId] = useState('');
+  const [packCourtId, setPackCourtId] = useState('');
+  const [packStartDate, setPackStartDate] = useState('');
+  const [packStartTime, setPackStartTime] = useState('09:00');
+  const [packPlayerSearch, setPackPlayerSearch] = useState('');
+  const [packPlayerResults, setPackPlayerResults] = useState<OrganizerPlayer[]>([]);
+  const [showPackPlayerDropdown, setShowPackPlayerDropdown] = useState(false);
+
+  // Class filters
+  const [classSearchTerm, setClassSearchTerm] = useState('');
+  const [classFilterType, setClassFilterType] = useState('');
+  const [classFilterDate, setClassFilterDate] = useState('');
+
+  const [packSubTab, setPackSubTab] = useState<'active' | 'finished'>('active');
+
+  // Reschedule lesson modal
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [rescheduleClass, setRescheduleClass] = useState<PackClass | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('09:00');
+
   useEffect(() => {
     if (user) {
       loadData();
+      if (activeTab === 'packs') {
+        loadPackPurchases();
+      }
     }
-  }, [user]);
+  }, [user, activeTab]);
+
+  // Inicializar participantes quando tipo de grupo é selecionado
+  useEffect(() => {
+    if (!classForm.class_type_id || classTypes.length === 0) {
+      if (groupClassParticipants.length > 0) {
+        setGroupClassParticipants([]);
+      }
+      return;
+    }
+
+    const selectedType = classTypes.find(t => t.id === classForm.class_type_id);
+    const isGroup = selectedType?.class_category === 'group';
+    const requiredParticipants = selectedType?.group_size || 2;
+    
+    if (isGroup) {
+      if (groupClassParticipants.length !== requiredParticipants) {
+        setGroupClassParticipants(
+          Array.from({ length: requiredParticipants }, () => ({
+            name: '',
+            phone: '',
+            email: '',
+            isMember: false,
+            discount: 0,
+            planName: '',
+            organizer_player_id: null,
+            member_subscription_id: null
+          }))
+        );
+      }
+    } else {
+      if (groupClassParticipants.length > 0) {
+        setGroupClassParticipants([]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classForm.class_type_id]);
 
   const loadData = async () => {
     if (!user) return;
@@ -248,25 +391,43 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
     setSaving(true);
 
+    const updateData: any = {
+      name: typeForm.name,
+      description: typeForm.description || null,
+      duration_minutes: typeForm.duration_minutes,
+      max_students: typeForm.max_students,
+      price_per_class: typeForm.price_per_class,
+      class_category: typeForm.class_category
+    };
+
+    if (typeForm.class_category === 'pack') {
+      updateData.pack_size = typeForm.pack_size;
+      updateData.group_size = null;
+      updateData.frequency_per_week = null;
+      updateData.monthly_price_per_player = null;
+    } else if (typeForm.class_category === 'group') {
+      updateData.group_size = typeForm.group_size;
+      updateData.frequency_per_week = typeForm.frequency_per_week;
+      updateData.monthly_price_per_player = typeForm.monthly_price_per_player;
+      updateData.price_per_class = typeForm.monthly_price_per_player;
+      updateData.max_students = typeForm.group_size;
+      updateData.pack_size = null;
+    } else {
+      updateData.pack_size = null;
+      updateData.group_size = null;
+      updateData.frequency_per_week = null;
+      updateData.monthly_price_per_player = null;
+    }
+
     if (editingType) {
       await supabase
         .from('class_types')
-        .update({
-          name: typeForm.name,
-          description: typeForm.description || null,
-          duration_minutes: typeForm.duration_minutes,
-          max_students: typeForm.max_students,
-          price_per_class: typeForm.price_per_class
-        })
+        .update(updateData)
         .eq('id', editingType.id);
     } else {
       await supabase.from('class_types').insert({
         club_owner_id: effectiveUserId,
-        name: typeForm.name,
-        description: typeForm.description || null,
-        duration_minutes: typeForm.duration_minutes,
-        max_students: typeForm.max_students,
-        price_per_class: typeForm.price_per_class
+        ...updateData
       });
     }
 
@@ -275,6 +436,239 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     resetTypeForm();
     loadData();
     setSaving(false);
+  };
+
+  const searchPlayerForGroup = async (playerIndex: number, name: string, phone: string) => {
+    if (!effectiveUserId) return;
+    if ((!name || name.length < 2) && (!phone || phone.length < 6)) {
+      setGroupClassSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
+      return;
+    }
+
+    setSearchingGroupPlayer(playerIndex);
+    const normalizedPhone = phone ? normalizePhone(phone) : '';
+
+    const allResults: Array<{
+      member_name: string;
+      member_phone: string;
+      plan: { name: string; court_discount_percent: number } | null;
+    }> = [];
+
+    // Buscar membros
+    let memberQuery = supabase
+      .from('member_subscriptions')
+      .select(`
+        id,
+        member_name,
+        member_phone,
+        plan:membership_plans(name, court_discount_percent)
+      `)
+      .eq('club_owner_id', effectiveUserId)
+      .eq('status', 'active');
+
+    if (normalizedPhone && normalizedPhone.length >= 6) {
+      memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
+    } else if (name && name.length >= 2) {
+      memberQuery = memberQuery.ilike('member_name', `%${name}%`);
+    }
+
+    const { data: membersData } = await memberQuery.limit(10).order('member_name');
+    if (membersData) {
+      membersData.forEach((item: any) => {
+        allResults.push({
+          member_name: item.member_name,
+          member_phone: item.member_phone,
+          plan: item.plan
+        });
+      });
+    }
+
+    // Buscar jogadores de torneios
+    const { data: clubsData } = await supabase
+      .from('clubs')
+      .select('id')
+      .eq('owner_id', effectiveUserId)
+      .limit(1)
+      .maybeSingle();
+
+    if (clubsData) {
+      const { data: tournamentsData } = await supabase
+        .from('tournaments')
+        .select('id')
+        .eq('club_id', clubsData.id)
+        .limit(100);
+
+      if (tournamentsData && tournamentsData.length > 0) {
+        const tournamentIds = tournamentsData.map(t => t.id);
+        let tournamentPlayersQuery = supabase
+          .from('players')
+          .select('name, phone_number')
+          .in('tournament_id', tournamentIds);
+
+        if (normalizedPhone && normalizedPhone.length >= 6) {
+          tournamentPlayersQuery = tournamentPlayersQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+        } else if (name && name.length >= 2) {
+          tournamentPlayersQuery = tournamentPlayersQuery.ilike('name', `%${name}%`);
+        }
+
+        const { data: tournamentPlayersData } = await tournamentPlayersQuery.limit(10).order('name');
+        if (tournamentPlayersData) {
+          tournamentPlayersData.forEach((item: any) => {
+            const exists = allResults.some(r => 
+              r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+              r.member_phone === (item.phone_number || '')
+            );
+            if (!exists && item.name) {
+              allResults.push({
+                member_name: item.name,
+                member_phone: item.phone_number || '',
+                plan: null
+              });
+            }
+          });
+        }
+      }
+
+      // Buscar jogadores de jogos abertos
+      const { data: openGamesData } = await supabase
+        .from('open_games')
+        .select('id')
+        .eq('club_id', clubsData.id)
+        .limit(100);
+
+      if (openGamesData && openGamesData.length > 0) {
+        const gameIds = openGamesData.map(g => g.id);
+        const { data: openGamePlayersData } = await supabase
+          .from('open_game_players')
+          .select('user_id')
+          .in('game_id', gameIds);
+
+        if (openGamePlayersData && openGamePlayersData.length > 0) {
+          const userIds = [...new Set(openGamePlayersData.map(p => p.user_id))];
+          let playerAccountsQuery = supabase
+            .from('player_accounts')
+            .select('user_id, name, phone_number')
+            .in('user_id', userIds);
+
+          if (normalizedPhone && normalizedPhone.length >= 6) {
+            playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+          } else if (name && name.length >= 2) {
+            playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
+          }
+
+          const { data: playerAccountsData } = await playerAccountsQuery.limit(10).order('name');
+          if (playerAccountsData) {
+            playerAccountsData.forEach((item: any) => {
+              const exists = allResults.some(r => 
+                r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+                r.member_phone === (item.phone_number || '')
+              );
+              if (!exists && item.name) {
+                allResults.push({
+                  member_name: item.name,
+                  member_phone: item.phone_number || '',
+                  plan: null
+                });
+              }
+            });
+          }
+        }
+      }
+    }
+
+    const sortedResults = allResults
+      .sort((a, b) => a.member_name.localeCompare(b.member_name))
+      .slice(0, 10);
+
+    const newResults = new Map(groupClassSearchResults);
+    if (sortedResults.length > 0) {
+      newResults.set(playerIndex, sortedResults);
+    } else {
+      newResults.delete(playerIndex);
+    }
+    setGroupClassSearchResults(newResults);
+    setSearchingGroupPlayer(null);
+  };
+
+  const handleGroupPlayerNameChange = (playerIndex: number, name: string) => {
+    const newParticipants = [...groupClassParticipants];
+    newParticipants[playerIndex] = { ...newParticipants[playerIndex], name };
+    setGroupClassParticipants(newParticipants);
+    if (name.length >= 2) {
+      searchPlayerForGroup(playerIndex, name, newParticipants[playerIndex].phone);
+    } else {
+      setGroupClassSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
+    }
+  };
+
+  const handleGroupPlayerPhoneChange = (playerIndex: number, phone: string) => {
+    const newParticipants = [...groupClassParticipants];
+    newParticipants[playerIndex] = { ...newParticipants[playerIndex], phone };
+    setGroupClassParticipants(newParticipants);
+    if (phone.length >= 6) {
+      searchPlayerForGroup(playerIndex, newParticipants[playerIndex].name, phone);
+    } else {
+      setGroupClassSearchResults(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(playerIndex);
+        return newMap;
+      });
+    }
+  };
+
+  const handleSelectGroupPlayer = (playerIndex: number, result: {
+    member_name: string;
+    member_phone: string;
+    plan: { name: string; court_discount_percent: number } | null;
+  }) => {
+    const newParticipants = [...groupClassParticipants];
+    const isMember = result.plan !== null;
+    newParticipants[playerIndex] = {
+      name: result.member_name,
+      phone: result.member_phone,
+      email: '', // Será preenchido se necessário
+      isMember: isMember,
+      discount: result.plan?.court_discount_percent || 0,
+      planName: result.plan?.name || '',
+      organizer_player_id: null,
+      member_subscription_id: null
+    };
+    setGroupClassParticipants(newParticipants);
+    setGroupClassSearchResults(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(playerIndex);
+      return newMap;
+    });
+    setFocusedGroupInput(null);
+  };
+
+  const handleClearGroupPlayer = (playerIndex: number) => {
+    const newParticipants = [...groupClassParticipants];
+    newParticipants[playerIndex] = {
+      name: '',
+      phone: '',
+      email: '',
+      isMember: false,
+      discount: 0,
+      planName: '',
+      organizer_player_id: null,
+      member_subscription_id: null
+    };
+    setGroupClassParticipants(newParticipants);
+    setGroupClassSearchResults(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(playerIndex);
+      return newMap;
+    });
+    setFocusedGroupInput(null);
   };
 
   const handleScheduleClass = async (e: React.FormEvent) => {
@@ -336,41 +730,200 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       
       console.log('[AcademyManagement] Class updated successfully:', data);
     } else {
-      const insertData: any = {
-        club_owner_id: effectiveUserId,
-        coach_id: classForm.coach_id === '' ? null : classForm.coach_id,
-        class_type_id: classForm.class_type_id,
-        court_id: classForm.court_id === '' ? null : classForm.court_id,
-        scheduled_at: scheduledAt.toISOString(),
-        notes: classForm.notes?.trim() || null
-      };
+      // Verificar se é aula de grupo
+      const isGroupClass = classType?.class_category === 'group';
       
-      // Adicionar level e gender
-      if (levelValue !== null && levelValue !== '') {
-        insertData.level = levelValue;
+      if (isGroupClass) {
+        // Validar participantes
+        const requiredParticipants = classType?.group_size || 2;
+        const validParticipants = groupClassParticipants.filter(p => p.name.trim() && p.phone.trim() && p.email.trim());
+        
+        if (validParticipants.length < requiredParticipants) {
+          alert(`É necessário adicionar pelo menos ${requiredParticipants} participantes com nome, telefone e email.`);
+          setSaving(false);
+          return;
+        }
+
+        // Criar série de 4 semanas
+        // Gerar UUID simples compatível
+        const generateUUID = () => {
+          return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        };
+        const groupSeriesId = generateUUID();
+        const classesToCreate = [];
+        
+        for (let week = 1; week <= 4; week++) {
+          const weekDate = new Date(scheduledAt);
+          weekDate.setDate(weekDate.getDate() + (week - 1) * 7);
+          
+          const insertData: any = {
+            club_owner_id: effectiveUserId,
+            coach_id: classForm.coach_id === '' ? null : classForm.coach_id,
+            class_type_id: classForm.class_type_id,
+            court_id: classForm.court_id === '' ? null : classForm.court_id,
+            scheduled_at: weekDate.toISOString(),
+            notes: classForm.notes?.trim() || null,
+            group_series_id: groupSeriesId,
+            series_week_number: week
+          };
+          
+          if (levelValue !== null && levelValue !== '') {
+            insertData.level = levelValue;
+          } else {
+            insertData.level = null;
+          }
+          insertData.gender = genderValue;
+          
+          classesToCreate.push(insertData);
+        }
+
+        // Inserir todas as aulas
+        const { data: createdClasses, error: classesError } = await supabase
+          .from('club_classes')
+          .insert(classesToCreate)
+          .select();
+
+        if (classesError) {
+          console.error('[AcademyManagement] Error creating group classes:', classesError);
+          alert('Erro ao criar aulas de grupo: ' + classesError.message);
+          setSaving(false);
+          return;
+        }
+
+        // Criar participantes para todas as aulas
+        if (createdClasses && createdClasses.length > 0) {
+          const enrollmentsToCreate = [];
+          
+          for (const cls of createdClasses) {
+            for (const participant of validParticipants.slice(0, requiredParticipants)) {
+              // Buscar organizer_player_id ou member_subscription_id se necessário
+              let organizerPlayerId = null;
+              let memberSubscriptionId = null;
+              
+              if (participant.organizer_player_id) {
+                organizerPlayerId = participant.organizer_player_id;
+              } else if (participant.member_subscription_id) {
+                memberSubscriptionId = participant.member_subscription_id;
+              } else {
+                // Tentar encontrar jogador existente ou criar novo
+                const normalizedPhone = normalizePhone(participant.phone);
+                const { data: existingMember } = await supabase
+                  .from('member_subscriptions')
+                  .select('id')
+                  .eq('club_owner_id', effectiveUserId)
+                  .eq('status', 'active')
+                  .or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${participant.phone}%`)
+                  .maybeSingle();
+                
+                if (existingMember) {
+                  memberSubscriptionId = existingMember.id;
+                } else {
+                  // Criar organizer_player se não existir
+                  const { data: existingPlayer } = await supabase
+                    .from('organizer_players')
+                    .select('id')
+                    .eq('organizer_id', effectiveUserId)
+                    .or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${participant.phone}%`)
+                    .maybeSingle();
+                  
+                  if (existingPlayer) {
+                    organizerPlayerId = existingPlayer.id;
+                  } else {
+                    // Criar novo organizer_player
+                    const { data: newPlayer } = await supabase
+                      .from('organizer_players')
+                      .insert({
+                        organizer_id: effectiveUserId,
+                        name: participant.name,
+                        phone_number: participant.phone,
+                        email: participant.email
+                      })
+                      .select()
+                      .single();
+                    
+                    if (newPlayer) {
+                      organizerPlayerId = newPlayer.id;
+                    }
+                  }
+                }
+              }
+
+              enrollmentsToCreate.push({
+                class_id: cls.id,
+                student_name: participant.name,
+                organizer_player_id: organizerPlayerId,
+                member_subscription_id: memberSubscriptionId,
+                status: 'enrolled'
+              });
+            }
+          }
+
+          if (enrollmentsToCreate.length > 0) {
+            await supabase.from('class_enrollments').insert(enrollmentsToCreate);
+          }
+        }
+
+        // Criar reservas de campo para todas as aulas
+        if (createdClasses && classForm.court_id) {
+          const coach = coaches.find(c => c.id === classForm.coach_id);
+          const bookingsToCreate = createdClasses.map(cls => {
+            const startTime = new Date(cls.scheduled_at);
+            const endTime = new Date(startTime);
+            endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+            
+            return {
+              user_id: effectiveUserId,
+              court_id: classForm.court_id,
+              start_time: startTime.toISOString(),
+              end_time: endTime.toISOString(),
+              booked_by_name: coach?.name || classType?.name || 'Aula de Grupo',
+              booked_by_phone: coach?.phone || null,
+              price: 0,
+              payment_status: 'paid',
+              event_type: 'training',
+              notes: `${classType?.name || 'Aula de Grupo'}${coach ? ` - ${coach.name}` : ''} - Semana ${cls.series_week_number}`
+            };
+          });
+
+          await supabase.from('court_bookings').insert(bookingsToCreate);
+        }
+
+        setGroupClassParticipants([]);
+        setGroupClassSearchResults(new Map());
       } else {
-        insertData.level = null;
-      }
-      insertData.gender = genderValue;
-      
-      console.log('[AcademyManagement] Inserting class with:', insertData);
-      
-      const { data: newClass, error } = await supabase
-        .from('club_classes')
-        .insert(insertData)
-        .select()
-        .single();
-      
-      if (error) {
-        console.error('[AcademyManagement] Error creating class:', error);
-        console.error('[AcademyManagement] Error details:', JSON.stringify(error, null, 2));
-        console.error('[AcademyManagement] Insert data sent:', JSON.stringify(insertData, null, 2));
-        alert('Erro ao criar aula: ' + (error.message || error.details || JSON.stringify(error)));
-        setSaving(false);
-        return;
-      }
-      
-      console.log('[AcademyManagement] Class created:', newClass);
+        // Aula pontual normal
+        const insertData: any = {
+          club_owner_id: effectiveUserId,
+          coach_id: classForm.coach_id === '' ? null : classForm.coach_id,
+          class_type_id: classForm.class_type_id,
+          court_id: classForm.court_id === '' ? null : classForm.court_id,
+          scheduled_at: scheduledAt.toISOString(),
+          notes: classForm.notes?.trim() || null
+        };
+        
+        if (levelValue !== null && levelValue !== '') {
+          insertData.level = levelValue;
+        } else {
+          insertData.level = null;
+        }
+        insertData.gender = genderValue;
+        
+        const { data: newClass, error } = await supabase
+          .from('club_classes')
+          .insert(insertData)
+          .select()
+          .single();
+        
+        if (error) {
+          console.error('[AcademyManagement] Error creating class:', error);
+          alert('Erro ao criar aula: ' + error.message);
+          setSaving(false);
+          return;
+        }
 
       if (newClass && classForm.court_id) {
         const endTime = new Date(scheduledAt);
@@ -392,6 +945,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         });
       }
     }
+    }
 
     setShowClassForm(false);
     setEditingClass(null);
@@ -407,7 +961,11 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       description: type.description || '',
       duration_minutes: type.duration_minutes,
       max_students: type.max_students,
-      price_per_class: type.price_per_class
+      price_per_class: type.price_per_class,
+      class_category: type.class_category || 'single',
+      pack_size: type.pack_size || 5,
+      group_size: type.group_size || 2,
+      frequency_per_week: type.frequency_per_week || 1
     });
     setShowTypeForm(true);
   };
@@ -649,10 +1207,63 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   };
 
   const filteredPlayers = players.filter(p =>
-    p.name.toLowerCase().includes(playerSearch.toLowerCase()) ||
+    (p.name && p.name.toLowerCase().includes(playerSearch.toLowerCase())) ||
     (p.email && p.email.toLowerCase().includes(playerSearch.toLowerCase())) ||
     (p.phone_number && p.phone_number.includes(playerSearch))
   );
+
+  const filteredPackPlayers = players.filter(p =>
+    (p.name && p.name.toLowerCase().includes(packPlayerSearch.toLowerCase())) ||
+    (p.email && p.email.toLowerCase().includes(packPlayerSearch.toLowerCase())) ||
+    (p.phone_number && p.phone_number.includes(packPlayerSearch))
+  );
+
+  const loadPackPurchases = async () => {
+    if (!effectiveUserId) return;
+    
+    const { data, error } = await supabase
+      .from('pack_purchases')
+      .select(`
+        *,
+        class_type:class_types(*)
+      `)
+      .eq('club_owner_id', effectiveUserId)
+      .eq('is_active', true)
+      .order('purchased_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading pack purchases:', error);
+      return;
+    }
+
+    if (data) {
+      const packIds = data.map(p => p.id);
+      
+      // Load completions
+      const { data: completions } = await supabase
+        .from('lesson_completions')
+        .select(`
+          *,
+          class:club_classes(*)
+        `)
+        .in('pack_purchase_id', packIds);
+
+      // Load scheduled classes for packs
+      const { data: packClasses } = await supabase
+        .from('club_classes')
+        .select('id, scheduled_at, status, notes, coach_id, court_id, pack_purchase_id')
+        .in('pack_purchase_id', packIds)
+        .order('scheduled_at', { ascending: true });
+
+      const packsWithData = data.map(pack => ({
+        ...pack,
+        completions: completions?.filter(c => c.pack_purchase_id === pack.id) || [],
+        scheduled_classes: packClasses?.filter(c => c.pack_purchase_id === pack.id) || []
+      }));
+
+      setPackPurchases(packsWithData as PackPurchase[]);
+    }
+  };
 
   const resetTypeForm = () => {
     setTypeForm({
@@ -660,7 +1271,12 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       description: '',
       duration_minutes: 60,
       max_students: 4,
-      price_per_class: 25
+      price_per_class: 25,
+      class_category: 'single',
+      pack_size: 5,
+      group_size: 2,
+      frequency_per_week: 1,
+      monthly_price_per_player: 50
     });
   };
 
@@ -675,6 +1291,128 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       level: '',
       gender: 'Misto'
     });
+    setGroupClassParticipants([]);
+    setGroupClassSearchResults(new Map());
+    setFocusedGroupInput(null);
+  };
+
+  const handleExtendGroupSeries = async (seriesId: string) => {
+    if (!effectiveUserId) return;
+    
+    // Buscar a última aula da série
+    const { data: lastClass } = await supabase
+      .from('club_classes')
+      .select('*')
+      .eq('group_series_id', seriesId)
+      .order('series_week_number', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!lastClass) {
+      alert('Série não encontrada');
+      return;
+    }
+
+    const classType = classTypes.find(ct => ct.id === lastClass.class_type_id);
+    if (!classType || classType.class_category !== 'group') {
+      alert('Esta não é uma série de aulas de grupo');
+      return;
+    }
+
+    // Buscar participantes da última aula
+    const { data: enrollments } = await supabase
+      .from('class_enrollments')
+      .select('*')
+      .eq('class_id', lastClass.id);
+
+    if (!enrollments || enrollments.length === 0) {
+      alert('Nenhum participante encontrado na série');
+      return;
+    }
+
+    // Criar mais 4 semanas
+    const lastDate = new Date(lastClass.scheduled_at);
+    const durationMinutes = classType.duration_minutes || 60;
+    const classesToCreate = [];
+
+    for (let week = 1; week <= 4; week++) {
+      const weekDate = new Date(lastDate);
+      weekDate.setDate(weekDate.getDate() + week * 7);
+      
+      const insertData: any = {
+        club_owner_id: effectiveUserId,
+        coach_id: lastClass.coach_id,
+        class_type_id: lastClass.class_type_id,
+        court_id: lastClass.court_id,
+        scheduled_at: weekDate.toISOString(),
+        notes: lastClass.notes,
+        group_series_id: seriesId,
+        series_week_number: (lastClass.series_week_number || 4) + week,
+        level: lastClass.level,
+        gender: lastClass.gender
+      };
+      
+      classesToCreate.push(insertData);
+    }
+
+    const { data: createdClasses, error: classesError } = await supabase
+      .from('club_classes')
+      .insert(classesToCreate)
+      .select();
+
+    if (classesError) {
+      alert('Erro ao prolongar série: ' + classesError.message);
+      return;
+    }
+
+    // Criar participantes para as novas aulas
+    if (createdClasses && createdClasses.length > 0) {
+      const enrollmentsToCreate = [];
+      
+      for (const cls of createdClasses) {
+        for (const enrollment of enrollments) {
+          enrollmentsToCreate.push({
+            class_id: cls.id,
+            student_name: enrollment.student_name,
+            organizer_player_id: enrollment.organizer_player_id,
+            member_subscription_id: enrollment.member_subscription_id,
+            status: 'enrolled'
+          });
+        }
+      }
+
+      if (enrollmentsToCreate.length > 0) {
+        await supabase.from('class_enrollments').insert(enrollmentsToCreate);
+      }
+
+      // Criar reservas de campo
+      if (lastClass.court_id) {
+        const coach = coaches.find(c => c.id === lastClass.coach_id);
+        const bookingsToCreate = createdClasses.map(cls => {
+          const startTime = new Date(cls.scheduled_at);
+          const endTime = new Date(startTime);
+          endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+          
+          return {
+            user_id: effectiveUserId,
+            court_id: lastClass.court_id,
+            start_time: startTime.toISOString(),
+            end_time: endTime.toISOString(),
+            booked_by_name: coach?.name || classType?.name || 'Aula de Grupo',
+            booked_by_phone: coach?.phone || null,
+            price: 0,
+            payment_status: 'paid',
+            event_type: 'training',
+            notes: `${classType?.name || 'Aula de Grupo'}${coach ? ` - ${coach.name}` : ''} - Semana ${cls.series_week_number}`
+          };
+        });
+
+        await supabase.from('court_bookings').insert(bookingsToCreate);
+      }
+    }
+
+    loadData();
+    alert('Série prolongada com sucesso! Mais 4 semanas adicionadas.');
   };
 
   const generateTimeSlots = () => {
@@ -723,12 +1461,25 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
               {t.academy.classes}
             </button>
             <button
-              onClick={() => setActiveTab('types')}
+              onClick={() => {
+                setActiveTab('types');
+              }}
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
                 activeTab === 'types' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
               }`}
             >
               {t.academy.classTypes}
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab('packs');
+                loadPackPurchases();
+              }}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                activeTab === 'packs' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+              }`}
+            >
+              Packs
             </button>
           </div>
           <button
@@ -759,12 +1510,75 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         </div>
       )}
 
-      {activeTab === 'classes' && (
-        classes.length === 0 ? (
+      {activeTab === 'classes' && (() => {
+        const filteredClasses = classes.filter(cls => {
+          const matchesSearch = !classSearchTerm || 
+            (cls.class_type?.name && cls.class_type.name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
+            (cls.coach_name && cls.coach_name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
+            (cls.enrollments?.some(e => e.student_name?.toLowerCase().includes(classSearchTerm.toLowerCase()))) ||
+            (cls.notes && cls.notes.toLowerCase().includes(classSearchTerm.toLowerCase()));
+          const matchesType = !classFilterType || cls.class_type?.id === classFilterType;
+          const matchesDate = !classFilterDate || (cls.scheduled_at && cls.scheduled_at.startsWith(classFilterDate));
+          return matchesSearch && matchesType && matchesDate;
+        });
+
+        return (
+          <>
+          {/* Filters */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-4">
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="flex-1 min-w-[180px] relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={classSearchTerm}
+                  onChange={(e) => setClassSearchTerm(e.target.value)}
+                  placeholder="Buscar aluno, treinador, tipo..."
+                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <select
+                value={classFilterType}
+                onChange={(e) => setClassFilterType(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Todos os Tipos</option>
+                {classTypes.map(ct => (
+                  <option key={ct.id} value={ct.id}>{ct.name}</option>
+                ))}
+              </select>
+              <input
+                type="date"
+                value={classFilterDate}
+                onChange={(e) => setClassFilterDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              {(classSearchTerm || classFilterType || classFilterDate) && (
+                <button
+                  onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); }}
+                  className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
+                >
+                  <X className="w-4 h-4" />
+                  Limpar
+                </button>
+              )}
+            </div>
+          </div>
+
+        {filteredClasses.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">{t.academy.noClasses}</h3>
-            {coaches.length > 0 && classTypes.length > 0 && (
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              {(classSearchTerm || classFilterType || classFilterDate) ? 'Nenhuma aula encontrada com os filtros aplicados' : t.academy.noClasses}
+            </h3>
+            {(classSearchTerm || classFilterType || classFilterDate) ? (
+              <button
+                onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); }}
+                className="text-blue-600 hover:text-blue-800 text-sm font-medium mt-2"
+              >
+                Limpar filtros
+              </button>
+            ) : coaches.length > 0 && classTypes.length > 0 && (
               <button
                 onClick={() => setShowClassForm(true)}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition mt-4"
@@ -775,7 +1589,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
-            {classes.map(cls => {
+            {filteredClasses.map(cls => {
               const isExpanded = expandedClassId === cls.id;
               const enrollmentCount = cls.enrollments?.length || 0;
               const maxStudents = cls.class_type?.max_students || 4;
@@ -889,6 +1703,25 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                       {isFull && (
                         <p className="text-xs text-amber-600 mt-2">{t.academy?.classFull || 'Class is full'}</p>
                       )}
+
+                      {cls.class_type?.class_category === 'group' && cls.group_series_id && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <button
+                            onClick={() => {
+                              if (confirm('Deseja prolongar esta série de aulas de grupo por mais 4 semanas?')) {
+                                handleExtendGroupSeries(cls.group_series_id!);
+                              }
+                            }}
+                            className="w-full px-3 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
+                          >
+                            <Plus className="w-4 h-4" />
+                            Prolongar Pack (Mais 4 semanas)
+                          </button>
+                          {cls.series_week_number && (
+                            <p className="text-xs text-gray-500 mt-1 text-center">Semana {cls.series_week_number} de 4</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -896,7 +1729,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             })}
           </div>
         )
-      )}
+        }
+        </>
+      );
+      })()}
 
       {activeTab === 'types' && (
         classTypes.length === 0 ? (
@@ -978,20 +1814,92 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   rows={2}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Aula *</label>
+                <select
+                  value={typeForm.class_category}
+                  onChange={(e) => setTypeForm({ ...typeForm, class_category: e.target.value as 'single' | 'pack' | 'group' })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="single">Aula Pontual</option>
+                  <option value="pack">Pack de Aulas</option>
+                  <option value="group">Aula de Grupo</option>
+                </select>
+              </div>
+              {typeForm.class_category === 'pack' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Número de Aulas no Pack *</label>
+                    <select
+                      value={typeForm.pack_size}
+                      onChange={(e) => setTypeForm({ ...typeForm, pack_size: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    >
+                      <option value={5}>5 Aulas</option>
+                      <option value={10}>10 Aulas</option>
+                    </select>
+                  </div>
+                </>
+              )}
+              {typeForm.class_category === 'group' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Número de Jogadores *</label>
+                    <select
+                      value={typeForm.group_size}
+                      onChange={(e) => setTypeForm({ ...typeForm, group_size: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    >
+                      <option value={2}>2 Jogadores</option>
+                      <option value={3}>3 Jogadores</option>
+                      <option value={4}>4 Jogadores</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Frequência por Semana *</label>
+                    <select
+                      value={typeForm.frequency_per_week}
+                      onChange={(e) => setTypeForm({ ...typeForm, frequency_per_week: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    >
+                      <option value={1}>1x por semana</option>
+                      <option value={2}>2x por semana</option>
+                      <option value={3}>3x por semana</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Duração (minutos) *</label>
+                    <select
+                      value={typeForm.duration_minutes}
+                      onChange={(e) => setTypeForm({ ...typeForm, duration_minutes: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    >
+                      <option value={60}>60 minutos</option>
+                      <option value={90}>90 minutos</option>
+                    </select>
+                  </div>
+                </>
+              )}
+              {typeForm.class_category === 'single' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.academy.duration}</label>
-                  <select
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Duração (minutos) *</label>
+                  <input
+                    type="number"
                     value={typeForm.duration_minutes}
-                    onChange={(e) => setTypeForm({ ...typeForm, duration_minutes: parseInt(e.target.value) })}
+                    onChange={(e) => setTypeForm({ ...typeForm, duration_minutes: parseInt(e.target.value) || 60 })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value={30}>30 min</option>
-                    <option value={60}>60 min</option>
-                    <option value={90}>90 min</option>
-                    <option value={120}>120 min</option>
-                  </select>
+                    min="30"
+                    step="15"
+                    required
+                  />
                 </div>
+              )}
+              {typeForm.class_category !== 'group' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.academy.maxStudents}</label>
                   <input
@@ -1003,18 +1911,34 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     required
                   />
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t.academy.pricePerClass} (EUR)</label>
-                <input
-                  type="number"
-                  value={typeForm.price_per_class}
-                  onChange={(e) => setTypeForm({ ...typeForm, price_per_class: parseFloat(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  min="0"
-                  required
-                />
-              </div>
+              )}
+              {typeForm.class_category === 'group' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço Mensal por Jogador (EUR) *</label>
+                  <input
+                    type="number"
+                    value={typeForm.monthly_price_per_player}
+                    onChange={(e) => setTypeForm({ ...typeForm, monthly_price_per_player: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    min="0"
+                    step="0.01"
+                    required
+                  />
+                </div>
+              )}
+              {typeForm.class_category !== 'group' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.academy.pricePerClass} (EUR)</label>
+                  <input
+                    type="number"
+                    value={typeForm.price_per_class}
+                    onChange={(e) => setTypeForm({ ...typeForm, price_per_class: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    min="0"
+                    required
+                  />
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setShowTypeForm(false); setEditingType(null); resetTypeForm(); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
                   {t.common.cancel}
@@ -1067,8 +1991,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   required
                 >
                   <option value="">{t.academy.selectClassType}</option>
-                  {classTypes.map(type => (
-                    <option key={type.id} value={type.id}>{type.name} - {type.price_per_class} EUR ({type.duration_minutes} min)</option>
+                  {classTypes.filter(ct => ct.class_category !== 'pack').map(type => (
+                    <option key={type.id} value={type.id}>
+                      {type.name} - {type.class_category === 'group' ? `${type.monthly_price_per_player || type.price_per_class} EUR/mês/jogador` : `${type.price_per_class} EUR`} ({type.duration_minutes} min)
+                    </option>
                   ))}
                 </select>
               </div>
@@ -1144,6 +2070,121 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   </select>
                 </div>
               </div>
+              {classForm.class_type_id && (() => {
+                const selectedType = classTypes.find(t => t.id === classForm.class_type_id);
+                const isGroup = selectedType?.class_category === 'group';
+                const requiredParticipants = selectedType?.group_size || 2;
+                
+                if (isGroup) {
+                  return (
+                    <div className="space-y-3 pt-2 border-t border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-sm font-medium text-gray-700">Participantes ({requiredParticipants} obrigatórios) *</label>
+                        <span className="text-xs text-gray-500">Telefone e Email obrigatórios</span>
+                      </div>
+                      {groupClassParticipants.slice(0, requiredParticipants).map((participant, idx) => (
+                        <div key={idx} className={`p-3 rounded-lg border ${participant.isMember ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-500">Participante {idx + 1}</span>
+                            {participant.isMember && (
+                              <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                <Award className="w-3 h-3" />
+                                {participant.planName} - {participant.discount}% desconto
+                              </span>
+                            )}
+                            {(participant.name || participant.phone) && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearGroupPlayer(idx)}
+                                className="p-1 text-red-600 hover:bg-red-100 rounded transition flex-shrink-0"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <div className="relative">
+                              <User className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                              <input
+                                type="text"
+                                value={participant.name}
+                                onChange={(e) => handleGroupPlayerNameChange(idx, e.target.value)}
+                                onFocus={() => setFocusedGroupInput(idx)}
+                                onBlur={() => setTimeout(() => setFocusedGroupInput(null), 200)}
+                                className="w-full pl-8 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Nome"
+                                required
+                              />
+                              {searchingGroupPlayer === idx && (
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                                  <div className="animate-spin w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full" />
+                                </div>
+                              )}
+                              {focusedGroupInput === idx && groupClassSearchResults.has(idx) && groupClassSearchResults.get(idx)!.length > 0 && (
+                                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                  {groupClassSearchResults.get(idx)!.map((result, resultIdx) => (
+                                    <div
+                                      key={resultIdx}
+                                      onClick={() => handleSelectGroupPlayer(idx, result)}
+                                      className="px-3 py-2.5 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                                    >
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div className="flex-1">
+                                            <div className="text-sm font-medium text-gray-900 break-words">{result.member_name}</div>
+                                            <div className="text-xs text-gray-500 break-words">{result.member_phone}</div>
+                                          </div>
+                                          {result.plan && (
+                                            <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                                              <Award className="w-3 h-3" />
+                                              {result.plan.name} - {result.plan.court_discount_percent}%
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="relative">
+                                <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                                <input
+                                  type="tel"
+                                  value={participant.phone}
+                                  onChange={(e) => handleGroupPlayerPhoneChange(idx, e.target.value)}
+                                  className="w-full pl-8 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="Telefone"
+                                  required
+                                />
+                              </div>
+                              <div>
+                                <input
+                                  type="email"
+                                  value={participant.email}
+                                  onChange={(e) => {
+                                    const newParticipants = [...groupClassParticipants];
+                                    newParticipants[idx] = { ...newParticipants[idx], email: e.target.value };
+                                    setGroupClassParticipants(newParticipants);
+                                  }}
+                                  className="w-full pl-2 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="Email"
+                                  required
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      <p className="text-xs text-blue-600 bg-blue-50 p-2 rounded">
+                        Aulas serão criadas automaticamente para 4 semanas (mesma hora, mesmo dia da semana)
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setShowClassForm(false); setEditingClass(null); resetClassForm(); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
                   {t.common.cancel}
@@ -1331,6 +2372,734 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 >
                   <UserPlus className="w-4 h-4" />
                   {saving ? t.message.saving : (t.common?.add || 'Add')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'packs' && (() => {
+        const activePacks = packPurchases.filter(p => {
+          const done = p.completions?.length || 0;
+          return done < p.pack_size;
+        });
+        const finishedPacks = packPurchases.filter(p => {
+          const done = p.completions?.length || 0;
+          return done >= p.pack_size;
+        });
+
+        return (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold text-gray-900">Packs de Aulas</h2>
+            <button
+              onClick={() => {
+                setSelectedPack(null);
+                setStudentName('');
+                setStudentEmail('');
+                setStudentPhone('');
+                setSelectedPlayer(null);
+                setPackPlayerSearch('');
+                setSelectedPackType('');
+                setPackCoachId('');
+                setPackCourtId('');
+                setPackStartDate('');
+                setPackStartTime('09:00');
+                setShowPackForm(true);
+              }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Novo Pack
+            </button>
+          </div>
+
+          {/* Sub-tabs: Ativos / Terminados */}
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setPackSubTab('active')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
+                packSubTab === 'active' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Ativos ({activePacks.length})
+            </button>
+            <button
+              onClick={() => setPackSubTab('finished')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
+                packSubTab === 'finished' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Terminados ({finishedPacks.length})
+            </button>
+          </div>
+
+          {(() => {
+            const displayPacks = packSubTab === 'active' ? activePacks : finishedPacks;
+            if (displayPacks.length === 0) {
+              return (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+                  <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    {packSubTab === 'active' ? 'Nenhum pack ativo' : 'Nenhum pack terminado'}
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    {packSubTab === 'active' ? 'Crie um novo pack de aulas para começar' : 'Os packs completados aparecerão aqui'}
+                  </p>
+                </div>
+              );
+            }
+            return (
+            <div className="grid gap-4">
+              {displayPacks.map(pack => {
+                const completedCount = pack.completions?.length || 0;
+                const remaining = pack.pack_size - completedCount;
+                const progress = (completedCount / pack.pack_size) * 100;
+                
+                return (
+                  <div key={pack.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold text-gray-900">{pack.student_name}</h3>
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                            {pack.class_type?.name || 'Pack'}
+                          </span>
+                          {remaining === 0 && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Completo</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+                          {pack.student_phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{pack.student_phone}</span>}
+                          {pack.student_email && <span className="text-xs">{pack.student_email}</span>}
+                          <span className="font-medium">{pack.price_paid.toFixed(2)} EUR</span>
+                          <span className="text-xs text-gray-400">Comprado: {new Date(pack.purchased_at).toLocaleDateString('pt-PT')}</span>
+                        </div>
+                      </div>
+                      {remaining > 0 && (
+                        <button
+                          onClick={() => {
+                            setSelectedPack(pack);
+                            setShowCompletionModal(true);
+                          }}
+                          className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center gap-1.5 flex-shrink-0"
+                        >
+                          <Check className="w-4 h-4" />
+                          Marcar Aula
+                        </button>
+                      )}
+                    </div>
+                    
+                    {/* Progress bar */}
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>Progresso: {completedCount}/{pack.pack_size} aulas</span>
+                        <span className={remaining === 0 ? 'text-green-600 font-medium' : ''}>{remaining === 0 ? 'Pack Completo!' : `${remaining} restantes`}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${remaining === 0 ? 'bg-green-500' : 'bg-blue-500'}`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Lessons - collapsible */}
+                    {pack.scheduled_classes && pack.scheduled_classes.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <details className="group">
+                          <summary className="flex items-center justify-between cursor-pointer select-none py-1 hover:bg-gray-50 rounded-lg px-2 transition">
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <Calendar className="w-4 h-4 text-gray-400" />
+                              <span className="font-medium">Aulas do Pack</span>
+                              <div className="flex gap-1 ml-1">
+                                {Array.from({ length: pack.pack_size }, (_, i) => (
+                                  <div key={i} className={`w-2 h-2 rounded-full ${i < completedCount ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                ))}
+                              </div>
+                            </div>
+                            <ChevronDown className="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" />
+                          </summary>
+                          <div className="mt-2 space-y-1.5">
+                            {pack.scheduled_classes.map((cls, idx) => {
+                              const completionForClass = pack.completions?.find(c => c.class_id === cls.id);
+                              const isCompleted = !!completionForClass;
+                              const lessonDate = new Date(cls.scheduled_at);
+                              const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                              const isPast = lessonDate < new Date() && !isCompleted;
+                              
+                              return (
+                                <div key={cls.id} className={`flex items-center justify-between py-1.5 px-2 rounded-lg text-sm ${
+                                  isCompleted ? 'bg-green-50' : isPast ? 'bg-amber-50' : 'bg-gray-50'
+                                }`}>
+                                  <div className="flex items-center gap-2 flex-1">
+                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0 ${
+                                      isCompleted 
+                                        ? 'bg-green-500 text-white' 
+                                        : isPast
+                                          ? 'bg-amber-400 text-white'
+                                          : 'bg-gray-200 text-gray-600'
+                                    }`}>
+                                      {isCompleted ? <Check className="w-3.5 h-3.5" /> : idx + 1}
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className={`text-sm ${isCompleted ? 'text-green-700 line-through' : isPast ? 'text-amber-700' : 'text-gray-700'}`}>
+                                        {dayNames[lessonDate.getDay()]}, {lessonDate.toLocaleDateString('pt-PT')} às {lessonDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                                      </span>
+                                      {isCompleted && completionForClass && (
+                                        <span className="text-xs text-green-500">
+                                          Completada em {new Date(completionForClass.completed_at).toLocaleDateString('pt-PT')}
+                                        </span>
+                                      )}
+                                      {isPast && <span className="text-xs text-amber-500">Aula passada - não marcada</span>}
+                                    </div>
+                                  </div>
+                                  {!isCompleted && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setRescheduleClass(cls);
+                                        const d = new Date(cls.scheduled_at);
+                                        setRescheduleDate(d.toISOString().split('T')[0]);
+                                        setRescheduleTime(d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }));
+                                        setShowRescheduleModal(true);
+                                      }}
+                                      className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition flex-shrink-0"
+                                      title="Reagendar aula"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            );
+          })()}
+        </div>
+        );
+      })()}
+
+      {/* Pack Purchase Form Modal */}
+      {showPackForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+              <h2 className="text-lg font-semibold text-gray-900">Novo Pack de Aulas</h2>
+              <button onClick={() => { setShowPackForm(false); setSelectedPack(null); setStudentName(''); setStudentEmail(''); setStudentPhone(''); setSelectedPlayer(null); setPackPlayerSearch(''); setSelectedPackType(''); setPackCoachId(''); setPackCourtId(''); setPackStartDate(''); setPackStartTime('09:00'); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!effectiveUserId || !selectedPackType) return;
+              
+              const packType = classTypes.find(t => t.id === selectedPackType);
+              if (!packType) {
+                alert('Tipo de pack não encontrado');
+                return;
+              }
+
+              if (!studentName.trim()) {
+                alert('Nome do aluno é obrigatório');
+                return;
+              }
+
+              setSaving(true);
+
+              // Create pack purchase
+              const { data: newPack, error: packError } = await supabase.from('pack_purchases').insert({
+                club_owner_id: effectiveUserId,
+                class_type_id: packType.id,
+                student_name: studentName.trim(),
+                student_phone: studentPhone || null,
+                student_email: studentEmail || null,
+                organizer_player_id: selectedPlayer?.id || null,
+                pack_size: packType.pack_size || 5,
+                price_paid: packType.price_per_class * (packType.pack_size || 5)
+              }).select().single();
+
+              if (packError) {
+                alert('Erro ao criar pack: ' + packError.message);
+                setSaving(false);
+                return;
+              }
+
+              // If start date is set, create scheduled classes for each lesson
+              if (packStartDate && newPack) {
+                const packSize = packType.pack_size || 5;
+                const [hours, minutes] = packStartTime.split(':').map(Number);
+                const classesToCreate = [];
+
+                for (let i = 0; i < packSize; i++) {
+                  const lessonDate = new Date(packStartDate);
+                  lessonDate.setDate(lessonDate.getDate() + i * 7);
+                  lessonDate.setHours(hours, minutes, 0, 0);
+
+                  const insertData: any = {
+                    club_owner_id: effectiveUserId,
+                    coach_id: packCoachId || null,
+                    class_type_id: packType.id,
+                    court_id: packCourtId || null,
+                    scheduled_at: lessonDate.toISOString(),
+                    pack_purchase_id: newPack.id,
+                    notes: `Pack - ${studentName.trim()} - Aula ${i + 1}/${packSize}`
+                  };
+                  classesToCreate.push(insertData);
+                }
+
+                const { data: createdClasses, error: classError } = await supabase
+                  .from('club_classes')
+                  .insert(classesToCreate)
+                  .select();
+
+                if (!classError && createdClasses) {
+                  // Create enrollments for each class
+                  const enrollmentsToCreate = createdClasses.map(cls => ({
+                    class_id: cls.id,
+                    student_name: studentName.trim(),
+                    organizer_player_id: selectedPlayer?.id || null,
+                    status: 'enrolled'
+                  }));
+                  await supabase.from('class_enrollments').insert(enrollmentsToCreate);
+
+                  // Create court bookings if court selected
+                  if (packCourtId) {
+                    const coach = coaches.find(c => c.id === packCoachId);
+                    const durationMinutes = packType.duration_minutes || 60;
+                    const bookingsToCreate = createdClasses.map((cls, i) => {
+                      const startTime = new Date(cls.scheduled_at);
+                      const endTime = new Date(startTime);
+                      endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+                      return {
+                        user_id: effectiveUserId,
+                        court_id: packCourtId,
+                        start_time: startTime.toISOString(),
+                        end_time: endTime.toISOString(),
+                        booked_by_name: coach?.name || `Pack ${studentName.trim()}`,
+                        booked_by_phone: coach?.phone || null,
+                        price: 0,
+                        payment_status: 'paid',
+                        event_type: 'training',
+                        notes: `Pack ${packType.name} - ${studentName.trim()} - Aula ${i + 1}/${packSize}`
+                      };
+                    });
+                    await supabase.from('court_bookings').insert(bookingsToCreate);
+                  }
+                }
+              }
+
+              setShowPackForm(false);
+              setStudentName('');
+              setStudentEmail('');
+              setStudentPhone('');
+              setSelectedPlayer(null);
+              setSelectedPackType('');
+              setPackCoachId('');
+              setPackCourtId('');
+              setPackStartDate('');
+              setPackStartTime('09:00');
+              setPackPlayerSearch('');
+              setSaving(false);
+              loadPackPurchases();
+              loadData();
+            }} className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Pack *</label>
+                <select
+                  value={selectedPackType}
+                  onChange={(e) => setSelectedPackType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="">Selecione um tipo de pack</option>
+                  {classTypes.filter(t => t.class_category === 'pack').map(type => (
+                    <option key={type.id} value={type.id}>
+                      {type.name} - {type.pack_size} aulas - {(type.price_per_class * (type.pack_size || 5)).toFixed(2)} EUR
+                    </option>
+                  ))}
+                </select>
+                {classTypes.filter(t => t.class_category === 'pack').length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1">Primeiro crie um tipo de pack de aulas na tab Tipos</p>
+                )}
+              </div>
+
+              {/* Player search */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Aluno *</label>
+                {selectedPlayer ? (
+                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2">
+                      <UserCheck className="w-5 h-5 text-emerald-600" />
+                      <div>
+                        <div className="text-sm font-medium text-emerald-800">{selectedPlayer.name}</div>
+                        {selectedPlayer.phone_number && <div className="text-xs text-emerald-600">{selectedPlayer.phone_number}</div>}
+                        {selectedPlayer.email && <div className="text-xs text-emerald-600">{selectedPlayer.email}</div>}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => { setSelectedPlayer(null); setStudentName(''); setStudentPhone(''); setStudentEmail(''); setPackPlayerSearch(''); }} className="p-1 text-emerald-600 hover:bg-emerald-100 rounded">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={packPlayerSearch}
+                      onChange={(e) => { setPackPlayerSearch(e.target.value); setShowPackPlayerDropdown(e.target.value.length > 0); }}
+                      onFocus={() => setShowPackPlayerDropdown(packPlayerSearch.length > 0)}
+                      onBlur={() => setTimeout(() => setShowPackPlayerDropdown(false), 200)}
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Buscar aluno por nome, email ou telefone..."
+                    />
+                    {showPackPlayerDropdown && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {filteredPackPlayers.slice(0, 8).map(player => (
+                          <button
+                            key={player.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedPlayer(player);
+                              setStudentName(player.name);
+                              setStudentPhone(player.phone_number || '');
+                              setStudentEmail(player.email || '');
+                              setPackPlayerSearch('');
+                              setShowPackPlayerDropdown(false);
+                            }}
+                            className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 border-b border-gray-100 last:border-0"
+                          >
+                            <UserCheck className="w-4 h-4 text-gray-400" />
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{player.name}</div>
+                              <div className="text-xs text-gray-500">
+                                {player.email && <span>{player.email}</span>}
+                                {player.email && player.phone_number && <span> | </span>}
+                                {player.phone_number && <span>{player.phone_number}</span>}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                        {filteredPackPlayers.length === 0 && packPlayerSearch && (
+                          <div className="px-3 py-2 text-sm text-gray-500">Nenhum jogador encontrado</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {!selectedPlayer && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Aluno *</label>
+                    <input type="text" value={studentName} onChange={(e) => setStudentName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Telefone *</label>
+                      <input type="tel" value={studentPhone} onChange={(e) => setStudentPhone(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                      <input type="email" value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="border-t border-gray-200 pt-4">
+                <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><Calendar className="w-4 h-4" /> Agendar Aulas do Pack</h3>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Treinador</label>
+                  <select value={packCoachId} onChange={(e) => setPackCoachId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Sem treinador</option>
+                    {coaches.map(coach => (<option key={coach.id} value={coach.id}>{coach.name}</option>))}
+                  </select>
+                </div>
+                <div className="mt-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Campo</label>
+                  <select value={packCourtId} onChange={(e) => setPackCourtId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="">Sem campo</option>
+                    {courts.map(court => (<option key={court.id} value={court.id}>{court.name}</option>))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Data da 1ª Aula *</label>
+                    <input type="date" value={packStartDate} onChange={(e) => setPackStartDate(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Hora *</label>
+                    <select value={packStartTime} onChange={(e) => setPackStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required>
+                      {timeSlots.map(slot => (<option key={slot} value={slot}>{slot}</option>))}
+                    </select>
+                  </div>
+                </div>
+                {selectedPackType && packStartDate && (
+                  <div className="mt-3 bg-blue-50 p-3 rounded-lg">
+                    <p className="text-xs text-blue-700 font-medium mb-2">Aulas agendadas automaticamente (1x por semana):</p>
+                    <div className="space-y-1">
+                      {Array.from({ length: classTypes.find(t => t.id === selectedPackType)?.pack_size || 5 }, (_, i) => {
+                        const d = new Date(packStartDate);
+                        d.setDate(d.getDate() + i * 7);
+                        const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                        return (
+                          <div key={i} className="flex items-center gap-2 text-xs text-blue-800">
+                            <div className="w-5 h-5 rounded-full border-2 border-blue-300 flex items-center justify-center text-blue-400 flex-shrink-0">{i + 1}</div>
+                            <span>{dayNames[d.getDay()]}, {d.toLocaleDateString('pt-PT')} às {packStartTime}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setShowPackForm(false); setSelectedPack(null); setStudentName(''); setStudentEmail(''); setStudentPhone(''); setSelectedPlayer(null); setPackPlayerSearch(''); setSelectedPackType(''); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                  {t.common.cancel}
+                </button>
+                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Check className="w-4 h-4" />
+                  {saving ? t.message.saving : 'Criar Pack e Agendar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Completion Modal */}
+      {showCompletionModal && selectedPack && (() => {
+        const completedClassIds = new Set(selectedPack.completions?.map(c => c.class_id) || []);
+        const pendingClasses = selectedPack.scheduled_classes?.filter(c => !completedClassIds.has(c.id)) || [];
+
+        return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white">
+              <h2 className="text-lg font-semibold text-gray-900">Marcar Aula como Completada</h2>
+              <button onClick={() => { setShowCompletionModal(false); setSelectedPack(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-sm text-gray-700">
+                  <strong>{selectedPack.student_name}</strong> - Pack de {selectedPack.pack_size} aulas
+                </p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Aulas completadas: {selectedPack.completions?.length || 0} / {selectedPack.pack_size}
+                </p>
+              </div>
+
+              {pendingClasses.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-gray-700">Selecione a aula a marcar:</p>
+                  {pendingClasses.map((cls, idx) => {
+                    const lessonDate = new Date(cls.scheduled_at);
+                    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                    const isPast = lessonDate < new Date();
+                    const originalIdx = selectedPack.scheduled_classes?.findIndex(c => c.id === cls.id) ?? idx;
+                    return (
+                      <button
+                        key={cls.id}
+                        type="button"
+                        onClick={async () => {
+                          const { error } = await supabase.from('lesson_completions').insert({
+                            pack_purchase_id: selectedPack.id,
+                            class_id: cls.id,
+                            completed_by: effectiveUserId
+                          });
+                          if (error) {
+                            alert('Erro ao marcar aula: ' + error.message);
+                            return;
+                          }
+                          setShowCompletionModal(false);
+                          setSelectedPack(null);
+                          loadPackPurchases();
+                        }}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition hover:border-green-400 hover:bg-green-50 ${
+                          isPast ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${isPast ? 'bg-amber-400 text-white' : 'bg-gray-200 text-gray-600'}`}>
+                            {originalIdx + 1}
+                          </div>
+                          <span className="text-sm text-gray-800">
+                            {dayNames[lessonDate.getDay()]}, {lessonDate.toLocaleDateString('pt-PT')} às {lessonDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <Check className="w-5 h-5 text-green-500" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const { error } = await supabase.from('lesson_completions').insert({
+                      pack_purchase_id: selectedPack.id,
+                      class_id: null,
+                      completed_by: effectiveUserId
+                    });
+                    if (error) {
+                      alert('Erro ao marcar aula: ' + error.message);
+                      return;
+                    }
+                    setShowCompletionModal(false);
+                    setSelectedPack(null);
+                    loadPackPurchases();
+                  }}
+                  className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2 font-medium"
+                >
+                  <Check className="w-5 h-5" />
+                  Marcar Próxima Aula como Completada
+                </button>
+              )}
+
+              <button type="button" onClick={() => { setShowCompletionModal(false); setSelectedPack(null); }} className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                {t.common.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Reschedule Lesson Modal */}
+      {showRescheduleModal && rescheduleClass && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">Reagendar Aula</h2>
+              <button onClick={() => { setShowRescheduleModal(false); setRescheduleClass(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!rescheduleClass || !rescheduleDate) return;
+
+              setSaving(true);
+
+              const [hours, minutes] = rescheduleTime.split(':').map(Number);
+              const newDate = new Date(rescheduleDate);
+              newDate.setHours(hours, minutes, 0, 0);
+
+              // Update the class date
+              const { error: classError } = await supabase
+                .from('club_classes')
+                .update({ scheduled_at: newDate.toISOString() })
+                .eq('id', rescheduleClass.id);
+
+              if (classError) {
+                alert('Erro ao reagendar aula: ' + classError.message);
+                setSaving(false);
+                return;
+              }
+
+              // Update associated court booking if exists
+              if (rescheduleClass.court_id) {
+                const oldDate = new Date(rescheduleClass.scheduled_at);
+                const oldStart = oldDate.toISOString();
+                
+                // Find and update matching booking
+                const { data: existingBooking } = await supabase
+                  .from('court_bookings')
+                  .select('id, start_time, end_time')
+                  .eq('court_id', rescheduleClass.court_id)
+                  .eq('user_id', effectiveUserId)
+                  .gte('start_time', new Date(oldDate.getTime() - 60000).toISOString())
+                  .lte('start_time', new Date(oldDate.getTime() + 60000).toISOString())
+                  .limit(1)
+                  .single();
+
+                if (existingBooking) {
+                  const oldBookingStart = new Date(existingBooking.start_time);
+                  const oldBookingEnd = new Date(existingBooking.end_time);
+                  const durationMs = oldBookingEnd.getTime() - oldBookingStart.getTime();
+                  const newEnd = new Date(newDate.getTime() + durationMs);
+
+                  await supabase
+                    .from('court_bookings')
+                    .update({
+                      start_time: newDate.toISOString(),
+                      end_time: newEnd.toISOString()
+                    })
+                    .eq('id', existingBooking.id);
+                }
+              }
+
+              setShowRescheduleModal(false);
+              setRescheduleClass(null);
+              setSaving(false);
+              loadPackPurchases();
+              loadData();
+            }} className="p-4 space-y-4">
+              <div className="bg-amber-50 p-3 rounded-lg">
+                <p className="text-sm text-gray-700">
+                  <strong>Data actual:</strong>
+                </p>
+                <p className="text-sm font-medium text-amber-800 mt-1">
+                  {(() => {
+                    const d = new Date(rescheduleClass.scheduled_at);
+                    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+                    return `${dayNames[d.getDay()]}, ${d.toLocaleDateString('pt-PT')} às ${d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}`;
+                  })()}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nova Data *</label>
+                <input
+                  type="date"
+                  value={rescheduleDate}
+                  onChange={(e) => setRescheduleDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nova Hora *</label>
+                <select
+                  value={rescheduleTime}
+                  onChange={(e) => setRescheduleTime(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  {timeSlots.map(slot => (
+                    <option key={slot} value={slot}>{slot}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-sm text-blue-700">
+                  <strong>Nova data:</strong>{' '}
+                  {rescheduleDate ? (() => {
+                    const d = new Date(rescheduleDate);
+                    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+                    return `${dayNames[d.getDay()]}, ${d.toLocaleDateString('pt-PT')} às ${rescheduleTime}`;
+                  })() : 'Selecione uma data'}
+                </p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setShowRescheduleModal(false); setRescheduleClass(null); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                  {t.common.cancel}
+                </button>
+                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Calendar className="w-4 h-4" />
+                  {saving ? t.message.saving : 'Reagendar'}
                 </button>
               </div>
             </form>
