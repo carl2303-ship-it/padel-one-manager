@@ -977,11 +977,30 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 }
               }
 
+              // Tentar encontrar player_account_id e student_id (user_id) pelo telefone
+              let playerAccountId: string | null = null;
+              let studentId: string | null = null;
+              const normalizedPhoneForPlayer = normalizePhone(participant.phone);
+              if (normalizedPhoneForPlayer) {
+                const { data: playerAccount } = await supabase
+                  .from('player_accounts')
+                  .select('id, user_id')
+                  .or(`phone_number.ilike.%${normalizedPhoneForPlayer}%,phone_number.ilike.%${participant.phone}%`)
+                  .limit(1)
+                  .maybeSingle();
+                if (playerAccount) {
+                  playerAccountId = playerAccount.id;
+                  studentId = playerAccount.user_id;
+                }
+              }
+
               enrollmentsToCreate.push({
                 class_id: cls.id,
                 student_name: participant.name,
                 organizer_player_id: organizerPlayerId,
                 member_subscription_id: memberSubscriptionId,
+                player_account_id: playerAccountId,
+                student_id: studentId,
                 status: 'enrolled'
               });
             }
@@ -1391,13 +1410,19 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       .eq('is_active', true)
       .order('purchased_at', { ascending: false });
 
+    // Filtrar apenas packs (não aulas de grupo) - verificar class_category
+    const filteredData = data?.filter(p => {
+      const ct = p.class_type as any;
+      return !ct || ct.class_category !== 'group';
+    }) || [];
+
     if (error) {
       console.error('Error loading pack purchases:', error);
       return;
     }
 
-    if (data) {
-      const packIds = data.map(p => p.id);
+    if (filteredData.length > 0) {
+      const packIds = filteredData.map(p => p.id);
       
       // Load completions
       const { data: completions } = await supabase
@@ -1415,13 +1440,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         .in('pack_purchase_id', packIds)
         .order('scheduled_at', { ascending: true });
 
-      const packsWithData = data.map(pack => ({
+      const packsWithData = filteredData.map(pack => ({
         ...pack,
         completions: completions?.filter(c => c.pack_purchase_id === pack.id) || [],
         scheduled_classes: packClasses?.filter(c => c.pack_purchase_id === pack.id) || []
       }));
 
       setPackPurchases(packsWithData as PackPurchase[]);
+    } else {
+      setPackPurchases([]);
     }
   };
 
@@ -1752,6 +1779,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             student_name: enrollment.student_name,
             organizer_player_id: enrollment.organizer_player_id,
             member_subscription_id: enrollment.member_subscription_id,
+            student_id: (enrollment as any).student_id || null,
+            player_account_id: (enrollment as any).player_account_id || null,
             status: 'enrolled'
           });
         }
@@ -3611,11 +3640,30 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   .select();
 
                 if (!classError && createdClasses) {
+                  // Tentar encontrar player_account_id pelo telefone do aluno
+                  let packPlayerAccountId: string | null = null;
+                  let packStudentId: string | null = null;
+                  if (studentPhone) {
+                    const normalizedPackPhone = normalizePhone(studentPhone);
+                    const { data: packPlayerAccount } = await supabase
+                      .from('player_accounts')
+                      .select('id, user_id')
+                      .or(`phone_number.ilike.%${normalizedPackPhone}%,phone_number.ilike.%${studentPhone}%`)
+                      .limit(1)
+                      .maybeSingle();
+                    if (packPlayerAccount) {
+                      packPlayerAccountId = packPlayerAccount.id;
+                      packStudentId = packPlayerAccount.user_id;
+                    }
+                  }
+
                   // Create enrollments for each class
                   const enrollmentsToCreate = createdClasses.map(cls => ({
                     class_id: cls.id,
                     student_name: studentName.trim(),
                     organizer_player_id: selectedPlayer?.id || null,
+                    player_account_id: packPlayerAccountId,
+                    student_id: packStudentId,
                     status: 'enrolled'
                   }));
                   await supabase.from('class_enrollments').insert(enrollmentsToCreate);
