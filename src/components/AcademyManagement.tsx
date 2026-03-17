@@ -103,6 +103,7 @@ interface ScheduledClass {
   enrollments?: ClassEnrollment[];
   group_series_id?: string | null;
   series_week_number?: number | null;
+  pack_purchase_id?: string | null;
 }
 
 interface GroupClassEnrollment {
@@ -1440,10 +1441,25 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         .in('pack_purchase_id', packIds)
         .order('scheduled_at', { ascending: true });
 
+      // Load enrollments for pack classes (para verificar pagamento)
+      const packClassIds = packClasses?.map(c => c.id) || [];
+      let packEnrollments: any[] = [];
+      if (packClassIds.length > 0) {
+        const { data: enrollmentsData } = await supabase
+          .from('class_enrollments')
+          .select('id, class_id, student_name, status, payment_status, organizer_player_id, member_subscription_id')
+          .in('class_id', packClassIds)
+          .in('status', ['enrolled', 'attended', 'no_show']);
+        packEnrollments = enrollmentsData || [];
+      }
+
       const packsWithData = filteredData.map(pack => ({
         ...pack,
         completions: completions?.filter(c => c.pack_purchase_id === pack.id) || [],
-        scheduled_classes: packClasses?.filter(c => c.pack_purchase_id === pack.id) || []
+        scheduled_classes: (packClasses?.filter(c => c.pack_purchase_id === pack.id) || []).map(cls => ({
+          ...cls,
+          enrollments: packEnrollments.filter(e => e.class_id === cls.id)
+        }))
       }));
 
       setPackPurchases(packsWithData as PackPurchase[]);
@@ -3159,6 +3175,38 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                           <span className="font-medium">{pack.price_paid.toFixed(2)} EUR</span>
                           <span className="text-xs text-gray-400">Comprado: {new Date(pack.purchased_at).toLocaleDateString('pt-PT')}</span>
                         </div>
+                        {/* Pagamento do pack - pago 1 vez */}
+                        {(() => {
+                          const firstEnrollment = pack.scheduled_classes?.[0]?.enrollments?.[0];
+                          const isPaid = firstEnrollment?.payment_status === 'paid';
+                          return (
+                            <div className="mt-1 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const newStatus = isPaid ? 'pending' : 'paid';
+                                  const allClassIds = pack.scheduled_classes?.map(c => c.id) || [];
+                                  for (const classId of allClassIds) {
+                                    await supabase
+                                      .from('class_enrollments')
+                                      .update({ payment_status: newStatus })
+                                      .eq('class_id', classId);
+                                  }
+                                  loadPackPurchases();
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1 ${
+                                  isPaid
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                }`}
+                              >
+                                <Euro className="w-3 h-3" />
+                                {isPaid ? 'Pack Pago ✓' : 'Pack Pendente'}
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {remaining > 0 && (
@@ -4085,6 +4133,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     </div>
                   )}
 
+                  {category === 'pack' && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-2.5 mb-3">
+                      <p className="text-xs text-orange-700 flex items-center gap-1.5">
+                        <Euro className="w-3.5 h-3.5" />
+                        <strong>Pagamento único</strong> — o pack é pago uma só vez antes da primeira aula
+                      </p>
+                    </div>
+                  )}
+
                   {enrollments.length === 0 ? (
                     <p className="text-sm text-gray-500 italic py-3">Nenhum aluno inscrito</p>
                   ) : (
@@ -4138,7 +4195,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                 <X className="w-3.5 h-3.5" />
                               </button>
 
-                              {/* Pago - para grupos é pagamento mensal (atualiza todas as aulas da série) */}
+                              {/* Pago - para grupos e packs é pagamento único (atualiza todas as aulas da série/pack) */}
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -4159,8 +4216,23 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                           .eq('student_name', enrollment.student_name);
                                       }
                                     }
+                                  } else if (category === 'pack' && cls.pack_purchase_id) {
+                                    // Pagamento único do pack: atualizar em todas as aulas do pack
+                                    const { data: packClasses } = await supabase
+                                      .from('club_classes')
+                                      .select('id')
+                                      .eq('pack_purchase_id', cls.pack_purchase_id);
+                                    if (packClasses) {
+                                      for (const pc of packClasses) {
+                                        await supabase
+                                          .from('class_enrollments')
+                                          .update({ payment_status: newPaymentStatus })
+                                          .eq('class_id', pc.id)
+                                          .eq('student_name', enrollment.student_name);
+                                      }
+                                    }
                                   } else {
-                                    // Pagamento individual por aula
+                                    // Pagamento individual por aula (pontuais)
                                     await supabase.from('class_enrollments').update({ payment_status: newPaymentStatus }).eq('id', enrollment.id);
                                   }
                                   
@@ -4171,7 +4243,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                     ? 'bg-emerald-600 text-white'
                                     : 'bg-gray-100 text-gray-600 hover:bg-emerald-100 hover:text-emerald-700'
                                 }`}
-                                title={enrollment.payment_status === 'paid' ? 'Pago' : (category === 'group' ? 'Marcar pago (mensal)' : 'Marcar pago')}
+                                title={enrollment.payment_status === 'paid' ? 'Pago' : (category === 'group' ? 'Marcar pago (mensal)' : category === 'pack' ? 'Marcar pago (pack)' : 'Marcar pago')}
                               >
                                 <Euro className="w-3.5 h-3.5" />
                                 {enrollment.payment_status === 'paid' ? '✓' : ''}
@@ -4290,6 +4362,20 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                   .eq('class_id', sc.id);
                               }
                             }
+                          } else if (category === 'pack' && cls.pack_purchase_id) {
+                            // Pagamento único do pack: atualizar todas as aulas do pack
+                            const { data: packClasses } = await supabase
+                              .from('club_classes')
+                              .select('id')
+                              .eq('pack_purchase_id', cls.pack_purchase_id);
+                            if (packClasses) {
+                              for (const pc of packClasses) {
+                                await supabase
+                                  .from('class_enrollments')
+                                  .update({ payment_status: 'paid' })
+                                  .eq('class_id', pc.id);
+                              }
+                            }
                           } else {
                             const toUpdate = enrollments.filter(e => e.payment_status !== 'paid');
                             for (const e of toUpdate) {
@@ -4301,7 +4387,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                         className="flex-1 px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition text-xs font-medium flex items-center justify-center gap-1.5"
                       >
                         <Euro className="w-3.5 h-3.5" />
-                        {category === 'group' ? 'Mensal Pago' : 'Todos Pagos'}
+                        {category === 'group' ? 'Mensal Pago' : category === 'pack' ? 'Pack Pago' : 'Todos Pagos'}
                       </button>
                     </div>
                   )}
