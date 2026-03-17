@@ -4898,12 +4898,35 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                         }
                       }
 
+                      // Se é aula de pack ou grupo, criar lesson_completion automaticamente
+                      if (cls.status !== 'completed') {
+                        const packId = cls.pack_purchase_id;
+                        if (packId) {
+                          // Verificar se já existe lesson_completion para esta aula
+                          const { data: existingCompletion } = await supabase
+                            .from('lesson_completions')
+                            .select('id')
+                            .eq('class_id', cls.id)
+                            .eq('pack_purchase_id', packId)
+                            .maybeSingle();
+                          
+                          if (!existingCompletion) {
+                            await supabase.from('lesson_completions').insert({
+                              pack_purchase_id: packId,
+                              class_id: cls.id,
+                              completed_by: effectiveUserId
+                            });
+                          }
+                        }
+                      }
+
                       setShowClassDetailModal(false);
                       setSelectedClassDetail(null);
                       loadWeekClasses();
                       loadData();
-                      if (activeTab === 'group-classes') loadGroupClassSeries();
-                      if (activeTab === 'packs') loadPackPurchases();
+                      // Sempre recarregar packs e grupos para refletir as mudanças
+                      loadGroupClassSeries();
+                      loadPackPurchases();
                     }}
                     className={`w-full px-4 py-3 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm ${
                       isFinalized
