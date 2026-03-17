@@ -95,6 +95,16 @@ interface ScheduledClass {
   series_week_number?: number | null;
 }
 
+interface GroupClassEnrollment {
+  id: string;
+  class_id: string;
+  student_name: string | null;
+  status: string; // 'enrolled' | 'attended' | 'cancelled' | 'no_show'
+  payment_status: string; // 'pending' | 'paid'
+  organizer_player_id?: string | null;
+  member_subscription_id?: string | null;
+}
+
 interface PackClass {
   id: string;
   scheduled_at: string;
@@ -103,6 +113,7 @@ interface PackClass {
   coach_id: string | null;
   court_id: string | null;
   pack_purchase_id: string;
+  enrollments?: GroupClassEnrollment[];
 }
 
 interface PackPurchase {
@@ -141,8 +152,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'classes' | 'types' | 'packs'>('classes');
+  const [activeTab, setActiveTab] = useState<'classes' | 'types' | 'packs' | 'group-classes'>('classes');
   const [packPurchases, setPackPurchases] = useState<PackPurchase[]>([]);
+  const [groupClassSeries, setGroupClassSeries] = useState<PackPurchase[]>([]);
   const [showPackForm, setShowPackForm] = useState(false);
   const [selectedPack, setSelectedPack] = useState<PackPurchase | null>(null);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
@@ -209,6 +221,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     member_name: string;
     member_phone: string;
     plan: { name: string; court_discount_percent: number } | null;
+    organizer_player_id?: string | null;
+    member_subscription_id?: string | null;
   }>>>(new Map());
 
   const [focusedGroupInput, setFocusedGroupInput] = useState<number | null>(null);
@@ -236,11 +250,21 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('09:00');
 
+  // Group class creation from group-classes tab
+  const [showGroupClassForm, setShowGroupClassForm] = useState(false);
+
+  // Group class lesson detail modal
+  const [selectedGroupLesson, setSelectedGroupLesson] = useState<PackClass | null>(null);
+  const [selectedGroupSeries, setSelectedGroupSeries] = useState<PackPurchase | null>(null);
+  const [showGroupLessonModal, setShowGroupLessonModal] = useState(false);
+
   useEffect(() => {
     if (user) {
       loadData();
       if (activeTab === 'packs') {
         loadPackPurchases();
+      } else if (activeTab === 'group-classes') {
+        loadGroupClassSeries();
       }
     }
   }, [user, activeTab]);
@@ -456,6 +480,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       member_name: string;
       member_phone: string;
       plan: { name: string; court_discount_percent: number } | null;
+      organizer_player_id?: string | null;
+      member_subscription_id?: string | null;
     }> = [];
 
     // Buscar membros
@@ -482,9 +508,42 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         allResults.push({
           member_name: item.member_name,
           member_phone: item.member_phone,
-          plan: item.plan
+          plan: item.plan,
+          member_subscription_id: item.id
         });
       });
+    }
+
+    // Buscar organizer_players
+    {
+      let orgPlayerQuery = supabase
+        .from('organizer_players')
+        .select('id, name, phone_number')
+        .eq('organizer_id', effectiveUserId);
+
+      if (normalizedPhone && normalizedPhone.length >= 6) {
+        orgPlayerQuery = orgPlayerQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+      } else if (name && name.length >= 2) {
+        orgPlayerQuery = orgPlayerQuery.ilike('name', `%${name}%`);
+      }
+
+      const { data: orgPlayersData } = await orgPlayerQuery.limit(10).order('name');
+      if (orgPlayersData) {
+        orgPlayersData.forEach((item: any) => {
+          const exists = allResults.some(r => 
+            r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+            r.member_phone === (item.phone_number || '')
+          );
+          if (!exists && item.name) {
+            allResults.push({
+              member_name: item.name,
+              member_phone: item.phone_number || '',
+              plan: null,
+              organizer_player_id: item.id
+            });
+          }
+        });
+      }
     }
 
     // Buscar jogadores de torneios
@@ -628,18 +687,20 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     member_name: string;
     member_phone: string;
     plan: { name: string; court_discount_percent: number } | null;
+    organizer_player_id?: string | null;
+    member_subscription_id?: string | null;
   }) => {
     const newParticipants = [...groupClassParticipants];
     const isMember = result.plan !== null;
     newParticipants[playerIndex] = {
       name: result.member_name,
       phone: result.member_phone,
-      email: '', // Será preenchido se necessário
+      email: '',
       isMember: isMember,
       discount: result.plan?.court_discount_percent || 0,
       planName: result.plan?.name || '',
-      organizer_player_id: null,
-      member_subscription_id: null
+      organizer_player_id: result.organizer_player_id || null,
+      member_subscription_id: result.member_subscription_id || null
     };
     setGroupClassParticipants(newParticipants);
     setGroupClassSearchResults(prev => {
@@ -736,10 +797,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       if (isGroupClass) {
         // Validar participantes
         const requiredParticipants = classType?.group_size || 2;
-        const validParticipants = groupClassParticipants.filter(p => p.name.trim() && p.phone.trim() && p.email.trim());
+        const validParticipants = groupClassParticipants.filter(p => p.name.trim() && p.phone.trim());
         
         if (validParticipants.length < requiredParticipants) {
-          alert(`É necessário adicionar pelo menos ${requiredParticipants} participantes com nome, telefone e email.`);
+          alert(`É necessário adicionar pelo menos ${requiredParticipants} participantes com nome e telefone.`);
           setSaving(false);
           return;
         }
@@ -794,6 +855,48 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           return;
         }
 
+        // Criar pack_purchase para a série de aulas de grupo
+        const firstParticipant = validParticipants[0];
+        const groupName = validParticipants.length > 1 
+          ? `${firstParticipant.name} e ${validParticipants.length - 1} outros`
+          : firstParticipant.name;
+        
+        const { data: newPack, error: packError } = await supabase
+          .from('pack_purchases')
+          .insert({
+            club_owner_id: effectiveUserId,
+            class_type_id: classForm.class_type_id,
+            student_name: groupName,
+            student_phone: firstParticipant.phone,
+            student_email: firstParticipant.email?.trim() || null,
+            organizer_player_id: null,
+            member_subscription_id: null,
+            pack_size: 4, // 4 semanas
+            price_paid: 0,
+            is_active: true
+          })
+          .select()
+          .single();
+
+        if (packError) {
+          console.error('[AcademyManagement] Error creating pack for group classes:', packError);
+          alert('Erro ao criar pack de aulas de grupo: ' + packError.message);
+          // Eliminar as aulas criadas
+          const classIds = createdClasses.map(c => c.id);
+          await supabase.from('club_classes').delete().in('id', classIds);
+          setSaving(false);
+          return;
+        }
+
+        // Associar as aulas ao pack_purchase
+        if (newPack && createdClasses) {
+          const classIds = createdClasses.map(c => c.id);
+          await supabase
+            .from('club_classes')
+            .update({ pack_purchase_id: newPack.id })
+            .in('id', classIds);
+        }
+
         // Criar participantes para todas as aulas
         if (createdClasses && createdClasses.length > 0) {
           const enrollmentsToCreate = [];
@@ -840,7 +943,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                         organizer_id: effectiveUserId,
                         name: participant.name,
                         phone_number: participant.phone,
-                        email: participant.email
+                        email: participant.email?.trim() || null
                       })
                       .select()
                       .single();
@@ -863,7 +966,13 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           }
 
           if (enrollmentsToCreate.length > 0) {
-            await supabase.from('class_enrollments').insert(enrollmentsToCreate);
+            const { error: enrollError } = await supabase.from('class_enrollments').insert(enrollmentsToCreate);
+            if (enrollError) {
+              console.error('[AcademyManagement] Error creating enrollments:', enrollError);
+              console.error('[AcademyManagement] Enrollments data:', JSON.stringify(enrollmentsToCreate));
+            } else {
+              console.log(`[AcademyManagement] Successfully created ${enrollmentsToCreate.length} enrollments`);
+            }
           }
         }
 
@@ -894,6 +1003,12 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
         setGroupClassParticipants([]);
         setGroupClassSearchResults(new Map());
+        
+        // Recarregar dados
+        loadData();
+        if (activeTab === 'group-classes') {
+          loadGroupClassSeries();
+        }
       } else {
         // Aula pontual normal
         const insertData: any = {
@@ -1266,10 +1381,20 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   };
 
   const handleDeletePack = async (packId: string) => {
-    if (!confirm('Tem a certeza que deseja eliminar este pack? As aulas associadas serão mantidas mas desvinculadas do pack.')) return;
+    if (!confirm('Tem a certeza que deseja eliminar este pack? Todas as aulas associadas serão também eliminadas.')) return;
 
-    // Delete pack purchase (lesson_completions will be deleted automatically via CASCADE)
-    // club_classes will have pack_purchase_id set to NULL automatically
+    // Primeiro, eliminar todas as aulas associadas ao pack
+    const { error: classesError } = await supabase
+      .from('club_classes')
+      .delete()
+      .eq('pack_purchase_id', packId);
+
+    if (classesError) {
+      alert('Erro ao eliminar aulas do pack: ' + classesError.message);
+      return;
+    }
+
+    // Depois, eliminar o pack purchase (lesson_completions will be deleted automatically via CASCADE)
     const { error } = await supabase
       .from('pack_purchases')
       .delete()
@@ -1281,7 +1406,92 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
 
     loadPackPurchases();
+    if (activeTab === 'group-classes') {
+      loadGroupClassSeries();
+    }
     loadData(); // Reload classes to update the list
+  };
+
+  const loadGroupClassSeries = async () => {
+    if (!effectiveUserId) return;
+
+    // Buscar pack_purchases associados a tipos de aula de grupo
+    // Primeiro buscar tipos de aula de grupo
+    const { data: groupTypes } = await supabase
+      .from('class_types')
+      .select('id')
+      .eq('club_owner_id', effectiveUserId)
+      .eq('class_category', 'group');
+
+    if (!groupTypes || groupTypes.length === 0) {
+      setGroupClassSeries([]);
+      return;
+    }
+
+    const groupTypeIds = groupTypes.map(t => t.id);
+
+    // Buscar pack_purchases para esses tipos
+    const { data, error } = await supabase
+      .from('pack_purchases')
+      .select(`
+        *,
+        class_type:class_types(*)
+      `)
+      .eq('club_owner_id', effectiveUserId)
+      .eq('is_active', true)
+      .in('class_type_id', groupTypeIds)
+      .order('purchased_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading group class series:', error);
+      setGroupClassSeries([]);
+      return;
+    }
+
+    if (data && data.length > 0) {
+      const packIds = data.map(p => p.id);
+
+      // Load completions
+      const { data: completions } = await supabase
+        .from('lesson_completions')
+        .select(`
+          *,
+          class:club_classes(*)
+        `)
+        .in('pack_purchase_id', packIds);
+
+      // Load scheduled classes for packs (usando group_series_id)
+      const { data: packClasses } = await supabase
+        .from('club_classes')
+        .select('id, scheduled_at, status, notes, coach_id, court_id, pack_purchase_id, group_series_id, series_week_number')
+        .in('pack_purchase_id', packIds)
+        .order('scheduled_at', { ascending: true });
+
+      // Load enrollments for all group classes
+      let allEnrollments: any[] = [];
+      if (packClasses && packClasses.length > 0) {
+        const classIds = packClasses.map(c => c.id);
+        const { data: enrollmentsData } = await supabase
+          .from('class_enrollments')
+          .select('id, class_id, student_name, status, payment_status, organizer_player_id, member_subscription_id')
+          .in('class_id', classIds)
+          .in('status', ['enrolled', 'attended', 'no_show']);
+        allEnrollments = enrollmentsData || [];
+      }
+
+      const packsWithData = data.map(pack => ({
+        ...pack,
+        completions: completions?.filter(c => c.pack_purchase_id === pack.id) || [],
+        scheduled_classes: (packClasses?.filter(c => c.pack_purchase_id === pack.id) || []).map(cls => ({
+          ...cls,
+          enrollments: allEnrollments.filter(e => e.class_id === cls.id)
+        }))
+      }));
+
+      setGroupClassSeries(packsWithData as PackPurchase[]);
+    } else {
+      setGroupClassSeries([]);
+    }
   };
 
   const resetTypeForm = () => {
@@ -1500,7 +1710,19 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             >
               Packs
             </button>
+            <button
+              onClick={() => {
+                setActiveTab('group-classes');
+                loadGroupClassSeries();
+              }}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                activeTab === 'group-classes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+              }`}
+            >
+              Aulas de Grupo
+            </button>
           </div>
+          {activeTab !== 'packs' && activeTab !== 'group-classes' && (
           <button
             onClick={() => {
               if (activeTab === 'classes') {
@@ -1518,6 +1740,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             <Plus className="w-4 h-4" />
             {activeTab === 'classes' ? t.academy.scheduleClass : t.academy.addClassType}
           </button>
+          )}
         </div>
       </div>
 
@@ -2099,7 +2322,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     <div className="space-y-3 pt-2 border-t border-gray-200">
                       <div className="flex items-center justify-between">
                         <label className="block text-sm font-medium text-gray-700">Participantes ({requiredParticipants} obrigatórios) *</label>
-                        <span className="text-xs text-gray-500">Telefone e Email obrigatórios</span>
+                        <span className="text-xs text-gray-500">Telefone obrigatório</span>
                       </div>
                       {groupClassParticipants.slice(0, requiredParticipants).map((participant, idx) => (
                         <div key={idx} className={`p-3 rounded-lg border ${participant.isMember ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
@@ -2188,8 +2411,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                     setGroupClassParticipants(newParticipants);
                                   }}
                                   className="w-full pl-2 pr-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                  placeholder="Email"
-                                  required
+                                  placeholder="Email (opcional)"
                                 />
                               </div>
                             </div>
@@ -2616,6 +2838,274 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         );
       })()}
 
+      {/* Group Classes Tab */}
+      {activeTab === 'group-classes' && (() => {
+        const activeSeries = groupClassSeries.filter(p => {
+          const done = p.completions?.length || 0;
+          return done < p.pack_size;
+        });
+        const finishedSeries = groupClassSeries.filter(p => {
+          const done = p.completions?.length || 0;
+          return done >= p.pack_size;
+        });
+
+        return (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold text-gray-900">Aulas de Grupo</h2>
+            <button
+              onClick={() => {
+                resetClassForm();
+                setEditingClass(null);
+                // Pré-selecionar tipo de aula de grupo
+                const groupType = classTypes.find(t => t.class_category === 'group');
+                if (groupType) {
+                  setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
+                }
+                setShowGroupClassForm(true);
+                setShowClassForm(true);
+              }}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Criar Aula de Grupo
+            </button>
+          </div>
+
+          {/* Sub-tabs: Ativas / Terminadas */}
+          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setPackSubTab('active')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
+                packSubTab === 'active' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Ativas ({activeSeries.length})
+            </button>
+            <button
+              onClick={() => setPackSubTab('finished')}
+              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
+                packSubTab === 'finished' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Terminadas ({finishedSeries.length})
+            </button>
+          </div>
+
+          {(() => {
+            const displaySeries = packSubTab === 'active' ? activeSeries : finishedSeries;
+            if (displaySeries.length === 0) {
+              return (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+                  <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    {packSubTab === 'active' ? 'Nenhuma série ativa' : 'Nenhuma série terminada'}
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    {packSubTab === 'active' ? 'Crie uma nova série de aulas de grupo' : 'As séries completadas aparecerão aqui'}
+                  </p>
+                </div>
+              );
+            }
+            return (
+            <div className="grid gap-4">
+              {displaySeries.map(series => {
+                const completedCount = series.completions?.length || 0;
+                const remaining = series.pack_size - completedCount;
+                const progress = (completedCount / series.pack_size) * 100;
+                // Obter alunos únicos de todas as aulas
+                const allEnrollments = series.scheduled_classes?.flatMap(cls => cls.enrollments || []) || [];
+                const uniqueStudents = new Map<string, GroupClassEnrollment>();
+                allEnrollments.forEach(e => {
+                  if (e.student_name && !uniqueStudents.has(e.student_name)) {
+                    uniqueStudents.set(e.student_name, e);
+                  }
+                });
+                
+                return (
+                  <div key={series.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold text-gray-900">{series.student_name}</h3>
+                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                            {series.class_type?.name || 'Aula de Grupo'}
+                          </span>
+                          {remaining === 0 && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Completo</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+                          <span className="text-xs text-gray-400">Criado: {new Date(series.purchased_at).toLocaleDateString('pt-PT')}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {remaining > 0 && (
+                          <button
+                            onClick={() => {
+                              setSelectedPack(series);
+                              setShowCompletionModal(true);
+                            }}
+                            className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center gap-1.5"
+                          >
+                            <Check className="w-4 h-4" />
+                            Marcar Aula
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeletePack(series.id)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                          title="Eliminar série"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Jogadores do grupo */}
+                    {uniqueStudents.size > 0 && (
+                      <div className="mt-2 mb-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Users className="w-3.5 h-3.5 text-purple-500" />
+                          <span className="text-xs font-medium text-gray-600">Jogadores ({uniqueStudents.size})</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {Array.from(uniqueStudents.values()).map(student => (
+                            <span key={student.id} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium">
+                              <User className="w-3 h-3" />
+                              {student.student_name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Progress bar */}
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>Progresso: {completedCount}/{series.pack_size} aulas</span>
+                        <span className={remaining === 0 ? 'text-green-600 font-medium' : ''}>{remaining === 0 ? 'Série Completa!' : `${remaining} restantes`}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${remaining === 0 ? 'bg-green-500' : 'bg-purple-500'}`}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Aulas da série */}
+                    {series.scheduled_classes && series.scheduled_classes.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <details className="group" open>
+                          <summary className="flex items-center justify-between cursor-pointer select-none py-1 hover:bg-gray-50 rounded-lg px-2 transition">
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <Calendar className="w-4 h-4 text-gray-400" />
+                              <span className="font-medium">Aulas da Série</span>
+                              <div className="flex gap-1 ml-1">
+                                {Array.from({ length: series.pack_size }, (_, i) => (
+                                  <div key={i} className={`w-2 h-2 rounded-full ${i < completedCount ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                ))}
+                              </div>
+                            </div>
+                            <ChevronDown className="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" />
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {series.scheduled_classes.map((cls, idx) => {
+                              const completionForClass = series.completions?.find(c => c.class_id === cls.id);
+                              const isCompleted = !!completionForClass;
+                              const lessonDate = new Date(cls.scheduled_at);
+                              const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                              const isPast = lessonDate < new Date() && !isCompleted;
+                              const enrollments = cls.enrollments || [];
+                              const attendedCount = enrollments.filter(e => e.status === 'attended').length;
+                              const paidCount = enrollments.filter(e => e.payment_status === 'paid').length;
+                              
+                              return (
+                                <div key={cls.id} className={`rounded-lg border ${
+                                  isCompleted ? 'bg-green-50 border-green-200' : isPast ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
+                                }`}>
+                                  <div 
+                                    className="flex items-center justify-between py-2 px-3 cursor-pointer hover:bg-black/5 rounded-t-lg transition"
+                                    onClick={() => {
+                                      setSelectedGroupLesson(cls);
+                                      setSelectedGroupSeries(series);
+                                      setShowGroupLessonModal(true);
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-2 flex-1">
+                                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0 ${
+                                        isCompleted 
+                                          ? 'bg-green-500 text-white' 
+                                          : isPast
+                                            ? 'bg-amber-400 text-white'
+                                            : 'bg-gray-200 text-gray-600'
+                                      }`}>
+                                        {isCompleted ? <Check className="w-3.5 h-3.5" /> : idx + 1}
+                                      </div>
+                                      <div className="flex flex-col flex-1">
+                                        <span className={`text-sm ${isCompleted ? 'text-green-700' : isPast ? 'text-amber-700' : 'text-gray-700'}`}>
+                                          {dayNames[lessonDate.getDay()]}, {lessonDate.toLocaleDateString('pt-PT')} às {lessonDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                        {isCompleted && completionForClass && (
+                                          <span className="text-xs text-green-500">
+                                            Completada em {new Date(completionForClass.completed_at).toLocaleDateString('pt-PT')}
+                                          </span>
+                                        )}
+                                        {isPast && !isCompleted && <span className="text-xs text-amber-500">Aula passada - não marcada</span>}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {enrollments.length > 0 && (
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <span className={`flex items-center gap-0.5 ${attendedCount === enrollments.length ? 'text-green-600' : 'text-gray-500'}`}>
+                                            <UserCheck className="w-3 h-3" />
+                                            {attendedCount}/{enrollments.length}
+                                          </span>
+                                          <span className={`flex items-center gap-0.5 ${paidCount === enrollments.length ? 'text-green-600' : 'text-gray-500'}`}>
+                                            €{paidCount}/{enrollments.length}
+                                          </span>
+                                        </div>
+                                      )}
+                                      <Edit2 className="w-3.5 h-3.5 text-blue-500" />
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Mini lista de alunos em cada aula */}
+                                  {enrollments.length > 0 && (
+                                    <div className="px-3 pb-2 flex flex-wrap gap-1">
+                                      {enrollments.map(enrollment => (
+                                        <span key={enrollment.id} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${
+                                          enrollment.status === 'attended' 
+                                            ? 'bg-green-100 text-green-700' 
+                                            : enrollment.status === 'no_show'
+                                              ? 'bg-red-100 text-red-700'
+                                              : 'bg-gray-100 text-gray-600'
+                                        }`}>
+                                          {enrollment.status === 'attended' ? <Check className="w-2.5 h-2.5" /> : enrollment.status === 'no_show' ? <X className="w-2.5 h-2.5" /> : <User className="w-2.5 h-2.5" />}
+                                          {enrollment.student_name}
+                                          {enrollment.payment_status === 'paid' && <span className="text-green-600 font-bold">€</span>}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            );
+          })()}
+        </div>
+        );
+      })()}
+
       {/* Pack Purchase Form Modal */}
       {showPackForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -2955,6 +3445,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                           setShowCompletionModal(false);
                           setSelectedPack(null);
                           loadPackPurchases();
+                          if (activeTab === 'group-classes') {
+                            loadGroupClassSeries();
+                          }
                         }}
                         className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition hover:border-green-400 hover:bg-green-50 ${
                           isPast ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'
@@ -2989,6 +3482,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     setShowCompletionModal(false);
                     setSelectedPack(null);
                     loadPackPurchases();
+                    if (activeTab === 'group-classes') {
+                      loadGroupClassSeries();
+                    }
                   }}
                   className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2 font-medium"
                 >
@@ -3134,6 +3630,313 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           </div>
         </div>
       )}
+
+      {/* Group Lesson Detail Modal */}
+      {showGroupLessonModal && selectedGroupLesson && selectedGroupSeries && (() => {
+        const lessonDate = new Date(selectedGroupLesson.scheduled_at);
+        const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+        const enrollments = selectedGroupLesson.enrollments || [];
+        const completionForClass = selectedGroupSeries.completions?.find(c => c.class_id === selectedGroupLesson.id);
+        const isCompleted = !!completionForClass;
+        
+        return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Detalhe da Aula</h2>
+                <p className="text-sm text-gray-500">
+                  {dayNames[lessonDate.getDay()]}, {lessonDate.toLocaleDateString('pt-PT')} às {lessonDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+              <button onClick={() => { setShowGroupLessonModal(false); setSelectedGroupLesson(null); setSelectedGroupSeries(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Info do grupo */}
+              <div className="bg-purple-50 p-3 rounded-lg">
+                <p className="text-sm font-medium text-purple-800">{selectedGroupSeries.class_type?.name || 'Aula de Grupo'}</p>
+                <p className="text-xs text-purple-600 mt-0.5">{selectedGroupSeries.student_name}</p>
+                {isCompleted && (
+                  <span className="inline-flex items-center gap-1 mt-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                    <Check className="w-3 h-3" /> Aula Completada
+                  </span>
+                )}
+              </div>
+
+              {/* Lista de alunos */}
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-purple-500" />
+                  Alunos ({enrollments.length})
+                </h3>
+                
+                {enrollments.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">Nenhum aluno inscrito nesta aula</p>
+                ) : (
+                  <div className="space-y-2">
+                    {enrollments.map(enrollment => (
+                      <div key={enrollment.id} className={`p-3 rounded-lg border ${
+                        enrollment.status === 'attended' ? 'bg-green-50 border-green-200' :
+                        enrollment.status === 'no_show' ? 'bg-red-50 border-red-200' :
+                        'bg-gray-50 border-gray-200'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-1">
+                            <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <span className="text-sm font-medium text-gray-900">{enrollment.student_name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {/* Presença */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const newStatus = enrollment.status === 'attended' ? 'enrolled' : 'attended';
+                                const { error } = await supabase
+                                  .from('class_enrollments')
+                                  .update({ status: newStatus })
+                                  .eq('id', enrollment.id);
+                                if (error) {
+                                  alert('Erro ao atualizar presença: ' + error.message);
+                                  return;
+                                }
+                                // Atualizar localmente
+                                const updatedEnrollments = enrollments.map(e => 
+                                  e.id === enrollment.id ? { ...e, status: newStatus } : e
+                                );
+                                setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                                loadGroupClassSeries();
+                              }}
+                              className={`p-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                enrollment.status === 'attended'
+                                  ? 'bg-green-600 text-white hover:bg-green-700'
+                                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              }`}
+                              title={enrollment.status === 'attended' ? 'Presente' : 'Marcar presente'}
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                              {enrollment.status === 'attended' ? 'Presente' : 'Presença'}
+                            </button>
+                            
+                            {/* Faltou */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const newStatus = enrollment.status === 'no_show' ? 'enrolled' : 'no_show';
+                                const { error } = await supabase
+                                  .from('class_enrollments')
+                                  .update({ status: newStatus })
+                                  .eq('id', enrollment.id);
+                                if (error) {
+                                  alert('Erro ao atualizar: ' + error.message);
+                                  return;
+                                }
+                                const updatedEnrollments = enrollments.map(e => 
+                                  e.id === enrollment.id ? { ...e, status: newStatus } : e
+                                );
+                                setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                                loadGroupClassSeries();
+                              }}
+                              className={`p-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                enrollment.status === 'no_show'
+                                  ? 'bg-red-600 text-white hover:bg-red-700'
+                                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              }`}
+                              title={enrollment.status === 'no_show' ? 'Faltou' : 'Marcar falta'}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Faltou
+                            </button>
+
+                            {/* Pagamento */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const newPaymentStatus = enrollment.payment_status === 'paid' ? 'pending' : 'paid';
+                                const { error } = await supabase
+                                  .from('class_enrollments')
+                                  .update({ payment_status: newPaymentStatus })
+                                  .eq('id', enrollment.id);
+                                if (error) {
+                                  alert('Erro ao atualizar pagamento: ' + error.message);
+                                  return;
+                                }
+                                const updatedEnrollments = enrollments.map(e => 
+                                  e.id === enrollment.id ? { ...e, payment_status: newPaymentStatus } : e
+                                );
+                                setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                                loadGroupClassSeries();
+                              }}
+                              className={`p-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                enrollment.payment_status === 'paid'
+                                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                              }`}
+                              title={enrollment.payment_status === 'paid' ? 'Pago' : 'Marcar como pago'}
+                            >
+                              <span className="text-xs font-bold">€</span>
+                              {enrollment.payment_status === 'paid' ? 'Pago' : 'Pagar'}
+                            </button>
+
+                            {/* Remover aluno */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!confirm(`Remover ${enrollment.student_name} desta aula?`)) return;
+                                const { error } = await supabase
+                                  .from('class_enrollments')
+                                  .delete()
+                                  .eq('id', enrollment.id);
+                                if (error) {
+                                  alert('Erro ao remover aluno: ' + error.message);
+                                  return;
+                                }
+                                const updatedEnrollments = enrollments.filter(e => e.id !== enrollment.id);
+                                setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                                loadGroupClassSeries();
+                              }}
+                              className="p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition"
+                              title="Remover aluno"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Adicionar aluno substituto */}
+              <div className="border-t border-gray-200 pt-4">
+                <h3 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-blue-500" />
+                  Adicionar / Substituir Aluno
+                </h3>
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  const form = e.target as HTMLFormElement;
+                  const nameInput = form.elements.namedItem('newStudentName') as HTMLInputElement;
+                  const newName = nameInput?.value?.trim();
+                  if (!newName) {
+                    alert('Nome do aluno é obrigatório');
+                    return;
+                  }
+                  
+                  const { data: newEnrollment, error } = await supabase
+                    .from('class_enrollments')
+                    .insert({
+                      class_id: selectedGroupLesson.id,
+                      student_name: newName,
+                      status: 'enrolled',
+                      payment_status: 'pending'
+                    })
+                    .select()
+                    .single();
+
+                  if (error) {
+                    alert('Erro ao adicionar aluno: ' + error.message);
+                    return;
+                  }
+
+                  if (newEnrollment) {
+                    const updatedEnrollments = [...enrollments, newEnrollment as GroupClassEnrollment];
+                    setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                    nameInput.value = '';
+                    loadGroupClassSeries();
+                  }
+                }} className="flex gap-2">
+                  <input
+                    type="text"
+                    name="newStudentName"
+                    placeholder="Nome do aluno"
+                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition flex items-center gap-1.5 text-sm font-medium"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Adicionar
+                  </button>
+                </form>
+              </div>
+
+              {/* Ações rápidas */}
+              <div className="border-t border-gray-200 pt-4 flex gap-2">
+                {!isCompleted && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        // Marcar todos como presentes
+                        for (const enrollment of enrollments) {
+                          if (enrollment.status !== 'attended') {
+                            await supabase
+                              .from('class_enrollments')
+                              .update({ status: 'attended' })
+                              .eq('id', enrollment.id);
+                          }
+                        }
+                        const updatedEnrollments = enrollments.map(e => ({ ...e, status: 'attended' }));
+                        setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                        loadGroupClassSeries();
+                      }}
+                      className="flex-1 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition text-sm font-medium flex items-center justify-center gap-1.5"
+                    >
+                      <UserCheck className="w-4 h-4" />
+                      Todos Presentes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        // Marcar todos como pagos
+                        for (const enrollment of enrollments) {
+                          if (enrollment.payment_status !== 'paid') {
+                            await supabase
+                              .from('class_enrollments')
+                              .update({ payment_status: 'paid' })
+                              .eq('id', enrollment.id);
+                          }
+                        }
+                        const updatedEnrollments = enrollments.map(e => ({ ...e, payment_status: 'paid' }));
+                        setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
+                        loadGroupClassSeries();
+                      }}
+                      className="flex-1 px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition text-sm font-medium flex items-center justify-center gap-1.5"
+                    >
+                      <span className="font-bold">€</span>
+                      Todos Pagos
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRescheduleClass(selectedGroupLesson);
+                    const d = new Date(selectedGroupLesson.scheduled_at);
+                    setRescheduleDate(d.toISOString().split('T')[0]);
+                    setRescheduleTime(d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }));
+                    setShowGroupLessonModal(false);
+                    setShowRescheduleModal(true);
+                  }}
+                  className="flex-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition text-sm font-medium flex items-center justify-center gap-1.5"
+                >
+                  <Calendar className="w-4 h-4" />
+                  Reagendar
+                </button>
+              </div>
+
+              <button type="button" onClick={() => { setShowGroupLessonModal(false); setSelectedGroupLesson(null); setSelectedGroupSeries(null); }} className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
     </div>
   );
 }
