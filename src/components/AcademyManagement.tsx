@@ -31,7 +31,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Euro,
-  RotateCcw
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 
 interface Court {
@@ -163,7 +164,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'planning' | 'classes' | 'types' | 'packs' | 'group-classes'>('planning');
+  const [activeTab, setActiveTab] = useState<'planning' | 'classes' | 'types' | 'packs' | 'group-classes' | 'history'>('planning');
   const [packPurchases, setPackPurchases] = useState<PackPurchase[]>([]);
   const [groupClassSeries, setGroupClassSeries] = useState<PackPurchase[]>([]);
   const [showPackForm, setShowPackForm] = useState(false);
@@ -252,6 +253,21 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [classSearchTerm, setClassSearchTerm] = useState('');
   const [classFilterType, setClassFilterType] = useState('');
   const [classFilterDate, setClassFilterDate] = useState('');
+  const [classFilterPayment, setClassFilterPayment] = useState<'' | 'paid' | 'pending'>('');
+
+  // Planning filters
+  const [planningFilterType, setPlanningFilterType] = useState('');
+  const [planningFilterStudent, setPlanningFilterStudent] = useState('');
+  const [planningFilterPayment, setPlanningFilterPayment] = useState<'' | 'paid' | 'pending'>('');
+  const [planningFilterCategory, setPlanningFilterCategory] = useState<'' | 'single' | 'group' | 'pack'>('');
+
+  // History tab
+  const [historyClasses, setHistoryClasses] = useState<ScheduledClass[]>([]);
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
+  const [historyFilterType, setHistoryFilterType] = useState('');
+  const [historyFilterCategory, setHistoryFilterCategory] = useState<'' | 'single' | 'group' | 'pack'>('');
+  const [historyFilterPayment, setHistoryFilterPayment] = useState<'' | 'paid' | 'pending'>('');
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [packSubTab, setPackSubTab] = useState<'active' | 'finished'>('active');
 
@@ -288,6 +304,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         loadPackPurchases();
       } else if (activeTab === 'group-classes') {
         loadGroupClassSeries();
+      } else if (activeTab === 'history') {
+        loadHistoryClasses();
       }
     }
   }, [user, activeTab, weekOffset]);
@@ -1668,6 +1686,57 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
   };
 
+  // Load history classes (past/completed)
+  const loadHistoryClasses = async () => {
+    if (!effectiveUserId) return;
+    setHistoryLoading(true);
+
+    const { data: historyData, error } = await supabase
+      .from('club_classes')
+      .select(`
+        *,
+        class_type:class_types(*),
+        court:club_courts(id, name, type)
+      `)
+      .eq('club_owner_id', effectiveUserId)
+      .lt('scheduled_at', new Date().toISOString())
+      .order('scheduled_at', { ascending: false })
+      .limit(200);
+
+    if (error) {
+      console.error('Error loading history classes:', error);
+      setHistoryClasses([]);
+      setHistoryLoading(false);
+      return;
+    }
+
+    if (historyData && historyData.length > 0) {
+      const classIds = historyData.map((c: any) => c.id);
+      
+      const { data: enrollmentsData } = await supabase
+        .from('class_enrollments')
+        .select('id, class_id, student_name, status, payment_status, member_subscription_id, organizer_player_id')
+        .in('class_id', classIds)
+        .in('status', ['enrolled', 'attended', 'no_show']);
+
+      const classesWithDetails = historyData.map((cls: any) => {
+        const coach = coaches.find(c => c.id === cls.coach_id);
+        return {
+          ...cls,
+          coach_name: coach?.name || (cls.coach_id ? 'Treinador' : 'Sem treinador'),
+          coach_avatar: null,
+          coach_email: coach?.email || null,
+          enrollments: (enrollmentsData || []).filter(e => e.class_id === cls.id)
+        };
+      });
+
+      setHistoryClasses(classesWithDetails);
+    } else {
+      setHistoryClasses([]);
+    }
+    setHistoryLoading(false);
+  };
+
   // Open class detail modal (universal for all class types)
   const openClassDetail = async (cls: ScheduledClass) => {
     setSelectedClassDetail(cls);
@@ -1871,7 +1940,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     <div className="p-6 lg:p-8 space-y-6">
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
           {/* Botão criar - contexto do tab activo */}
           {activeTab === 'planning' && (
             <button
@@ -1901,8 +1970,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             </button>
           )}
           {activeTab === 'group-classes' && (
-            <button
-              onClick={() => {
+          <button
+            onClick={() => {
                 resetClassForm();
                 setEditingClass(null);
                 const groupType = classTypes.find(t => t.class_category === 'group');
@@ -1913,10 +1982,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 setShowClassForm(true);
               }}
               className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
+          >
+            <Plus className="w-4 h-4" />
               Criar Aula de Grupo
-            </button>
+          </button>
           )}
         </div>
 
@@ -1959,6 +2028,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             Packs
           </button>
           <button
+            onClick={() => { setActiveTab('history'); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'history' ? 'bg-white shadow-sm text-green-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            Terminadas
+          </button>
+          <button
             onClick={() => setActiveTab('types')}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
               activeTab === 'types' ? 'bg-white shadow-sm text-gray-700' : 'text-gray-600 hover:text-gray-900'
@@ -1986,22 +2064,53 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        // Filtrar aulas da semana com os filtros activos
+        const filteredWeekClasses = weekClasses.filter(cls => {
+          // Filtro por aluno
+          if (planningFilterStudent) {
+            const term = planningFilterStudent.toLowerCase();
+            const hasStudent = cls.enrollments?.some(e => e.student_name?.toLowerCase().includes(term));
+            const matchesCoach = cls.coach_name?.toLowerCase().includes(term);
+            const matchesType = cls.class_type?.name?.toLowerCase().includes(term);
+            if (!hasStudent && !matchesCoach && !matchesType) return false;
+          }
+          // Filtro por categoria
+          if (planningFilterCategory) {
+            const cat = cls.class_type?.class_category || 'single';
+            if (cat !== planningFilterCategory) return false;
+          }
+          // Filtro por tipo
+          if (planningFilterType) {
+            if (cls.class_type?.id !== planningFilterType) return false;
+          }
+          // Filtro por pagamento
+          if (planningFilterPayment) {
+            const enrollments = cls.enrollments || [];
+            if (enrollments.length === 0) return false;
+            const allPaid = enrollments.every(e => (e as any).payment_status === 'paid');
+            const anyPaid = enrollments.some(e => (e as any).payment_status === 'paid');
+            if (planningFilterPayment === 'paid' && !allPaid) return false;
+            if (planningFilterPayment === 'pending' && allPaid) return false;
+          }
+          return true;
+        });
+
         // Agrupar aulas por dia
         const days: { date: Date; dayName: string; classes: ScheduledClass[] }[] = [];
         for (let i = 0; i < 7; i++) {
           const dayDate = new Date(monday);
           dayDate.setDate(monday.getDate() + i);
           const dayStr = dayDate.toISOString().split('T')[0];
-          const dayClasses = weekClasses.filter(cls => {
+          const dayClasses = filteredWeekClasses.filter(cls => {
             const clsDate = new Date(cls.scheduled_at).toISOString().split('T')[0];
             return clsDate === dayStr;
           });
           days.push({ date: dayDate, dayName: dayNames[i], classes: dayClasses });
         }
 
-        const totalClasses = weekClasses.length;
-        const totalStudents = weekClasses.reduce((acc, cls) => acc + (cls.enrollments?.length || 0), 0);
-        const pastNotFinalized = weekClasses.filter(cls => {
+        const totalClasses = filteredWeekClasses.length;
+        const totalStudents = filteredWeekClasses.reduce((acc, cls) => acc + (cls.enrollments?.length || 0), 0);
+        const pastNotFinalized = filteredWeekClasses.filter(cls => {
           const d = new Date(cls.scheduled_at);
           return d < new Date() && cls.status !== 'completed';
         }).length;
@@ -2060,6 +2169,60 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     <div className="text-2xl font-bold text-amber-600">{pastNotFinalized}</div>
                     <div className="text-xs text-gray-500">Por Finalizar</div>
                   </div>
+                )}
+              </div>
+            </div>
+
+            {/* Filtros do Planning */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="flex-1 min-w-[160px] relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={planningFilterStudent}
+                    onChange={(e) => setPlanningFilterStudent(e.target.value)}
+                    placeholder="Procurar aluno..."
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <select
+                  value={planningFilterCategory}
+                  onChange={(e) => setPlanningFilterCategory(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Todas Categorias</option>
+                  <option value="single">Pontuais</option>
+                  <option value="group">Grupo</option>
+                  <option value="pack">Pack</option>
+                </select>
+                <select
+                  value={planningFilterType}
+                  onChange={(e) => setPlanningFilterType(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Todos Tipos</option>
+                  {classTypes.map(ct => (
+                    <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={planningFilterPayment}
+                  onChange={(e) => setPlanningFilterPayment(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Pagamento</option>
+                  <option value="paid">Pagos</option>
+                  <option value="pending">Não Pagos</option>
+                </select>
+                {(planningFilterStudent || planningFilterCategory || planningFilterType || planningFilterPayment) && (
+                  <button
+                    onClick={() => { setPlanningFilterStudent(''); setPlanningFilterCategory(''); setPlanningFilterType(''); setPlanningFilterPayment(''); }}
+                    className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
+                  >
+                    <X className="w-4 h-4" />
+                    Limpar
+                  </button>
                 )}
               </div>
             </div>
@@ -2219,7 +2382,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             (cls.notes && cls.notes.toLowerCase().includes(classSearchTerm.toLowerCase()));
           const matchesType = !classFilterType || cls.class_type?.id === classFilterType;
           const matchesDate = !classFilterDate || (cls.scheduled_at && cls.scheduled_at.startsWith(classFilterDate));
-          return matchesSearch && matchesType && matchesDate;
+          let matchesPayment = true;
+          if (classFilterPayment) {
+            const enrollments = cls.enrollments || [];
+            if (enrollments.length === 0) matchesPayment = false;
+            else {
+              const allPaid = enrollments.every(e => (e as any).payment_status === 'paid');
+              if (classFilterPayment === 'paid' && !allPaid) matchesPayment = false;
+              if (classFilterPayment === 'pending' && allPaid) matchesPayment = false;
+            }
+          }
+          return matchesSearch && matchesType && matchesDate && matchesPayment;
         });
 
         return (
@@ -2253,9 +2426,18 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 onChange={(e) => setClassFilterDate(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
-              {(classSearchTerm || classFilterType || classFilterDate) && (
+              <select
+                value={classFilterPayment}
+                onChange={(e) => setClassFilterPayment(e.target.value as any)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Pagamento</option>
+                <option value="paid">Pagos</option>
+                <option value="pending">Não Pagos</option>
+              </select>
+              {(classSearchTerm || classFilterType || classFilterDate || classFilterPayment) && (
                 <button
-                  onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); }}
+                  onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
                   className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
@@ -2432,6 +2614,267 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         }
         </>
       );
+      })()}
+
+      {/* ==================== HISTORY TAB ==================== */}
+      {activeTab === 'history' && (() => {
+        // Aplicar filtros
+        const filteredHistory = historyClasses.filter(cls => {
+          if (historySearchTerm) {
+            const term = historySearchTerm.toLowerCase();
+            const matchesStudent = cls.enrollments?.some(e => e.student_name?.toLowerCase().includes(term));
+            const matchesCoach = cls.coach_name?.toLowerCase().includes(term);
+            const matchesType = cls.class_type?.name?.toLowerCase().includes(term);
+            const matchesNotes = cls.notes?.toLowerCase().includes(term);
+            if (!matchesStudent && !matchesCoach && !matchesType && !matchesNotes) return false;
+          }
+          if (historyFilterType && cls.class_type?.id !== historyFilterType) return false;
+          if (historyFilterCategory) {
+            const cat = cls.class_type?.class_category || 'single';
+            if (cat !== historyFilterCategory) return false;
+          }
+          if (historyFilterPayment) {
+            const enrollments = cls.enrollments || [];
+            if (enrollments.length === 0) return false;
+            const allPaid = enrollments.every(e => (e as any).payment_status === 'paid');
+            if (historyFilterPayment === 'paid' && !allPaid) return false;
+            if (historyFilterPayment === 'pending' && allPaid) return false;
+          }
+          return true;
+        });
+
+        // Stats
+        const totalHistory = filteredHistory.length;
+        const completedHistory = filteredHistory.filter(c => c.status === 'completed').length;
+        const notFinalizedHistory = filteredHistory.filter(c => c.status !== 'completed').length;
+        const totalStudentsHistory = filteredHistory.reduce((acc, cls) => acc + (cls.enrollments?.length || 0), 0);
+
+        // Agrupar por mês
+        const monthGroups = new Map<string, ScheduledClass[]>();
+        filteredHistory.forEach(cls => {
+          const d = new Date(cls.scheduled_at);
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          if (!monthGroups.has(monthKey)) monthGroups.set(monthKey, []);
+          monthGroups.get(monthKey)!.push(cls);
+        });
+
+        const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+        return (
+          <div className="space-y-4">
+            {/* Header */}
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-gray-900">Histórico de Aulas</h2>
+              <button
+                onClick={() => loadHistoryClasses()}
+                className="px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Atualizar
+              </button>
+            </div>
+
+            {/* Filtros */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="flex-1 min-w-[160px] relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={historySearchTerm}
+                    onChange={(e) => setHistorySearchTerm(e.target.value)}
+                    placeholder="Procurar aluno, treinador..."
+                    className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <select
+                  value={historyFilterCategory}
+                  onChange={(e) => setHistoryFilterCategory(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Todas Categorias</option>
+                  <option value="single">Pontuais</option>
+                  <option value="group">Grupo</option>
+                  <option value="pack">Pack</option>
+                </select>
+                <select
+                  value={historyFilterType}
+                  onChange={(e) => setHistoryFilterType(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Todos Tipos</option>
+                  {classTypes.map(ct => (
+                    <option key={ct.id} value={ct.id}>{ct.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={historyFilterPayment}
+                  onChange={(e) => setHistoryFilterPayment(e.target.value as any)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Pagamento</option>
+                  <option value="paid">Pagos</option>
+                  <option value="pending">Não Pagos</option>
+                </select>
+                {(historySearchTerm || historyFilterCategory || historyFilterType || historyFilterPayment) && (
+                  <button
+                    onClick={() => { setHistorySearchTerm(''); setHistoryFilterCategory(''); setHistoryFilterType(''); setHistoryFilterPayment(''); }}
+                    className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
+                  >
+                    <X className="w-4 h-4" />
+                    Limpar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+              <div className="flex gap-4">
+                <div className="flex-1 text-center">
+                  <div className="text-2xl font-bold text-gray-800">{totalHistory}</div>
+                  <div className="text-xs text-gray-500">Total Aulas</div>
+                </div>
+                <div className="flex-1 text-center">
+                  <div className="text-2xl font-bold text-green-600">{completedHistory}</div>
+                  <div className="text-xs text-gray-500">Finalizadas</div>
+                </div>
+                {notFinalizedHistory > 0 && (
+                  <div className="flex-1 text-center">
+                    <div className="text-2xl font-bold text-amber-600">{notFinalizedHistory}</div>
+                    <div className="text-xs text-gray-500">Não Finalizadas</div>
+                  </div>
+                )}
+                <div className="flex-1 text-center">
+                  <div className="text-2xl font-bold text-purple-600">{totalStudentsHistory}</div>
+                  <div className="text-xs text-gray-500">Inscrições</div>
+                </div>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-gray-500">A carregar histórico...</div>
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+                <Clock className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">Sem aulas no histórico</h3>
+                <p className="text-sm text-gray-500">As aulas passadas aparecerão aqui</p>
+              </div>
+            ) : (
+              // Agrupar por mês
+              Array.from(monthGroups.entries()).map(([monthKey, monthClasses]) => {
+                const [year, month] = monthKey.split('-').map(Number);
+                const monthLabel = `${monthNames[month - 1]} ${year}`;
+                
+                return (
+                  <div key={monthKey}>
+                    <div className="flex items-center gap-3 mb-3">
+                      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">{monthLabel}</h3>
+                      <span className="text-xs text-gray-400">{monthClasses.length} aula{monthClasses.length > 1 ? 's' : ''}</span>
+                      <div className="flex-1 h-px bg-gray-200" />
+                    </div>
+                    <div className="space-y-2 mb-6">
+                      {monthClasses.map(cls => {
+                        const classTime = new Date(cls.scheduled_at);
+                        const timeStr = classTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+                        const dateStr = classTime.toLocaleDateString('pt-PT', { weekday: 'short', day: 'numeric', month: 'short' });
+                        const category = cls.class_type?.class_category || 'single';
+                        const enrollments = cls.enrollments || [];
+                        const enrollmentCount = enrollments.length;
+                        const attendedCount = enrollments.filter(e => e.status === 'attended').length;
+                        const paidCount = enrollments.filter((e: any) => e.payment_status === 'paid').length;
+                        const isFinalized = cls.status === 'completed';
+
+                        const categoryColors: Record<string, { badge: string }> = {
+                          single: { badge: 'bg-blue-100 text-blue-700' },
+                          group: { badge: 'bg-purple-100 text-purple-700' },
+                          pack: { badge: 'bg-orange-100 text-orange-700' },
+                        };
+                        const colors = categoryColors[category] || categoryColors.single;
+                        const categoryLabels: Record<string, string> = { single: 'Pontual', group: 'Grupo', pack: 'Pack' };
+
+                        return (
+                          <div
+                            key={cls.id}
+                            onClick={() => openClassDetail(cls)}
+                            className={`bg-white rounded-xl border shadow-sm p-3 cursor-pointer hover:shadow-md transition ${
+                              isFinalized ? 'border-green-200' : 'border-amber-200'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                                  isFinalized ? 'bg-green-100' : 'bg-amber-100'
+                                }`}>
+                                  {isFinalized ? (
+                                    <Check className="w-5 h-5 text-green-600" />
+                                  ) : (
+                                    <Clock className="w-5 h-5 text-amber-600" />
+                                  )}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-sm text-gray-900">{cls.class_type?.name || 'Aula'}</span>
+                                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${colors.badge}`}>
+                                      {categoryLabels[category]}
+                                    </span>
+                                    {isFinalized && (
+                                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">OK</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                                    <span>{dateStr} • {timeStr}</span>
+                                    {cls.coach_name && <span>• {cls.coach_name}</span>}
+                                    {cls.court?.name && <span>• {cls.court.name}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {enrollmentCount > 0 && (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="flex items-center gap-0.5 text-xs font-medium text-gray-600">
+                                      <Users className="w-3 h-3" />
+                                      {attendedCount}/{enrollmentCount}
+                                    </span>
+                                    <span className={`flex items-center gap-0.5 text-xs font-medium px-1.5 py-0.5 rounded ${
+                                      paidCount === enrollmentCount ? 'bg-emerald-100 text-emerald-700' : paidCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      <Euro className="w-3 h-3" />
+                                      {paidCount}/{enrollmentCount}
+                                    </span>
+                                  </div>
+                                )}
+                                <ChevronRight className="w-4 h-4 text-gray-400" />
+                              </div>
+                            </div>
+                            {/* Alunos */}
+                            {enrollmentCount > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-2 pl-13">
+                                {enrollments.slice(0, 6).map((e, idx) => (
+                                  <span key={idx} className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                    e.status === 'attended' ? 'bg-green-100 text-green-700' : e.status === 'no_show' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {e.student_name}
+                                    {(e as any).payment_status === 'paid' && <span className="ml-0.5 text-emerald-600 font-bold">€</span>}
+                                  </span>
+                                ))}
+                                {enrollmentCount > 6 && (
+                                  <span className="text-[10px] text-gray-400">+{enrollmentCount - 6}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        );
       })()}
 
       {activeTab === 'types' && (
@@ -4484,9 +4927,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     Fechar sem alterar
                   </button>
                 </div>
-              </div>
             </div>
           </div>
+        </div>
         );
       })()}
 
@@ -4638,7 +5081,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 <p className="text-sm text-gray-500">
                   {dayNames[lessonDate.getDay()]}, {lessonDate.toLocaleDateString('pt-PT')} às {lessonDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
                 </p>
-              </div>
+    </div>
               <button onClick={() => { setShowGroupLessonModal(false); setSelectedGroupLesson(null); setSelectedGroupSeries(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
