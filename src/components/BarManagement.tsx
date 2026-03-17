@@ -535,6 +535,27 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     await loadData();
   };
 
+  const handleDeleteEmptyOpenTabs = async () => {
+    // Contas abertas sem itens
+    const openTabs = barTabs.filter(t => t.status === 'open');
+    const emptyTabs = openTabs.filter(t => {
+      const items = tabItems[t.id] || [];
+      return items.length === 0 && t.total === 0;
+    });
+
+    if (emptyTabs.length === 0) {
+      alert('Não existem contas abertas sem despesas.');
+      return;
+    }
+
+    if (!confirm(`Eliminar ${emptyTabs.length} conta${emptyTabs.length > 1 ? 's' : ''} aberta${emptyTabs.length > 1 ? 's' : ''} sem despesas?`)) return;
+
+    for (const tab of emptyTabs) {
+      await supabase.from('bar_tabs').delete().eq('id', tab.id);
+    }
+    await loadData();
+  };
+
   const handleCloseTab = async (tabId: string) => {
     if (!confirm(t.bar.confirmCloseTab)) return;
     await supabase
@@ -1209,7 +1230,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       {activeTab === 'tabs' && (
         <div className="space-y-4">
           {/* Filter buttons */}
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {(['open', 'closed', 'all'] as const).map(filter => (
               <button
                 key={filter}
@@ -1226,6 +1247,17 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                 )}
               </button>
             ))}
+
+            {/* Botão limpar contas vazias */}
+            {tabFilter === 'open' && openTabsCount > 0 && (
+              <button
+                onClick={handleDeleteEmptyOpenTabs}
+                className="ml-auto px-3 py-1.5 rounded-lg text-sm font-medium transition bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Limpar contas vazias
+              </button>
+            )}
           </div>
 
           {filteredTabs.length === 0 ? (
