@@ -1133,8 +1133,31 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
   const handleDeleteClass = async (id: string) => {
     if (!confirm(t.message.confirmDelete)) return;
+    
+    // Buscar dados da aula para eliminar a reserva de campo associada
+    const { data: classData } = await supabase
+      .from('club_classes')
+      .select('scheduled_at, court_id')
+      .eq('id', id)
+      .single();
+    
+    // Eliminar a aula
     await supabase.from('club_classes').delete().eq('id', id);
+    
+    // Eliminar reserva de campo associada
+    if (classData?.court_id && classData?.scheduled_at) {
+      const classDate = new Date(classData.scheduled_at);
+      await supabase
+        .from('court_bookings')
+        .delete()
+        .eq('court_id', classData.court_id)
+        .eq('user_id', effectiveUserId)
+        .gte('start_time', new Date(classDate.getTime() - 60000).toISOString())
+        .lte('start_time', new Date(classDate.getTime() + 60000).toISOString());
+    }
+    
     loadData();
+    loadWeekClasses();
   };
 
   const handleAddStudent = async (e: React.FormEvent) => {
@@ -1403,9 +1426,31 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   };
 
   const handleDeletePack = async (packId: string) => {
-    if (!confirm('Tem a certeza que deseja eliminar este pack? Todas as aulas associadas serão também eliminadas.')) return;
+    if (!confirm('Tem a certeza que deseja eliminar este pack? Todas as aulas e reservas de campo associadas serão também eliminadas.')) return;
 
-    // Primeiro, eliminar todas as aulas associadas ao pack
+    // Buscar aulas do pack para eliminar reservas de campo
+    const { data: packClasses } = await supabase
+      .from('club_classes')
+      .select('id, scheduled_at, court_id')
+      .eq('pack_purchase_id', packId);
+
+    // Eliminar reservas de campo associadas
+    if (packClasses && packClasses.length > 0) {
+      for (const cls of packClasses) {
+        if (cls.court_id && cls.scheduled_at) {
+          const classDate = new Date(cls.scheduled_at);
+          await supabase
+            .from('court_bookings')
+            .delete()
+            .eq('court_id', cls.court_id)
+            .eq('user_id', effectiveUserId)
+            .gte('start_time', new Date(classDate.getTime() - 60000).toISOString())
+            .lte('start_time', new Date(classDate.getTime() + 60000).toISOString());
+        }
+      }
+    }
+
+    // Eliminar todas as aulas associadas ao pack
     const { error: classesError } = await supabase
       .from('club_classes')
       .delete()
@@ -1416,7 +1461,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       return;
     }
 
-    // Depois, eliminar o pack purchase (lesson_completions will be deleted automatically via CASCADE)
+    // Eliminar o pack purchase (lesson_completions will be deleted automatically via CASCADE)
     const { error } = await supabase
       .from('pack_purchases')
       .delete()
@@ -1431,7 +1476,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     if (activeTab === 'group-classes') {
       loadGroupClassSeries();
     }
-    loadData(); // Reload classes to update the list
+    loadWeekClasses();
+    loadData();
   };
 
   const loadGroupClassSeries = async () => {
@@ -2115,7 +2161,12 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       })()}
 
       {activeTab === 'classes' && (() => {
-        const filteredClasses = classes.filter(cls => {
+        // Filtrar apenas aulas pontuais (excluir grupo e pack)
+        const singleClasses = classes.filter(cls => {
+          const category = cls.class_type?.class_category;
+          return !category || category === 'single';
+        });
+        const filteredClasses = singleClasses.filter(cls => {
           const matchesSearch = !classSearchTerm || 
             (cls.class_type?.name && cls.class_type.name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
             (cls.coach_name && cls.coach_name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
@@ -3254,14 +3305,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 const completedCount = series.completions?.length || 0;
                 const remaining = series.pack_size - completedCount;
                 const progress = (completedCount / series.pack_size) * 100;
-                // Obter alunos únicos de todas as aulas
-                const allEnrollments = series.scheduled_classes?.flatMap(cls => cls.enrollments || []) || [];
+                // Obter alunos únicos de todas as aulas - para grupo, pegar do primeiro scheduled class
+                const firstClassEnrollments = series.scheduled_classes?.[0]?.enrollments || [];
                 const uniqueStudents = new Map<string, GroupClassEnrollment>();
-                allEnrollments.forEach(e => {
+                firstClassEnrollments.forEach(e => {
                   if (e.student_name && !uniqueStudents.has(e.student_name)) {
                     uniqueStudents.set(e.student_name, e);
                   }
                 });
+                // Contar pagamentos na série (um pagamento por aluno, verificar no primeiro class)
+                const paidStudents = firstClassEnrollments.filter(e => e.payment_status === 'paid').length;
+                const totalStudentsInGroup = uniqueStudents.size;
                 
                 return (
                   <div key={series.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
@@ -3278,6 +3332,14 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                         </div>
                         <div className="text-sm text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
                           <span className="text-xs text-gray-400">Criado: {new Date(series.purchased_at).toLocaleDateString('pt-PT')}</span>
+                          {totalStudentsInGroup > 0 && (
+                            <span className={`text-xs font-medium flex items-center gap-1 ${
+                              paidStudents === totalStudentsInGroup ? 'text-emerald-600' : 'text-amber-600'
+                            }`}>
+                              <Euro className="w-3 h-3" />
+                              Mensalidade: {paidStudents}/{totalStudentsInGroup} pagos
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
@@ -3303,19 +3365,47 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                       </div>
                     </div>
 
-                    {/* Jogadores do grupo */}
+                    {/* Jogadores do grupo com pagamento mensal */}
                     {uniqueStudents.size > 0 && (
                       <div className="mt-2 mb-3">
                         <div className="flex items-center gap-2 mb-2">
                           <Users className="w-3.5 h-3.5 text-purple-500" />
                           <span className="text-xs font-medium text-gray-600">Jogadores ({uniqueStudents.size})</span>
+                          <span className="text-[10px] text-gray-400">• Pagamento mensal</span>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="space-y-1">
                           {Array.from(uniqueStudents.values()).map(student => (
-                            <span key={student.id} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium">
-                              <User className="w-3 h-3" />
-                              {student.student_name}
-                            </span>
+                            <div key={student.id} className="flex items-center justify-between px-2.5 py-1.5 bg-purple-50 rounded-lg">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700">
+                                <User className="w-3 h-3" />
+                                {student.student_name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const newPaymentStatus = student.payment_status === 'paid' ? 'pending' : 'paid';
+                                  // Atualizar pagamento em TODAS as aulas da série para este aluno (pagamento mensal)
+                                  const allClassIds = series.scheduled_classes?.map(c => c.id) || [];
+                                  for (const classId of allClassIds) {
+                                    await supabase
+                                      .from('class_enrollments')
+                                      .update({ payment_status: newPaymentStatus })
+                                      .eq('class_id', classId)
+                                      .eq('student_name', student.student_name);
+                                  }
+                                  loadGroupClassSeries();
+                                }}
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition flex items-center gap-1 ${
+                                  student.payment_status === 'paid'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                                }`}
+                              >
+                                <Euro className="w-3 h-3" />
+                                {student.payment_status === 'paid' ? 'Pago' : 'Pendente'}
+                              </button>
+                            </div>
                           ))}
                         </div>
                       </div>
@@ -3938,6 +4028,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     Alunos ({enrollments.length})
                   </h3>
 
+                  {category === 'group' && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5 mb-3">
+                      <p className="text-xs text-purple-700 flex items-center gap-1.5">
+                        <Euro className="w-3.5 h-3.5" />
+                        <strong>Pagamento mensal</strong> — os alunos pagam uma só vez no início do mês
+                      </p>
+                    </div>
+                  )}
+
                   {enrollments.length === 0 ? (
                     <p className="text-sm text-gray-500 italic py-3">Nenhum aluno inscrito</p>
                   ) : (
@@ -3991,12 +4090,32 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                 <X className="w-3.5 h-3.5" />
                               </button>
 
-                              {/* Pago */}
+                              {/* Pago - para grupos é pagamento mensal (atualiza todas as aulas da série) */}
                               <button
                                 type="button"
                                 onClick={async () => {
                                   const newPaymentStatus = enrollment.payment_status === 'paid' ? 'pending' : 'paid';
-                                  await supabase.from('class_enrollments').update({ payment_status: newPaymentStatus }).eq('id', enrollment.id);
+                                  
+                                  if (category === 'group' && cls.group_series_id) {
+                                    // Pagamento mensal: atualizar em todas as aulas da série
+                                    const { data: seriesClasses } = await supabase
+                                      .from('club_classes')
+                                      .select('id')
+                                      .eq('group_series_id', cls.group_series_id);
+                                    if (seriesClasses) {
+                                      for (const sc of seriesClasses) {
+                                        await supabase
+                                          .from('class_enrollments')
+                                          .update({ payment_status: newPaymentStatus })
+                                          .eq('class_id', sc.id)
+                                          .eq('student_name', enrollment.student_name);
+                                      }
+                                    }
+                                  } else {
+                                    // Pagamento individual por aula
+                                    await supabase.from('class_enrollments').update({ payment_status: newPaymentStatus }).eq('id', enrollment.id);
+                                  }
+                                  
                                   setClassDetailEnrollments(prev => prev.map(e => e.id === enrollment.id ? { ...e, payment_status: newPaymentStatus } : e));
                                 }}
                                 className={`px-2 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
@@ -4004,7 +4123,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                                     ? 'bg-emerald-600 text-white'
                                     : 'bg-gray-100 text-gray-600 hover:bg-emerald-100 hover:text-emerald-700'
                                 }`}
-                                title={enrollment.payment_status === 'paid' ? 'Pago' : 'Marcar pago'}
+                                title={enrollment.payment_status === 'paid' ? 'Pago' : (category === 'group' ? 'Marcar pago (mensal)' : 'Marcar pago')}
                               >
                                 <Euro className="w-3.5 h-3.5" />
                                 {enrollment.payment_status === 'paid' ? '✓' : ''}
@@ -4109,16 +4228,32 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                       <button
                         type="button"
                         onClick={async () => {
-                          const toUpdate = enrollments.filter(e => e.payment_status !== 'paid');
-                          for (const e of toUpdate) {
-                            await supabase.from('class_enrollments').update({ payment_status: 'paid' }).eq('id', e.id);
+                          if (category === 'group' && cls.group_series_id) {
+                            // Pagamento mensal: atualizar todas as aulas da série
+                            const { data: seriesClasses } = await supabase
+                              .from('club_classes')
+                              .select('id')
+                              .eq('group_series_id', cls.group_series_id);
+                            if (seriesClasses) {
+                              for (const sc of seriesClasses) {
+                                await supabase
+                                  .from('class_enrollments')
+                                  .update({ payment_status: 'paid' })
+                                  .eq('class_id', sc.id);
+                              }
+                            }
+                          } else {
+                            const toUpdate = enrollments.filter(e => e.payment_status !== 'paid');
+                            for (const e of toUpdate) {
+                              await supabase.from('class_enrollments').update({ payment_status: 'paid' }).eq('id', e.id);
+                            }
                           }
                           setClassDetailEnrollments(prev => prev.map(e => ({ ...e, payment_status: 'paid' })));
                         }}
                         className="flex-1 px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition text-xs font-medium flex items-center justify-center gap-1.5"
                       >
                         <Euro className="w-3.5 h-3.5" />
-                        Todos Pagos
+                        {category === 'group' ? 'Mensal Pago' : 'Todos Pagos'}
                       </button>
                     </div>
                   )}
