@@ -15,13 +15,23 @@ import {
   UserPlus,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Search,
   UserCheck,
   TrendingUp,
   Building2,
   Phone,
   User,
-  Award
+  Award,
+  CalendarDays,
+  Package,
+  Settings,
+  MapPin,
+  CheckCircle2,
+  AlertCircle,
+  Euro,
+  RotateCcw
 } from 'lucide-react';
 
 interface Court {
@@ -152,7 +162,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'classes' | 'types' | 'packs' | 'group-classes'>('classes');
+  const [activeTab, setActiveTab] = useState<'planning' | 'classes' | 'types' | 'packs' | 'group-classes'>('planning');
   const [packPurchases, setPackPurchases] = useState<PackPurchase[]>([]);
   const [groupClassSeries, setGroupClassSeries] = useState<PackPurchase[]>([]);
   const [showPackForm, setShowPackForm] = useState(false);
@@ -258,16 +268,28 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [selectedGroupSeries, setSelectedGroupSeries] = useState<PackPurchase | null>(null);
   const [showGroupLessonModal, setShowGroupLessonModal] = useState(false);
 
+  // Planning view
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [weekClasses, setWeekClasses] = useState<ScheduledClass[]>([]);
+
+  // Universal class detail / Finalizar Aula modal
+  const [showClassDetailModal, setShowClassDetailModal] = useState(false);
+  const [selectedClassDetail, setSelectedClassDetail] = useState<ScheduledClass | null>(null);
+  const [classDetailEnrollments, setClassDetailEnrollments] = useState<GroupClassEnrollment[]>([]);
+  const [classDetailNotes, setClassDetailNotes] = useState('');
+
   useEffect(() => {
     if (user) {
       loadData();
-      if (activeTab === 'packs') {
+      if (activeTab === 'planning') {
+        loadWeekClasses();
+      } else if (activeTab === 'packs') {
         loadPackPurchases();
       } else if (activeTab === 'group-classes') {
         loadGroupClassSeries();
       }
     }
-  }, [user, activeTab]);
+  }, [user, activeTab, weekOffset]);
 
   // Inicializar participantes quando tipo de grupo é selecionado
   useEffect(() => {
@@ -373,9 +395,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       if (classIds.length > 0) {
         const { data } = await supabase
           .from('class_enrollments')
-          .select('id, class_id, student_name, status, member_subscription_id, organizer_player_id')
+          .select('id, class_id, student_name, status, payment_status, member_subscription_id, organizer_player_id')
           .in('class_id', classIds)
-          .in('status', ['enrolled', 'attended']);
+          .in('status', ['enrolled', 'attended', 'no_show']);
         enrollmentsData = data || [];
       }
 
@@ -1494,6 +1516,85 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
   };
 
+  // ========== PLANNING - Load week classes ==========
+  const getWeekRange = (offset: number) => {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday + offset * 7);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return { monday, sunday };
+  };
+
+  const loadWeekClasses = async () => {
+    if (!effectiveUserId) return;
+    const { monday, sunday } = getWeekRange(weekOffset);
+
+    const { data: weekData, error } = await supabase
+      .from('club_classes')
+      .select(`
+        *,
+        class_type:class_types(*),
+        court:club_courts(id, name, type)
+      `)
+      .eq('club_owner_id', effectiveUserId)
+      .gte('scheduled_at', monday.toISOString())
+      .lte('scheduled_at', sunday.toISOString())
+      .order('scheduled_at', { ascending: true });
+
+    if (error) {
+      console.error('Error loading week classes:', error);
+      setWeekClasses([]);
+      return;
+    }
+
+    if (weekData && weekData.length > 0) {
+      const classIds = weekData.map((c: any) => c.id);
+      
+      // Load enrollments with payment_status
+      const { data: enrollmentsData } = await supabase
+        .from('class_enrollments')
+        .select('id, class_id, student_name, status, payment_status, member_subscription_id, organizer_player_id')
+        .in('class_id', classIds)
+        .in('status', ['enrolled', 'attended', 'no_show']);
+
+      const classesWithDetails = weekData.map((cls: any) => {
+        const coach = coaches.find(c => c.id === cls.coach_id);
+        return {
+          ...cls,
+          coach_name: coach?.name || (cls.coach_id ? 'Treinador' : 'Sem treinador'),
+          coach_avatar: null,
+          coach_email: coach?.email || null,
+          enrollments: (enrollmentsData || []).filter(e => e.class_id === cls.id)
+        };
+      });
+
+      setWeekClasses(classesWithDetails);
+    } else {
+      setWeekClasses([]);
+    }
+  };
+
+  // Open class detail modal (universal for all class types)
+  const openClassDetail = async (cls: ScheduledClass) => {
+    setSelectedClassDetail(cls);
+    setClassDetailNotes(cls.notes || '');
+    
+    // Load enrollments with full data
+    const { data: enrollments } = await supabase
+      .from('class_enrollments')
+      .select('id, class_id, student_name, status, payment_status, organizer_player_id, member_subscription_id')
+      .eq('class_id', cls.id)
+      .in('status', ['enrolled', 'attended', 'no_show']);
+    
+    setClassDetailEnrollments(enrollments || []);
+    setShowClassDetailModal(true);
+  };
+
   const resetTypeForm = () => {
     setTypeForm({
       name: '',
@@ -1677,70 +1778,104 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-gray-100 rounded-lg p-1">
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
+          {/* Botão criar - contexto do tab activo */}
+          {activeTab === 'planning' && (
             <button
-              onClick={() => setActiveTab('classes')}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'classes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
+              onClick={() => { resetClassForm(); setEditingClass(null); setShowClassForm(true); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
             >
-              {t.academy.classes}
+              <Plus className="w-4 h-4" />
+              Agendar Aula
             </button>
+          )}
+          {activeTab === 'classes' && (
+            <button
+              onClick={() => { resetClassForm(); setEditingClass(null); setShowClassForm(true); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              {t.academy.scheduleClass}
+            </button>
+          )}
+          {activeTab === 'types' && (
+            <button
+              onClick={() => { resetTypeForm(); setEditingType(null); setShowTypeForm(true); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              {t.academy.addClassType}
+            </button>
+          )}
+          {activeTab === 'group-classes' && (
             <button
               onClick={() => {
-                setActiveTab('types');
-              }}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'types' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              {t.academy.classTypes}
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('packs');
-                loadPackPurchases();
-              }}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'packs' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              Packs
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('group-classes');
-                loadGroupClassSeries();
-              }}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'group-classes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              Aulas de Grupo
-            </button>
-          </div>
-          {activeTab !== 'packs' && activeTab !== 'group-classes' && (
-          <button
-            onClick={() => {
-              if (activeTab === 'classes') {
                 resetClassForm();
                 setEditingClass(null);
+                const groupType = classTypes.find(t => t.class_category === 'group');
+                if (groupType) {
+                  setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
+                }
+                setShowGroupClassForm(true);
                 setShowClassForm(true);
-              } else {
-                resetTypeForm();
-                setEditingType(null);
-                setShowTypeForm(true);
-              }
-            }}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            {activeTab === 'classes' ? t.academy.scheduleClass : t.academy.addClassType}
-          </button>
+              }}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Criar Aula de Grupo
+            </button>
           )}
+        </div>
+
+        {/* Tab Bar - Design limpo com ícones */}
+        <div className="flex overflow-x-auto bg-gray-100 rounded-xl p-1 gap-0.5">
+          <button
+            onClick={() => setActiveTab('planning')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'planning' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <CalendarDays className="w-4 h-4" />
+            Planning
+          </button>
+          <button
+            onClick={() => setActiveTab('classes')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'classes' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <GraduationCap className="w-4 h-4" />
+            Pontuais
+          </button>
+          <button
+            onClick={() => { setActiveTab('group-classes'); loadGroupClassSeries(); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'group-classes' ? 'bg-white shadow-sm text-purple-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            Grupos
+          </button>
+          <button
+            onClick={() => { setActiveTab('packs'); loadPackPurchases(); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'packs' ? 'bg-white shadow-sm text-orange-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Package className="w-4 h-4" />
+            Packs
+          </button>
+          <button
+            onClick={() => setActiveTab('types')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'types' ? 'bg-white shadow-sm text-gray-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            Tipos
+          </button>
         </div>
       </div>
 
@@ -1751,6 +1886,233 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           </p>
         </div>
       )}
+
+      {/* ==================== PLANNING TAB ==================== */}
+      {activeTab === 'planning' && (() => {
+        const { monday, sunday } = getWeekRange(weekOffset);
+        const dayNames = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+        const dayNamesShort = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Agrupar aulas por dia
+        const days: { date: Date; dayName: string; classes: ScheduledClass[] }[] = [];
+        for (let i = 0; i < 7; i++) {
+          const dayDate = new Date(monday);
+          dayDate.setDate(monday.getDate() + i);
+          const dayStr = dayDate.toISOString().split('T')[0];
+          const dayClasses = weekClasses.filter(cls => {
+            const clsDate = new Date(cls.scheduled_at).toISOString().split('T')[0];
+            return clsDate === dayStr;
+          });
+          days.push({ date: dayDate, dayName: dayNames[i], classes: dayClasses });
+        }
+
+        const totalClasses = weekClasses.length;
+        const totalStudents = weekClasses.reduce((acc, cls) => acc + (cls.enrollments?.length || 0), 0);
+        const pastNotFinalized = weekClasses.filter(cls => {
+          const d = new Date(cls.scheduled_at);
+          return d < new Date() && cls.status !== 'completed';
+        }).length;
+
+        const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+        return (
+          <div className="space-y-4">
+            {/* Week Navigator */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setWeekOffset(prev => prev - 1)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition"
+                >
+                  <ChevronLeft className="w-5 h-5 text-gray-600" />
+                </button>
+                <div className="text-center">
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {monday.getDate()} {monthNames[monday.getMonth()]} - {sunday.getDate()} {monthNames[sunday.getMonth()]}
+                  </h2>
+                  <p className="text-sm text-gray-500">
+                    {weekOffset === 0 ? 'Esta Semana' : weekOffset === 1 ? 'Próxima Semana' : weekOffset === -1 ? 'Semana Passada' : `${weekOffset > 0 ? '+' : ''}${weekOffset} semanas`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {weekOffset !== 0 && (
+                    <button
+                      onClick={() => setWeekOffset(0)}
+                      className="px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                    >
+                      Hoje
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setWeekOffset(prev => prev + 1)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition"
+                  >
+                    <ChevronRight className="w-5 h-5 text-gray-600" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats resumo da semana */}
+              <div className="flex gap-4 mt-4 pt-4 border-t border-gray-100">
+                <div className="flex-1 text-center">
+                  <div className="text-2xl font-bold text-blue-600">{totalClasses}</div>
+                  <div className="text-xs text-gray-500">Aulas</div>
+                </div>
+                <div className="flex-1 text-center">
+                  <div className="text-2xl font-bold text-purple-600">{totalStudents}</div>
+                  <div className="text-xs text-gray-500">Inscrições</div>
+                </div>
+                {pastNotFinalized > 0 && (
+                  <div className="flex-1 text-center">
+                    <div className="text-2xl font-bold text-amber-600">{pastNotFinalized}</div>
+                    <div className="text-xs text-gray-500">Por Finalizar</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Dias da semana */}
+            {days.map(({ date, dayName, classes: dayClasses }, dayIdx) => {
+              const isToday = date.getTime() === today.getTime();
+              const isPast = date < today;
+              const hasClasses = dayClasses.length > 0;
+
+              return (
+                <div key={dayIdx} className={`rounded-xl border ${isToday ? 'border-blue-300 bg-blue-50/30' : 'border-gray-100 bg-white'} shadow-sm overflow-hidden`}>
+                  {/* Day header */}
+                  <div className={`px-4 py-2.5 flex items-center justify-between ${
+                    isToday ? 'bg-blue-100/50' : isPast ? 'bg-gray-50' : ''
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-bold ${
+                        isToday ? 'bg-blue-600 text-white' : isPast ? 'bg-gray-200 text-gray-600' : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        <span className="text-[10px] uppercase leading-none">{dayNamesShort[dayIdx]}</span>
+                        <span className="text-base leading-none mt-0.5">{date.getDate()}</span>
+                      </div>
+                      <div>
+                        <span className={`text-sm font-semibold ${isToday ? 'text-blue-800' : 'text-gray-900'}`}>
+                          {dayName}
+                          {isToday && <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full">Hoje</span>}
+                        </span>
+                        {hasClasses && (
+                          <p className="text-xs text-gray-500">{dayClasses.length} aula{dayClasses.length > 1 ? 's' : ''}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Classes for this day */}
+                  {!hasClasses ? (
+                    <div className="px-4 py-3 text-sm text-gray-400 italic">Sem aulas agendadas</div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {dayClasses.map(cls => {
+                        const classTime = new Date(cls.scheduled_at);
+                        const timeStr = classTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+                        const category = cls.class_type?.class_category || 'single';
+                        const enrollments = cls.enrollments || [];
+                        const enrollmentCount = enrollments.length;
+                        const attendedCount = enrollments.filter(e => e.status === 'attended').length;
+                        const paidCount = enrollments.filter((e: any) => e.payment_status === 'paid').length;
+                        const isPastClass = classTime < new Date();
+                        const isFinalized = cls.status === 'completed';
+                        const needsFinalization = isPastClass && !isFinalized;
+
+                        const categoryColors: Record<string, { bg: string; text: string; border: string; badge: string }> = {
+                          single: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-l-blue-500', badge: 'bg-blue-100 text-blue-700' },
+                          group: { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-l-purple-500', badge: 'bg-purple-100 text-purple-700' },
+                          pack: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-l-orange-500', badge: 'bg-orange-100 text-orange-700' },
+                        };
+                        const colors = categoryColors[category] || categoryColors.single;
+
+                        return (
+                          <div
+                            key={cls.id}
+                            onClick={() => openClassDetail(cls)}
+                            className={`px-4 py-3 border-l-4 ${colors.border} cursor-pointer hover:bg-gray-50 transition ${
+                              needsFinalization ? 'bg-amber-50/50' : ''
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1 min-w-0">
+                                {/* Hora */}
+                                <div className="text-sm font-bold text-gray-900 w-12 flex-shrink-0">{timeStr}</div>
+
+                                {/* Info */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-sm font-medium text-gray-900 truncate">{cls.class_type?.name || 'Aula'}</span>
+                                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${colors.badge}`}>
+                                      {category === 'single' ? 'Pontual' : category === 'group' ? 'Grupo' : 'Pack'}
+                                    </span>
+                                    {needsFinalization && (
+                                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 flex items-center gap-0.5">
+                                        <AlertCircle className="w-3 h-3" />
+                                        Finalizar
+                                      </span>
+                                    )}
+                                    {isFinalized && (
+                                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700 flex items-center gap-0.5">
+                                        <CheckCircle2 className="w-3 h-3" />
+                                        OK
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+                                    {cls.coach_name && <span>{cls.coach_name}</span>}
+                                    {cls.court?.name && (
+                                      <span className="flex items-center gap-0.5">
+                                        <MapPin className="w-3 h-3" />
+                                        {cls.court.name}
+                                      </span>
+                                    )}
+                                    {cls.class_type?.duration_minutes && (
+                                      <span className="flex items-center gap-0.5">
+                                        <Clock className="w-3 h-3" />
+                                        {cls.class_type.duration_minutes}min
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right side: students + payment */}
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {enrollmentCount > 0 && (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg ${
+                                      attendedCount === enrollmentCount && enrollmentCount > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      <Users className="w-3 h-3" />
+                                      {isPastClass ? `${attendedCount}/${enrollmentCount}` : `${enrollmentCount}`}
+                                    </span>
+                                    {enrollmentCount > 0 && (
+                                      <span className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg ${
+                                        paidCount === enrollmentCount ? 'bg-emerald-100 text-emerald-700' : paidCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                                      }`}>
+                                        <Euro className="w-3 h-3" />
+                                        {paidCount}/{enrollmentCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                <ChevronRight className="w-4 h-4 text-gray-400" />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {activeTab === 'classes' && (() => {
         const filteredClasses = classes.filter(cls => {
@@ -2851,27 +3213,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
         return (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold text-gray-900">Aulas de Grupo</h2>
-            <button
-              onClick={() => {
-                resetClassForm();
-                setEditingClass(null);
-                // Pré-selecionar tipo de aula de grupo
-                const groupType = classTypes.find(t => t.class_category === 'group');
-                if (groupType) {
-                  setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
-                }
-                setShowGroupClassForm(true);
-                setShowClassForm(true);
-              }}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Criar Aula de Grupo
-            </button>
-          </div>
-
           {/* Sub-tabs: Ativas / Terminadas */}
           <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
             <button
@@ -3502,6 +3843,384 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         );
       })()}
 
+      {/* ==================== UNIVERSAL CLASS DETAIL / FINALIZAR AULA MODAL ==================== */}
+      {showClassDetailModal && selectedClassDetail && (() => {
+        const cls = selectedClassDetail;
+        const classTime = new Date(cls.scheduled_at);
+        const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+        const isPastClass = classTime < new Date();
+        const isFinalized = cls.status === 'completed';
+        const category = cls.class_type?.class_category || 'single';
+        const enrollments = classDetailEnrollments;
+        const attendedCount = enrollments.filter(e => e.status === 'attended').length;
+        const paidCount = enrollments.filter(e => e.payment_status === 'paid').length;
+        const noShowCount = enrollments.filter(e => e.status === 'no_show').length;
+
+        const categoryLabel = category === 'single' ? 'Aula Pontual' : category === 'group' ? 'Aula de Grupo' : 'Pack de Aulas';
+        const categoryColor = category === 'single' ? 'blue' : category === 'group' ? 'purple' : 'orange';
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className={`flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10`}>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-gray-900">{cls.class_type?.name || 'Aula'}</h2>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded bg-${categoryColor}-100 text-${categoryColor}-700`}>
+                      {categoryLabel}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    {dayNames[classTime.getDay()]}, {classTime.toLocaleDateString('pt-PT')} às {classTime.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+                <button onClick={() => { setShowClassDetailModal(false); setSelectedClassDetail(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-4">
+                {/* Info bar */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {cls.coach_name && (
+                    <span className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 rounded-lg text-gray-700">
+                      <GraduationCap className="w-3.5 h-3.5" />
+                      {cls.coach_name}
+                    </span>
+                  )}
+                  {cls.court?.name && (
+                    <span className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 rounded-lg text-gray-700">
+                      <MapPin className="w-3.5 h-3.5" />
+                      {cls.court.name}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 rounded-lg text-gray-700">
+                    <Clock className="w-3.5 h-3.5" />
+                    {cls.class_type?.duration_minutes || 60} min
+                  </span>
+                  {isFinalized && (
+                    <span className="flex items-center gap-1 px-2.5 py-1.5 bg-green-100 rounded-lg text-green-700 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Finalizada
+                    </span>
+                  )}
+                  {isPastClass && !isFinalized && (
+                    <span className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-100 rounded-lg text-amber-700 font-medium">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      Por Finalizar
+                    </span>
+                  )}
+                </div>
+
+                {/* Resumo rápido */}
+                {enrollments.length > 0 && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="text-center p-3 bg-blue-50 rounded-xl">
+                      <div className="text-xl font-bold text-blue-700">{enrollments.length}</div>
+                      <div className="text-xs text-blue-600">Inscritos</div>
+                    </div>
+                    <div className="text-center p-3 bg-green-50 rounded-xl">
+                      <div className="text-xl font-bold text-green-700">{attendedCount}</div>
+                      <div className="text-xs text-green-600">Presentes</div>
+                    </div>
+                    <div className="text-center p-3 bg-emerald-50 rounded-xl">
+                      <div className="text-xl font-bold text-emerald-700">{paidCount}</div>
+                      <div className="text-xs text-emerald-600">Pagos</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Lista de alunos com presença e pagamento */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-gray-500" />
+                    Alunos ({enrollments.length})
+                  </h3>
+
+                  {enrollments.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic py-3">Nenhum aluno inscrito</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {enrollments.map(enrollment => (
+                        <div key={enrollment.id} className={`p-3 rounded-xl border transition ${
+                          enrollment.status === 'attended' ? 'bg-green-50 border-green-200' :
+                          enrollment.status === 'no_show' ? 'bg-red-50 border-red-200' :
+                          'bg-white border-gray-200'
+                        }`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                              <span className="text-sm font-medium text-gray-900 truncate">{enrollment.student_name || 'Aluno'}</span>
+                            </div>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {/* Presente */}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const newStatus = enrollment.status === 'attended' ? 'enrolled' : 'attended';
+                                  await supabase.from('class_enrollments').update({ status: newStatus }).eq('id', enrollment.id);
+                                  setClassDetailEnrollments(prev => prev.map(e => e.id === enrollment.id ? { ...e, status: newStatus } : e));
+                                }}
+                                className={`px-2 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                  enrollment.status === 'attended'
+                                    ? 'bg-green-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'
+                                }`}
+                                title="Presente"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                                {enrollment.status === 'attended' ? '✓' : ''}
+                              </button>
+
+                              {/* Faltou */}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const newStatus = enrollment.status === 'no_show' ? 'enrolled' : 'no_show';
+                                  await supabase.from('class_enrollments').update({ status: newStatus }).eq('id', enrollment.id);
+                                  setClassDetailEnrollments(prev => prev.map(e => e.id === enrollment.id ? { ...e, status: newStatus } : e));
+                                }}
+                                className={`px-2 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                  enrollment.status === 'no_show'
+                                    ? 'bg-red-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-red-100 hover:text-red-700'
+                                }`}
+                                title="Faltou"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+
+                              {/* Pago */}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const newPaymentStatus = enrollment.payment_status === 'paid' ? 'pending' : 'paid';
+                                  await supabase.from('class_enrollments').update({ payment_status: newPaymentStatus }).eq('id', enrollment.id);
+                                  setClassDetailEnrollments(prev => prev.map(e => e.id === enrollment.id ? { ...e, payment_status: newPaymentStatus } : e));
+                                }}
+                                className={`px-2 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1 ${
+                                  enrollment.payment_status === 'paid'
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-emerald-100 hover:text-emerald-700'
+                                }`}
+                                title={enrollment.payment_status === 'paid' ? 'Pago' : 'Marcar pago'}
+                              >
+                                <Euro className="w-3.5 h-3.5" />
+                                {enrollment.payment_status === 'paid' ? '✓' : ''}
+                              </button>
+
+                              {/* Remover */}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!confirm(`Remover ${enrollment.student_name} desta aula?`)) return;
+                                  await supabase.from('class_enrollments').delete().eq('id', enrollment.id);
+                                  setClassDetailEnrollments(prev => prev.filter(e => e.id !== enrollment.id));
+                                }}
+                                className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                                title="Remover"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Adicionar aluno */}
+                <div className="border-t border-gray-200 pt-4">
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    const form = e.target as HTMLFormElement;
+                    const nameInput = form.elements.namedItem('addStudentName') as HTMLInputElement;
+                    const newName = nameInput?.value?.trim();
+                    if (!newName || !selectedClassDetail) return;
+                    
+                    const { data: newEnrollment, error } = await supabase
+                      .from('class_enrollments')
+                      .insert({
+                        class_id: selectedClassDetail.id,
+                        student_name: newName,
+                        status: 'enrolled',
+                        payment_status: 'pending'
+                      })
+                      .select()
+                      .single();
+
+                    if (error) {
+                      alert('Erro ao adicionar aluno: ' + error.message);
+                      return;
+                    }
+                    if (newEnrollment) {
+                      setClassDetailEnrollments(prev => [...prev, newEnrollment as GroupClassEnrollment]);
+                      nameInput.value = '';
+                    }
+                  }} className="flex gap-2">
+                    <input
+                      type="text"
+                      name="addStudentName"
+                      placeholder="Nome do aluno..."
+                      className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-1.5 text-sm font-medium"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                    </button>
+                  </form>
+                </div>
+
+                {/* Notas */}
+                <div className="border-t border-gray-200 pt-4">
+                  <label className="block text-sm font-semibold text-gray-800 mb-2">Notas da Aula</label>
+                  <textarea
+                    value={classDetailNotes}
+                    onChange={(e) => setClassDetailNotes(e.target.value)}
+                    placeholder="Observações, exercícios feitos, etc..."
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    rows={2}
+                  />
+                </div>
+
+                {/* Ações rápidas */}
+                <div className="border-t border-gray-200 pt-4 space-y-3">
+                  {/* Bulk actions */}
+                  {enrollments.length > 0 && (
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const toUpdate = enrollments.filter(e => e.status !== 'attended');
+                          for (const e of toUpdate) {
+                            await supabase.from('class_enrollments').update({ status: 'attended' }).eq('id', e.id);
+                          }
+                          setClassDetailEnrollments(prev => prev.map(e => ({ ...e, status: 'attended' })));
+                        }}
+                        className="flex-1 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition text-xs font-medium flex items-center justify-center gap-1.5"
+                      >
+                        <UserCheck className="w-3.5 h-3.5" />
+                        Todos Presentes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const toUpdate = enrollments.filter(e => e.payment_status !== 'paid');
+                          for (const e of toUpdate) {
+                            await supabase.from('class_enrollments').update({ payment_status: 'paid' }).eq('id', e.id);
+                          }
+                          setClassDetailEnrollments(prev => prev.map(e => ({ ...e, payment_status: 'paid' })));
+                        }}
+                        className="flex-1 px-3 py-2 bg-emerald-100 text-emerald-700 rounded-lg hover:bg-emerald-200 transition text-xs font-medium flex items-center justify-center gap-1.5"
+                      >
+                        <Euro className="w-3.5 h-3.5" />
+                        Todos Pagos
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex gap-2">
+                    {/* Reagendar */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRescheduleClass({
+                          id: cls.id,
+                          scheduled_at: cls.scheduled_at,
+                          status: cls.status,
+                          notes: cls.notes,
+                          coach_id: cls.coach_id,
+                          court_id: cls.court_id,
+                          pack_purchase_id: ''
+                        });
+                        const d = new Date(cls.scheduled_at);
+                        setRescheduleDate(d.toISOString().split('T')[0]);
+                        setRescheduleTime(d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }));
+                        setShowClassDetailModal(false);
+                        setShowRescheduleModal(true);
+                      }}
+                      className="flex-1 px-3 py-2.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition text-sm font-medium flex items-center justify-center gap-1.5"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      Reagendar
+                    </button>
+
+                    {/* Editar */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleEditClass(cls);
+                        setShowClassDetailModal(false);
+                      }}
+                      className="flex-1 px-3 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-sm font-medium flex items-center justify-center gap-1.5"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      Editar Aula
+                    </button>
+                  </div>
+
+                  {/* Finalizar / Tudo OK */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      // Guardar notas se alteradas
+                      if (classDetailNotes !== (cls.notes || '')) {
+                        await supabase.from('club_classes').update({ notes: classDetailNotes }).eq('id', cls.id);
+                      }
+                      
+                      // Marcar como finalizada
+                      if (cls.status !== 'completed') {
+                        await supabase.from('club_classes').update({ status: 'completed' }).eq('id', cls.id);
+                      }
+
+                      // Se tem alunos sem presença marcada, marcar todos como presentes
+                      const unmarked = enrollments.filter(e => e.status === 'enrolled');
+                      if (unmarked.length > 0) {
+                        for (const e of unmarked) {
+                          await supabase.from('class_enrollments').update({ status: 'attended' }).eq('id', e.id);
+                        }
+                      }
+
+                      setShowClassDetailModal(false);
+                      setSelectedClassDetail(null);
+                      loadWeekClasses();
+                      loadData();
+                      if (activeTab === 'group-classes') loadGroupClassSeries();
+                      if (activeTab === 'packs') loadPackPurchases();
+                    }}
+                    className={`w-full px-4 py-3 rounded-xl font-medium transition flex items-center justify-center gap-2 text-sm ${
+                      isFinalized
+                        ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        : 'bg-green-600 text-white hover:bg-green-700 shadow-lg shadow-green-200'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-5 h-5" />
+                    {isFinalized ? 'Guardar Alterações' : 'Tudo OK - Finalizar Aula ✓'}
+                  </button>
+
+                  {/* Fechar */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowClassDetailModal(false);
+                      setSelectedClassDetail(null);
+                    }}
+                    className="w-full px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition"
+                  >
+                    Fechar sem alterar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Reschedule Lesson Modal */}
       {showRescheduleModal && rescheduleClass && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -3569,7 +4288,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
               setShowRescheduleModal(false);
               setRescheduleClass(null);
               setSaving(false);
+              loadWeekClasses();
               loadPackPurchases();
+              loadGroupClassSeries();
               loadData();
             }} className="p-4 space-y-4">
               <div className="bg-amber-50 p-3 rounded-lg">
