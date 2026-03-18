@@ -1941,34 +1941,14 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
-          {/* Botão criar - apenas na tab Planning */}
-          {activeTab === 'planning' && (
+          {/* Botão criar - apenas na tab Planning e Types */}
+          {activeTab === 'types' && (
             <button
-              onClick={() => {
-                resetClassForm();
-                setEditingClass(null);
-                
-                // Determinar qual formulário abrir baseado na categoria selecionada
-                if (planningFilterCategory === 'group') {
-                  // Abrir formulário de aula de grupo
-                  const groupType = classTypes.find(t => t.class_category === 'group');
-                  if (groupType) {
-                    setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
-                  }
-                  setShowGroupClassForm(true);
-                  setShowClassForm(true);
-                } else if (planningFilterCategory === 'pack') {
-                  // Abrir formulário de pack
-                  setShowPackForm(true);
-                } else {
-                  // Abrir formulário de aula pontual (ou se nenhuma categoria selecionada)
-                  setShowClassForm(true);
-                }
-              }}
+              onClick={() => { resetTypeForm(); setEditingType(null); setShowTypeForm(true); }}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
-              Criar Aula
+              {t.academy.addClassType}
             </button>
           )}
         </div>
@@ -2157,52 +2137,99 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
               </div>
             </div>
 
-            {/* Filtros do Planning */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 space-y-3">
-              {/* Primeira linha: Tipo de Aula (categoria) */}
-              <div className="flex flex-wrap gap-2 items-center">
-                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Tipo de Aula:</label>
-                <select
-                  value={planningFilterCategory}
-                  onChange={(e) => {
-                    setPlanningFilterCategory(e.target.value as any);
-                    // Limpar filtro de tipo quando mudar categoria
-                    setPlanningFilterType('');
-                  }}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="">Todas</option>
-                  <option value="single">Pontual</option>
-                  <option value="group">Grupo</option>
-                  <option value="pack">Pack</option>
-                </select>
+            {/* Filtros do Planning + Botão Criar */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
+              {/* Linha 1: Tipo de Aula (Pontual / Grupo / Pack) + Botão Criar */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1 block">Tipo de Aula</label>
+                  <select
+                    value={planningFilterCategory}
+                    onChange={(e) => {
+                      setPlanningFilterCategory(e.target.value as any);
+                      setPlanningFilterType('');
+                    }}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                  >
+                    <option value="">Todas</option>
+                    <option value="single">Pontual</option>
+                    <option value="group">Grupo</option>
+                    <option value="pack">Pack</option>
+                  </select>
+                </div>
+
+                {/* Linha 2: Dropdown tipos específicos (filtrado pela categoria) */}
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1 block">
+                    {planningFilterCategory === 'single' ? 'Aulas Pontuais' : planningFilterCategory === 'group' ? 'Aulas de Grupo' : planningFilterCategory === 'pack' ? 'Packs' : 'Tipo Específico'}
+                  </label>
+                  <select
+                    value={planningFilterType}
+                    onChange={(e) => setPlanningFilterType(e.target.value)}
+                    className={`w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white ${
+                      !planningFilterCategory ? 'text-gray-400' : ''
+                    }`}
+                  >
+                    <option value="">{planningFilterCategory ? 'Todos' : 'Selecione tipo de aula primeiro'}</option>
+                    {classTypes
+                      .filter(ct => planningFilterCategory ? ct.class_category === planningFilterCategory : true)
+                      .map(ct => (
+                        <option key={ct.id} value={ct.id}>{ct.name}</option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* Botão Criar */}
+                <div className="pt-4">
+                  <button
+                    onClick={() => {
+                      resetClassForm();
+                      setEditingClass(null);
+                      const selectedTypeId = planningFilterType;
+                      const selectedCat = planningFilterCategory;
+
+                      if (selectedCat === 'group' || (!selectedCat && selectedTypeId && classTypes.find(t => t.id === selectedTypeId)?.class_category === 'group')) {
+                        // Criar aula de grupo
+                        const typeId = selectedTypeId || classTypes.find(t => t.class_category === 'group')?.id;
+                        if (typeId) {
+                          setClassForm(prev => ({ ...prev, class_type_id: typeId }));
+                        }
+                        setShowGroupClassForm(true);
+                        setShowClassForm(true);
+                      } else if (selectedCat === 'pack' || (!selectedCat && selectedTypeId && classTypes.find(t => t.id === selectedTypeId)?.class_category === 'pack')) {
+                        // Criar pack
+                        if (selectedTypeId) {
+                          setSelectedPackType(selectedTypeId);
+                        }
+                        setShowPackForm(true);
+                      } else {
+                        // Criar aula pontual
+                        if (selectedTypeId) {
+                          setClassForm(prev => ({ ...prev, class_type_id: selectedTypeId }));
+                        }
+                        setShowClassForm(true);
+                      }
+                    }}
+                    className="bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2 whitespace-nowrap shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Criar
+                  </button>
+                </div>
               </div>
 
-              {/* Segunda linha: Tipos de aulas (filtrado por categoria) e outros filtros */}
-              <div className="flex flex-wrap gap-2 items-center">
+              {/* Linha 3: Filtros adicionais (aluno, pagamento) */}
+              <div className="flex flex-wrap gap-2 items-center pt-2 border-t border-gray-100">
                 <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
                     type="text"
                     value={planningFilterStudent}
                     onChange={(e) => setPlanningFilterStudent(e.target.value)}
-                    placeholder="Procurar aluno..."
+                    placeholder="Procurar aluno ou treinador..."
                     className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                <select
-                  value={planningFilterType}
-                  onChange={(e) => setPlanningFilterType(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  disabled={!planningFilterCategory}
-                >
-                  <option value="">Todos Tipos</option>
-                  {classTypes
-                    .filter(ct => !planningFilterCategory || ct.class_category === planningFilterCategory)
-                    .map(ct => (
-                      <option key={ct.id} value={ct.id}>{ct.name}</option>
-                    ))}
-                </select>
                 <select
                   value={planningFilterPayment}
                   onChange={(e) => setPlanningFilterPayment(e.target.value as any)}
