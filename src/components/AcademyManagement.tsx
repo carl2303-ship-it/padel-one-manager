@@ -1941,51 +1941,35 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">{t.academy.title}</h1>
-          {/* Botão criar - contexto do tab activo */}
+          {/* Botão criar - apenas na tab Planning */}
           {activeTab === 'planning' && (
             <button
-              onClick={() => { resetClassForm(); setEditingClass(null); setShowClassForm(true); }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Agendar Aula
-            </button>
-          )}
-          {activeTab === 'classes' && (
-            <button
-              onClick={() => { resetClassForm(); setEditingClass(null); setShowClassForm(true); }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              {t.academy.scheduleClass}
-            </button>
-          )}
-          {activeTab === 'types' && (
-            <button
-              onClick={() => { resetTypeForm(); setEditingType(null); setShowTypeForm(true); }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              {t.academy.addClassType}
-            </button>
-          )}
-          {activeTab === 'group-classes' && (
-          <button
-            onClick={() => {
+              onClick={() => {
                 resetClassForm();
                 setEditingClass(null);
-                const groupType = classTypes.find(t => t.class_category === 'group');
-                if (groupType) {
-                  setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
+                
+                // Determinar qual formulário abrir baseado na categoria selecionada
+                if (planningFilterCategory === 'group') {
+                  // Abrir formulário de aula de grupo
+                  const groupType = classTypes.find(t => t.class_category === 'group');
+                  if (groupType) {
+                    setClassForm(prev => ({ ...prev, class_type_id: groupType.id }));
+                  }
+                  setShowGroupClassForm(true);
+                  setShowClassForm(true);
+                } else if (planningFilterCategory === 'pack') {
+                  // Abrir formulário de pack
+                  setShowPackForm(true);
+                } else {
+                  // Abrir formulário de aula pontual (ou se nenhuma categoria selecionada)
+                  setShowClassForm(true);
                 }
-                setShowGroupClassForm(true);
-                setShowClassForm(true);
               }}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700 transition flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-              Criar Aula de Grupo
-          </button>
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Criar Aula
+            </button>
           )}
         </div>
 
@@ -2174,7 +2158,27 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             </div>
 
             {/* Filtros do Planning */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 space-y-3">
+              {/* Primeira linha: Tipo de Aula (categoria) */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Tipo de Aula:</label>
+                <select
+                  value={planningFilterCategory}
+                  onChange={(e) => {
+                    setPlanningFilterCategory(e.target.value as any);
+                    // Limpar filtro de tipo quando mudar categoria
+                    setPlanningFilterType('');
+                  }}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Todas</option>
+                  <option value="single">Pontual</option>
+                  <option value="group">Grupo</option>
+                  <option value="pack">Pack</option>
+                </select>
+              </div>
+
+              {/* Segunda linha: Tipos de aulas (filtrado por categoria) e outros filtros */}
               <div className="flex flex-wrap gap-2 items-center">
                 <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -2187,24 +2191,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   />
                 </div>
                 <select
-                  value={planningFilterCategory}
-                  onChange={(e) => setPlanningFilterCategory(e.target.value as any)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="">Todas Categorias</option>
-                  <option value="single">Pontuais</option>
-                  <option value="group">Grupo</option>
-                  <option value="pack">Pack</option>
-                </select>
-                <select
                   value={planningFilterType}
                   onChange={(e) => setPlanningFilterType(e.target.value)}
                   className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  disabled={!planningFilterCategory}
                 >
                   <option value="">Todos Tipos</option>
-                  {classTypes.map(ct => (
-                    <option key={ct.id} value={ct.id}>{ct.name}</option>
-                  ))}
+                  {classTypes
+                    .filter(ct => !planningFilterCategory || ct.class_category === planningFilterCategory)
+                    .map(ct => (
+                      <option key={ct.id} value={ct.id}>{ct.name}</option>
+                    ))}
                 </select>
                 <select
                   value={planningFilterPayment}
