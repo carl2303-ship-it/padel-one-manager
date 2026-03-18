@@ -250,7 +250,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [showPackPlayerDropdown, setShowPackPlayerDropdown] = useState(false);
 
   // Class filters
-  const [classSearchTerm, setClassSearchTerm] = useState('');
   const [classFilterType, setClassFilterType] = useState('');
   const [classFilterDate, setClassFilterDate] = useState('');
   const [classFilterPayment, setClassFilterPayment] = useState<'' | 'paid' | 'pending'>('');
@@ -2155,22 +2154,14 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
               </div>
 
               {/* Stats resumo da semana */}
-              <div className="flex gap-4 mt-4 pt-4 border-t border-gray-100">
-                <div className="flex-1 text-center">
-                  <div className="text-2xl font-bold text-blue-600">{totalClasses}</div>
-                  <div className="text-xs text-gray-500">Aulas</div>
-                </div>
-                <div className="flex-1 text-center">
-                  <div className="text-2xl font-bold text-purple-600">{totalStudents}</div>
-                  <div className="text-xs text-gray-500">Inscrições</div>
-                </div>
-                {pastNotFinalized > 0 && (
+              {pastNotFinalized > 0 && (
+                <div className="flex gap-4 mt-4 pt-4 border-t border-gray-100">
                   <div className="flex-1 text-center">
                     <div className="text-2xl font-bold text-amber-600">{pastNotFinalized}</div>
                     <div className="text-xs text-gray-500">Por Finalizar</div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             {/* Filtros do Planning */}
@@ -2382,11 +2373,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           return !category || category === 'single';
         });
         const filteredClasses = singleClasses.filter(cls => {
-          const matchesSearch = !classSearchTerm || 
-            (cls.class_type?.name && cls.class_type.name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
-            (cls.coach_name && cls.coach_name.toLowerCase().includes(classSearchTerm.toLowerCase())) ||
-            (cls.enrollments?.some(e => e.student_name?.toLowerCase().includes(classSearchTerm.toLowerCase()))) ||
-            (cls.notes && cls.notes.toLowerCase().includes(classSearchTerm.toLowerCase()));
           const matchesType = !classFilterType || cls.class_type?.id === classFilterType;
           const matchesDate = !classFilterDate || (cls.scheduled_at && cls.scheduled_at.startsWith(classFilterDate));
           let matchesPayment = true;
@@ -2399,7 +2385,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
               if (classFilterPayment === 'pending' && allPaid) matchesPayment = false;
             }
           }
-          return matchesSearch && matchesType && matchesDate && matchesPayment;
+          return matchesType && matchesDate && matchesPayment;
         });
 
         return (
@@ -2407,16 +2393,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           {/* Filters */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-4">
             <div className="flex flex-wrap gap-3 items-center">
-              <div className="flex-1 min-w-[180px] relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={classSearchTerm}
-                  onChange={(e) => setClassSearchTerm(e.target.value)}
-                  placeholder="Buscar aluno, treinador, tipo..."
-                  className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
               <select
                 value={classFilterType}
                 onChange={(e) => setClassFilterType(e.target.value)}
@@ -2442,9 +2418,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 <option value="paid">Pagos</option>
                 <option value="pending">Não Pagos</option>
               </select>
-              {(classSearchTerm || classFilterType || classFilterDate || classFilterPayment) && (
+              {(classFilterType || classFilterDate || classFilterPayment) && (
                 <button
-                  onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
+                  onClick={() => { setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
                   className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
                 >
                   <X className="w-4 h-4" />
@@ -2458,11 +2434,11 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {(classSearchTerm || classFilterType || classFilterDate) ? 'Nenhuma aula encontrada com os filtros aplicados' : t.academy.noClasses}
+              {(classFilterType || classFilterDate || classFilterPayment) ? 'Nenhuma aula encontrada com os filtros aplicados' : t.academy.noClasses}
             </h3>
-            {(classSearchTerm || classFilterType || classFilterDate) ? (
+            {(classFilterType || classFilterDate || classFilterPayment) ? (
               <button
-                onClick={() => { setClassSearchTerm(''); setClassFilterType(''); setClassFilterDate(''); }}
+                onClick={() => { setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
                 className="text-blue-600 hover:text-blue-800 text-sm font-medium mt-2"
               >
                 Limpar filtros
