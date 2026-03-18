@@ -264,8 +264,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [historyFilterPayment, setHistoryFilterPayment] = useState<'' | 'paid' | 'pending'>('');
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  const [packSubTab, setPackSubTab] = useState<'active' | 'finished'>('active');
-
   // Reschedule lesson modal
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [rescheduleClass, setRescheduleClass] = useState<PackClass | null>(null);
@@ -3440,13 +3438,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       )}
 
       {activeTab === 'packs' && (() => {
+        // Mostrar apenas packs ativos (não terminados)
         const activePacks = packPurchases.filter(p => {
           const done = p.completions?.length || 0;
           return done < p.pack_size;
-        });
-        const finishedPacks = packPurchases.filter(p => {
-          const done = p.completions?.length || 0;
-          return done >= p.pack_size;
         });
 
         return (
@@ -3455,44 +3450,19 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             <h2 className="text-lg font-semibold text-gray-900">Packs de Aulas</h2>
           </div>
 
-          {/* Sub-tabs: Ativos / Terminados */}
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-            <button
-              onClick={() => setPackSubTab('active')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
-                packSubTab === 'active' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Ativos ({activePacks.length})
-            </button>
-            <button
-              onClick={() => setPackSubTab('finished')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
-                packSubTab === 'finished' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Terminados ({finishedPacks.length})
-            </button>
-          </div>
-
-          {(() => {
-            const displayPacks = packSubTab === 'active' ? activePacks : finishedPacks;
-            if (displayPacks.length === 0) {
-              return (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-                  <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    {packSubTab === 'active' ? 'Nenhum pack ativo' : 'Nenhum pack terminado'}
-                  </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {packSubTab === 'active' ? 'Crie um novo pack de aulas para começar' : 'Os packs completados aparecerão aqui'}
-                  </p>
-                </div>
-              );
-            }
-            return (
+          {activePacks.length === 0 ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                Nenhum pack ativo
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Crie um novo pack de aulas para começar
+              </p>
+            </div>
+          ) : (
             <div className="grid gap-4">
-              {displayPacks.map(pack => {
+              {activePacks.map(pack => {
                 const completedCount = pack.completions?.length || 0;
                 const remaining = pack.pack_size - completedCount;
                 const progress = (completedCount / pack.pack_size) * 100;
@@ -3663,63 +3633,34 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 );
               })}
             </div>
-            );
-          })()}
+          )}
         </div>
         );
       })()}
 
       {/* Group Classes Tab */}
       {activeTab === 'group-classes' && (() => {
+        // Mostrar apenas séries ativas (não terminadas)
         const activeSeries = groupClassSeries.filter(p => {
           const done = p.completions?.length || 0;
           return done < p.pack_size;
         });
-        const finishedSeries = groupClassSeries.filter(p => {
-          const done = p.completions?.length || 0;
-          return done >= p.pack_size;
-        });
 
         return (
         <div className="space-y-4">
-          {/* Sub-tabs: Ativas / Terminadas */}
-          <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
-            <button
-              onClick={() => setPackSubTab('active')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
-                packSubTab === 'active' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Ativas ({activeSeries.length})
-            </button>
-            <button
-              onClick={() => setPackSubTab('finished')}
-              className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition ${
-                packSubTab === 'finished' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Terminadas ({finishedSeries.length})
-            </button>
-          </div>
-
-          {(() => {
-            const displaySeries = packSubTab === 'active' ? activeSeries : finishedSeries;
-            if (displaySeries.length === 0) {
-              return (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-                  <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    {packSubTab === 'active' ? 'Nenhuma série ativa' : 'Nenhuma série terminada'}
-                  </h3>
-                  <p className="text-sm text-gray-500 mb-4">
-                    {packSubTab === 'active' ? 'Crie uma nova série de aulas de grupo' : 'As séries completadas aparecerão aqui'}
-                  </p>
-                </div>
-              );
-            }
-            return (
+          {activeSeries.length === 0 ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <GraduationCap className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                Nenhuma série ativa
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Crie uma nova série de aulas de grupo
+              </p>
+            </div>
+          ) : (
             <div className="grid gap-4">
-              {displaySeries.map(series => {
+              {activeSeries.map(series => {
                 const completedCount = series.completions?.length || 0;
                 const remaining = series.pack_size - completedCount;
                 const progress = (completedCount / series.pack_size) * 100;
@@ -3949,8 +3890,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 );
               })}
             </div>
-            );
-          })()}
+          )}
         </div>
         );
       })()}
