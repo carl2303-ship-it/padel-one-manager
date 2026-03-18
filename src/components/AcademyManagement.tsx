@@ -249,10 +249,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [packPlayerResults, setPackPlayerResults] = useState<OrganizerPlayer[]>([]);
   const [showPackPlayerDropdown, setShowPackPlayerDropdown] = useState(false);
 
-  // Class filters
-  const [classFilterType, setClassFilterType] = useState('');
-  const [classFilterDate, setClassFilterDate] = useState('');
-  const [classFilterPayment, setClassFilterPayment] = useState<'' | 'paid' | 'pending'>('');
 
   // Planning filters
   const [planningFilterType, setPlanningFilterType] = useState('');
@@ -2372,78 +2368,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           const category = cls.class_type?.class_category;
           return !category || category === 'single';
         });
-        const filteredClasses = singleClasses.filter(cls => {
-          const matchesType = !classFilterType || cls.class_type?.id === classFilterType;
-          const matchesDate = !classFilterDate || (cls.scheduled_at && cls.scheduled_at.startsWith(classFilterDate));
-          let matchesPayment = true;
-          if (classFilterPayment) {
-            const enrollments = cls.enrollments || [];
-            if (enrollments.length === 0) matchesPayment = false;
-            else {
-              const allPaid = enrollments.every(e => (e as any).payment_status === 'paid');
-              if (classFilterPayment === 'paid' && !allPaid) matchesPayment = false;
-              if (classFilterPayment === 'pending' && allPaid) matchesPayment = false;
-            }
-          }
-          return matchesType && matchesDate && matchesPayment;
-        });
+        const filteredClasses = singleClasses;
 
         return (
           <>
-          {/* Filters */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-4">
-            <div className="flex flex-wrap gap-3 items-center">
-              <select
-                value={classFilterType}
-                onChange={(e) => setClassFilterType(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Todos os Tipos</option>
-                {classTypes.map(ct => (
-                  <option key={ct.id} value={ct.id}>{ct.name}</option>
-                ))}
-              </select>
-              <input
-                type="date"
-                value={classFilterDate}
-                onChange={(e) => setClassFilterDate(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <select
-                value={classFilterPayment}
-                onChange={(e) => setClassFilterPayment(e.target.value as any)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Pagamento</option>
-                <option value="paid">Pagos</option>
-                <option value="pending">Não Pagos</option>
-              </select>
-              {(classFilterType || classFilterDate || classFilterPayment) && (
-                <button
-                  onClick={() => { setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
-                  className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
-                >
-                  <X className="w-4 h-4" />
-                  Limpar
-                </button>
-              )}
-            </div>
-          </div>
-
         {filteredClasses.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
             <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">
-              {(classFilterType || classFilterDate || classFilterPayment) ? 'Nenhuma aula encontrada com os filtros aplicados' : t.academy.noClasses}
+              {t.academy.noClasses}
             </h3>
-            {(classFilterType || classFilterDate || classFilterPayment) ? (
-              <button
-                onClick={() => { setClassFilterType(''); setClassFilterDate(''); setClassFilterPayment(''); }}
-                className="text-blue-600 hover:text-blue-800 text-sm font-medium mt-2"
-              >
-                Limpar filtros
-              </button>
-            ) : coaches.length > 0 && classTypes.length > 0 && (
+            {coaches.length > 0 && classTypes.length > 0 && (
               <button
                 onClick={() => setShowClassForm(true)}
                 className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition mt-4"
