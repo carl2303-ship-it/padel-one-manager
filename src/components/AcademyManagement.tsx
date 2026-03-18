@@ -32,7 +32,8 @@ import {
   AlertCircle,
   Euro,
   RotateCcw,
-  RefreshCw
+  RefreshCw,
+  BarChart3
 } from 'lucide-react';
 
 interface Court {
@@ -164,7 +165,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'planning' | 'classes' | 'types' | 'packs' | 'group-classes' | 'history'>('planning');
+  const [activeTab, setActiveTab] = useState<'planning' | 'classes' | 'types' | 'packs' | 'group-classes' | 'history' | 'metrics'>('planning');
   const [packPurchases, setPackPurchases] = useState<PackPurchase[]>([]);
   const [groupClassSeries, setGroupClassSeries] = useState<PackPurchase[]>([]);
   const [showPackForm, setShowPackForm] = useState(false);
@@ -264,6 +265,21 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [historyFilterPayment, setHistoryFilterPayment] = useState<'' | 'paid' | 'pending'>('');
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Metrics tab
+  interface AcademyMetrics {
+    totalHours: number;
+    totalRevenue: number;
+    totalStudents: number;
+    totalClasses: number;
+    completedClasses: number;
+    activePacks: number;
+    activeGroupSeries: number;
+    averageClassDuration: number;
+    revenueByCategory: { single: number; group: number; pack: number };
+  }
+  const [metrics, setMetrics] = useState<AcademyMetrics | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+
   // Reschedule lesson modal
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [rescheduleClass, setRescheduleClass] = useState<PackClass | null>(null);
@@ -299,6 +315,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         loadGroupClassSeries();
       } else if (activeTab === 'history') {
         loadHistoryClasses();
+      } else if (activeTab === 'metrics') {
+        loadMetrics();
       }
     }
   }, [user, activeTab, weekOffset]);
@@ -1730,6 +1748,144 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     setHistoryLoading(false);
   };
 
+  const loadMetrics = async () => {
+    if (!effectiveUserId) return;
+    setMetricsLoading(true);
+
+    try {
+      // Buscar todas as aulas do clube
+      const { data: allClasses, error: classesError } = await supabase
+        .from('club_classes')
+        .select(`
+          id,
+          status,
+          scheduled_at,
+          class_type:class_types(id, duration_minutes, class_category, price_per_class, monthly_price_per_player)
+        `)
+        .eq('club_owner_id', effectiveUserId);
+
+      if (classesError) throw classesError;
+
+      // Buscar todos os enrollments com pagamento
+      const { data: allEnrollments, error: enrollmentsError } = await supabase
+        .from('class_enrollments')
+        .select('id, class_id, student_name, payment_status, organizer_player_id, member_subscription_id')
+        .eq('payment_status', 'paid')
+        .in('status', ['enrolled', 'attended']);
+
+      if (enrollmentsError) throw enrollmentsError;
+
+      // Buscar packs ativos
+      const { data: packs, error: packsError } = await supabase
+        .from('pack_purchases')
+        .select('id, pack_size, price_paid, completions:lesson_completions(count)')
+        .eq('club_owner_id', effectiveUserId)
+        .eq('is_active', true);
+
+      if (packsError) throw packsError;
+
+      // Calcular métricas
+      const completedClasses = allClasses?.filter(c => c.status === 'completed') || [];
+      const totalHours = completedClasses.reduce((sum, cls) => {
+        const duration = (cls.class_type as any)?.duration_minutes || 60;
+        return sum + (duration / 60);
+      }, 0);
+
+      // Calcular receita
+      let totalRevenue = 0;
+      const revenueByCategory = { single: 0, group: 0, pack: 0 };
+
+      // Receita de aulas pontuais e grupos (baseado em enrollments pagos)
+      if (allEnrollments && allClasses) {
+        allEnrollments.forEach(enrollment => {
+          const classData = allClasses.find(c => c.id === enrollment.class_id);
+          if (classData && classData.class_type) {
+            const category = (classData.class_type as any).class_category;
+            const price = category === 'group' 
+              ? ((classData.class_type as any).monthly_price_per_player || (classData.class_type as any).price_per_class)
+              : ((classData.class_type as any).price_per_class || 0);
+            
+            totalRevenue += price;
+            if (category === 'single') revenueByCategory.single += price;
+            else if (category === 'group') revenueByCategory.group += price;
+          }
+        });
+      }
+
+      // Receita de packs (baseado em pack_purchases)
+      if (packs) {
+        packs.forEach(pack => {
+          // Assumindo que o pack foi pago uma vez
+          // Precisamos buscar o preço do pack através do class_type
+          // Por agora, vamos contar apenas os packs que têm price_paid
+          const packPrice = (pack as any).price_paid || 0;
+          totalRevenue += packPrice;
+          revenueByCategory.pack += packPrice;
+        });
+      }
+
+      // Alunos únicos
+      const uniqueStudents = new Set<string>();
+      if (allEnrollments) {
+        allEnrollments.forEach(e => {
+          if (e.student_name) uniqueStudents.add(e.student_name);
+          if (e.organizer_player_id) uniqueStudents.add(`player_${e.organizer_player_id}`);
+          if (e.member_subscription_id) uniqueStudents.add(`member_${e.member_subscription_id}`);
+        });
+      }
+
+      // Packs ativos (não completados)
+      const activePacks = packs?.filter(p => {
+        const completions = (p as any).completions?.[0]?.count || 0;
+        return completions < (p as any).pack_size;
+      }).length || 0;
+
+      // Séries de grupo ativas (buscar pack_purchases com class_category = 'group')
+      const { data: groupSeries } = await supabase
+        .from('pack_purchases')
+        .select(`
+          id,
+          pack_size,
+          class_type:class_types(class_category),
+          completions:lesson_completions(count)
+        `)
+        .eq('club_owner_id', effectiveUserId)
+        .eq('is_active', true);
+
+      const activeGroupSeries = groupSeries?.filter(gs => {
+        const category = (gs as any).class_type?.class_category;
+        if (category !== 'group') return false;
+        const completions = (gs as any).completions?.[0]?.count || 0;
+        return completions < (gs as any).pack_size;
+      }).length || 0;
+
+      // Duração média
+      const averageClassDuration = completedClasses.length > 0
+        ? completedClasses.reduce((sum, cls) => {
+            const duration = (cls.class_type as any)?.duration_minutes || 60;
+            return sum + duration;
+          }, 0) / completedClasses.length
+        : 0;
+
+      setMetrics({
+        totalHours: Math.round(totalHours * 10) / 10,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        totalStudents: uniqueStudents.size,
+        totalClasses: allClasses?.length || 0,
+        completedClasses: completedClasses.length,
+        activePacks,
+        activeGroupSeries,
+        averageClassDuration: Math.round(averageClassDuration),
+        revenueByCategory
+      });
+    } catch (error) {
+      console.error('Error loading metrics:', error);
+      setMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  };
+
   // Open class detail modal (universal for all class types)
   const openClassDetail = async (cls: ScheduledClass) => {
     setSelectedClassDetail(cls);
@@ -2029,6 +2185,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           >
             <Clock className="w-4 h-4" />
             Terminadas
+          </button>
+          <button
+            onClick={() => { setActiveTab('metrics'); loadMetrics(); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+              activeTab === 'metrics' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            Métricas
           </button>
           <button
             onClick={() => setActiveTab('types')}
@@ -2840,6 +3005,166 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
             ))}
           </div>
         )
+      )}
+
+      {/* ==================== METRICS TAB ==================== */}
+      {activeTab === 'metrics' && (
+        <div className="space-y-6">
+          {metricsLoading ? (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <div className="text-gray-500">{t.message.loading}</div>
+            </div>
+          ) : metrics ? (
+            <>
+              {/* Main Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Total de Horas */}
+                <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-6 text-white">
+                  <div className="flex items-center justify-between mb-2">
+                    <Clock className="w-8 h-8 opacity-80" />
+                    <TrendingUp className="w-5 h-5 opacity-80" />
+                  </div>
+                  <div className="text-3xl font-bold mb-1">{metrics.totalHours}</div>
+                  <div className="text-sm opacity-90">Horas de Aulas</div>
+                </div>
+
+                {/* Total de Receita */}
+                <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-6 text-white">
+                  <div className="flex items-center justify-between mb-2">
+                    <Euro className="w-8 h-8 opacity-80" />
+                    <TrendingUp className="w-5 h-5 opacity-80" />
+                  </div>
+                  <div className="text-3xl font-bold mb-1">{metrics.totalRevenue.toFixed(2)}</div>
+                  <div className="text-sm opacity-90">EUR Receita Total</div>
+                </div>
+
+                {/* Total de Alunos */}
+                <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg p-6 text-white">
+                  <div className="flex items-center justify-between mb-2">
+                    <Users className="w-8 h-8 opacity-80" />
+                    <TrendingUp className="w-5 h-5 opacity-80" />
+                  </div>
+                  <div className="text-3xl font-bold mb-1">{metrics.totalStudents}</div>
+                  <div className="text-sm opacity-90">Alunos Únicos</div>
+                </div>
+
+                {/* Total de Aulas */}
+                <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl shadow-lg p-6 text-white">
+                  <div className="flex items-center justify-between mb-2">
+                    <GraduationCap className="w-8 h-8 opacity-80" />
+                    <TrendingUp className="w-5 h-5 opacity-80" />
+                  </div>
+                  <div className="text-3xl font-bold mb-1">{metrics.totalClasses}</div>
+                  <div className="text-sm opacity-90">Total de Aulas</div>
+                </div>
+              </div>
+
+              {/* Secondary Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Aulas Completadas */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-green-100 rounded-lg">
+                      <CheckCircle2 className="w-6 h-6 text-green-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900">{metrics.completedClasses}</div>
+                      <div className="text-sm text-gray-500">Aulas Completadas</div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {metrics.totalClasses > 0 
+                      ? `${Math.round((metrics.completedClasses / metrics.totalClasses) * 100)}% do total`
+                      : '0% do total'}
+                  </div>
+                </div>
+
+                {/* Packs Ativos */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-orange-100 rounded-lg">
+                      <Package className="w-6 h-6 text-orange-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900">{metrics.activePacks}</div>
+                      <div className="text-sm text-gray-500">Packs Ativos</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Séries de Grupo Ativas */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-purple-100 rounded-lg">
+                      <Users className="w-6 h-6 text-purple-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900">{metrics.activeGroupSeries}</div>
+                      <div className="text-sm text-gray-500">Séries de Grupo Ativas</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Duração Média */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2 bg-blue-100 rounded-lg">
+                      <Clock className="w-6 h-6 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900">{metrics.averageClassDuration}</div>
+                      <div className="text-sm text-gray-500">Min. Duração Média</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Receita por Categoria */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" />
+                  Receita por Categoria
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="text-sm text-blue-600 font-medium mb-1">Aulas Pontuais</div>
+                    <div className="text-2xl font-bold text-blue-700">{metrics.revenueByCategory.single.toFixed(2)} EUR</div>
+                  </div>
+                  <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+                    <div className="text-sm text-purple-600 font-medium mb-1">Aulas de Grupo</div>
+                    <div className="text-2xl font-bold text-purple-700">{metrics.revenueByCategory.group.toFixed(2)} EUR</div>
+                  </div>
+                  <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                    <div className="text-sm text-orange-600 font-medium mb-1">Packs</div>
+                    <div className="text-2xl font-bold text-orange-700">{metrics.revenueByCategory.pack.toFixed(2)} EUR</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botão Atualizar */}
+              <div className="flex justify-end">
+                <button
+                  onClick={loadMetrics}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition flex items-center gap-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Atualizar Métricas
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+              <BarChart3 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Erro ao carregar métricas</h3>
+              <button
+                onClick={loadMetrics}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition mt-4"
+              >
+                Tentar Novamente
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Class Type Form Modal */}
