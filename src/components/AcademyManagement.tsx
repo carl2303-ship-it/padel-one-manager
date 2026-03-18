@@ -1775,6 +1775,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     setGroupClassParticipants([]);
     setGroupClassSearchResults(new Map());
     setFocusedGroupInput(null);
+    setShowGroupClassForm(false);
   };
 
   const handleExtendGroupSeries = async (seriesId: string) => {
@@ -3050,11 +3051,20 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   required
                 >
                   <option value="">{t.academy.selectClassType}</option>
-                  {classTypes.filter(ct => ct.class_category !== 'pack').map(type => (
-                    <option key={type.id} value={type.id}>
-                      {type.name} - {type.class_category === 'group' ? `${type.monthly_price_per_player || type.price_per_class} EUR/mês/jogador` : `${type.price_per_class} EUR`} ({type.duration_minutes} min)
-                    </option>
-                  ))}
+                  {classTypes
+                    .filter(ct => {
+                      // Se é formulário de grupo, mostrar apenas tipos de grupo
+                      if (showGroupClassForm) {
+                        return ct.class_category === 'group';
+                      }
+                      // Se é formulário de aula pontual, mostrar apenas tipos pontuais
+                      return ct.class_category === 'single';
+                    })
+                    .map(type => (
+                      <option key={type.id} value={type.id}>
+                        {type.name} - {type.class_category === 'group' ? `${type.monthly_price_per_player || type.price_per_class} EUR/mês/jogador` : `${type.price_per_class} EUR`} ({type.duration_minutes} min)
+                      </option>
+                    ))}
                 </select>
               </div>
               <div>
