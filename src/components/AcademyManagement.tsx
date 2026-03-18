@@ -3518,26 +3518,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-semibold text-gray-900">Packs de Aulas</h2>
-            <button
-              onClick={() => {
-                setSelectedPack(null);
-                setStudentName('');
-                setStudentEmail('');
-                setStudentPhone('');
-                setSelectedPlayer(null);
-                setPackPlayerSearch('');
-                setSelectedPackType('');
-                setPackCoachId('');
-                setPackCourtId('');
-                setPackStartDate('');
-                setPackStartTime('09:00');
-                setShowPackForm(true);
-              }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Novo Pack
-            </button>
           </div>
 
           {/* Sub-tabs: Ativos / Terminados */}
