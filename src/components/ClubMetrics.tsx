@@ -142,7 +142,7 @@ interface TournamentMetric {
   revenue: number;
 }
 
-type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all';
+type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 type ActiveTab = 'overview' | 'players' | 'sponsors';
 
 export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
@@ -152,6 +152,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [dateFilter, setDateFilter] = useState<DateFilter>('month');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [loading, setLoading] = useState(true);
 
   const [courtMetrics, setCourtMetrics] = useState<CourtBookingMetric[]>([]);
@@ -242,6 +244,18 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         startDate = new Date(now.getFullYear(), 0, 1);
         endDate = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
         break;
+      case 'custom':
+        if (customStartDate && customEndDate) {
+          startDate = new Date(customStartDate);
+          startDate.setHours(0, 0, 0, 0);
+          endDate = new Date(customEndDate);
+          endDate.setHours(23, 59, 59, 999);
+        } else {
+          // Fallback para mês atual se datas não estiverem preenchidas
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        }
+        break;
       case 'all':
         startDate = new Date(2020, 0, 1);
         endDate = new Date(now.getFullYear() + 1, 11, 31, 23, 59, 59, 999);
@@ -253,9 +267,12 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
   useEffect(() => {
     if (effectiveUserId) {
-      loadAllMetrics();
+      // Só recarregar se for período customizado e ambas as datas estiverem preenchidas, ou se não for customizado
+      if (dateFilter !== 'custom' || (customStartDate && customEndDate)) {
+        loadAllMetrics();
+      }
     }
-  }, [effectiveUserId, dateFilter]);
+  }, [effectiveUserId, dateFilter, customStartDate, customEndDate]);
 
   const loadAllMetrics = async () => {
     setLoading(true);
@@ -952,6 +969,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     { value: 'week', label: t.bookings?.thisWeek || 'This Week' },
     { value: 'month', label: t.dashboard?.thisMonth || 'This Month' },
     { value: 'year', label: 'This Year' },
+    { value: 'custom', label: 'Período Personalizado' },
     { value: 'all', label: t.common?.all || 'All Time' }
   ];
 
@@ -992,20 +1010,53 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          {dateFilterOptions.map(option => (
-            <button
-              key={option.value}
-              onClick={() => setDateFilter(option.value)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                dateFilter === option.value
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2 flex-wrap">
+            {dateFilterOptions.map(option => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  setDateFilter(option.value);
+                  if (option.value !== 'custom') {
+                    setCustomStartDate('');
+                    setCustomEndDate('');
+                  }
+                }}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  dateFilter === option.value
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          
+          {/* Campos de data customizada */}
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">De:</label>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Até:</label>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  min={customStartDate || undefined}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
