@@ -21,7 +21,9 @@ import {
   Camera,
   Upload,
   Loader2,
-  Clock
+  Clock,
+  Sun,
+  Snowflake
 } from 'lucide-react';
 
 type PaymentMethod = 'at_club' | 'per_player' | 'full_court' | 'at_club_or_per_player' | 'at_club_or_full_court' | 'all';
@@ -45,6 +47,7 @@ interface Club {
   stripe_secret_key: string | null;
   opening_time: string | null;
   closing_time: string | null;
+  active_schedule: string;
 }
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
@@ -83,6 +86,7 @@ export default function ClubManagement() {
     stripe_secret_key: '',
     opening_time: '08:00',
     closing_time: '22:00',
+    active_schedule: 'summer',
   });
   const [uploadingPhoto, setUploadingPhoto] = useState<1 | 2 | null>(null);
 
@@ -117,6 +121,20 @@ export default function ClubManagement() {
   };
   const timeOptions = generateTimeOptions();
 
+  // End time options include midnight (00:00 = end of day)
+  const generateEndTimeOptions = () => {
+    const options = [];
+    for (let h = 1; h < 24; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+        options.push(time);
+      }
+    }
+    options.push('00:00'); // midnight
+    return options;
+  };
+  const endTimeOptions = generateEndTimeOptions();
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -135,6 +153,7 @@ export default function ClubManagement() {
       stripe_secret_key: '',
       opening_time: '08:00',
       closing_time: '22:00',
+      active_schedule: 'summer',
     });
     setEditingClub(null);
     setShowForm(false);
@@ -158,6 +177,7 @@ export default function ClubManagement() {
       stripe_secret_key: club.stripe_secret_key || '',
       opening_time: club.opening_time || '08:00',
       closing_time: club.closing_time || '22:00',
+      active_schedule: club.active_schedule || 'summer',
     });
     setEditingClub(club);
     setShowForm(true);
@@ -237,6 +257,7 @@ export default function ClubManagement() {
           stripe_secret_key: formData.stripe_secret_key.trim() || null,
           opening_time: formData.opening_time,
           closing_time: formData.closing_time,
+          active_schedule: formData.active_schedule,
           updated_at: new Date().toISOString()
         })
         .eq('id', editingClub.id);
@@ -266,6 +287,7 @@ export default function ClubManagement() {
           stripe_secret_key: formData.stripe_secret_key.trim() || null,
           opening_time: formData.opening_time,
           closing_time: formData.closing_time,
+          active_schedule: formData.active_schedule,
         });
 
       if (!error) {
@@ -586,11 +608,54 @@ export default function ClubManagement() {
                     onChange={(e) => setFormData({ ...formData, closing_time: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    {timeOptions.map(time => (
-                      <option key={time} value={time}>{time}</option>
+                    {endTimeOptions.map(time => (
+                      <option key={time} value={time}>
+                        {time === '00:00' ? '00:00 (Meia-noite)' : time}
+                      </option>
                     ))}
                   </select>
                 </div>
+              </div>
+            </div>
+
+            {/* Active Schedule Section */}
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                {formData.active_schedule === 'summer' ? (
+                  <Sun className="w-4 h-4 text-orange-500" />
+                ) : (
+                  <Snowflake className="w-4 h-4 text-blue-500" />
+                )}
+                Horário Ativo (Verão / Inverno)
+              </h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Selecione o período ativo. Cada campo terá slots de reserva diferentes para verão e inverno.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, active_schedule: 'summer' })}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
+                    formData.active_schedule === 'summer'
+                      ? 'border-orange-500 bg-orange-50 text-orange-700 shadow-sm'
+                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  <Sun className="w-5 h-5" />
+                  Horário de Verão
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, active_schedule: 'winter' })}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
+                    formData.active_schedule === 'winter'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  <Snowflake className="w-5 h-5" />
+                  Horário de Inverno
+                </button>
               </div>
             </div>
 
@@ -779,9 +844,20 @@ export default function ClubManagement() {
                   {(club.opening_time || club.closing_time) && (
                     <div className="flex items-center gap-1 mt-1 text-sm text-gray-500">
                       <Clock className="w-3 h-3" />
-                      {club.opening_time || '08:00'} - {club.closing_time || '22:00'}
+                      {club.opening_time || '08:00'} - {club.closing_time === '00:00' ? '00:00 (Meia-noite)' : (club.closing_time || '22:00')}
                     </div>
                   )}
+                  <div className="flex items-center gap-1 mt-1">
+                    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      club.active_schedule === 'winter' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                    }`}>
+                      {club.active_schedule === 'winter' ? (
+                        <><Snowflake className="w-3 h-3" /> Horário de Inverno</>
+                      ) : (
+                        <><Sun className="w-3 h-3" /> Horário de Verão</>
+                      )}
+                    </span>
+                  </div>
                   <div className="mt-2">
                     <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                       club.payment_method === 'at_club' ? 'bg-gray-100 text-gray-600' :

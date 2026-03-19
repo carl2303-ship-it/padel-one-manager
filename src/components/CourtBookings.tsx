@@ -31,11 +31,46 @@ interface CourtSlotConfig {
   durations: number[];
 }
 
-interface CourtSlotsData {
+interface ScheduleConfig {
   operating_start: string;
   operating_end: string;
   slots: CourtSlotConfig[];
 }
+
+interface CourtSlotsData {
+  schedules?: {
+    summer: ScheduleConfig;
+    winter: ScheduleConfig;
+  };
+  // Legacy format
+  operating_start?: string;
+  operating_end?: string;
+  slots?: CourtSlotConfig[];
+}
+
+// Helper: get active schedule from court_slots (handles legacy format)
+const getActiveSchedule = (courtSlots: CourtSlotsData | null, activeSchedule: string): ScheduleConfig | null => {
+  if (!courtSlots) return null;
+  if (courtSlots.schedules) {
+    return courtSlots.schedules[activeSchedule as 'summer' | 'winter'] || courtSlots.schedules.summer;
+  }
+  // Legacy format
+  if (courtSlots.operating_start && courtSlots.slots) {
+    return {
+      operating_start: courtSlots.operating_start,
+      operating_end: courtSlots.operating_end || '22:00',
+      slots: courtSlots.slots,
+    };
+  }
+  return null;
+};
+
+// Helper: time to minutes, treating 00:00 as 1440 for end times
+const timeToMinutes = (time: string, isEndTime = false): number => {
+  const [h, m] = time.split(':').map(Number);
+  const mins = h * 60 + m;
+  return isEndTime && mins === 0 ? 1440 : mins;
+};
 
 interface Court {
   id: string;
@@ -339,6 +374,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   });
 
   const [operatingHours, setOperatingHours] = useState({ start: '08:00', end: '22:00' });
+  const [clubActiveSchedule, setClubActiveSchedule] = useState<string>('summer');
 
   useEffect(() => {
     if (effectiveUserId) {
@@ -379,7 +415,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         .maybeSingle(),
       supabase
         .from('clubs')
-        .select('id')
+        .select('id, active_schedule')
         .eq('owner_id', effectiveUserId)
         .maybeSingle()
     ]);
@@ -426,26 +462,37 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
 
     // Derive operating hours from per-court slots (use earliest start and latest end across all courts)
+    const activeScheduleValue = clubResult.data?.active_schedule || 'summer';
+    setClubActiveSchedule(activeScheduleValue);
+    const clubActiveSchedule = activeScheduleValue;
     if (courtsResult.data && courtsResult.data.length > 0) {
-      let earliestStart = '23:30';
-      let latestEnd = '00:00';
+      let earliestStartMin = 24 * 60;
+      let latestEndMin = 0;
+      let foundSlots = false;
       for (const court of courtsResult.data) {
-        if (court.court_slots) {
-          if (court.court_slots.operating_start < earliestStart) earliestStart = court.court_slots.operating_start;
-          if (court.court_slots.operating_end > latestEnd) latestEnd = court.court_slots.operating_end;
+        const schedule = getActiveSchedule(court.court_slots, clubActiveSchedule);
+        if (schedule) {
+          foundSlots = true;
+          const startMin = timeToMinutes(schedule.operating_start);
+          const endMin = timeToMinutes(schedule.operating_end, true);
+          if (startMin < earliestStartMin) earliestStartMin = startMin;
+          if (endMin > latestEndMin) latestEndMin = endMin;
         }
       }
-      // Fallback to global settings if no courts have slot config
-      if (earliestStart === '23:30' || latestEnd === '00:00') {
-        if (settingsResult.data) {
-          earliestStart = settingsResult.data.booking_start_time || '08:00';
-          latestEnd = settingsResult.data.booking_end_time || '22:00';
-        } else {
-          earliestStart = '08:00';
-          latestEnd = '22:00';
-        }
+      if (foundSlots) {
+        const startH = Math.floor(earliestStartMin / 60);
+        const startM = earliestStartMin % 60;
+        const endVal = latestEndMin >= 1440 ? '00:00' : `${Math.floor(latestEndMin / 60).toString().padStart(2, '0')}:${(latestEndMin % 60).toString().padStart(2, '0')}`;
+        setOperatingHours({
+          start: `${startH.toString().padStart(2, '0')}:${startM.toString().padStart(2, '0')}`,
+          end: endVal
+        });
+      } else if (settingsResult.data) {
+        setOperatingHours({
+          start: settingsResult.data.booking_start_time || '08:00',
+          end: settingsResult.data.booking_end_time || '22:00'
+        });
       }
-      setOperatingHours({ start: earliestStart, end: latestEnd });
     } else if (settingsResult.data) {
       setOperatingHours({
         start: settingsResult.data.booking_start_time || '08:00',
@@ -1857,10 +1904,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
   const generateTimeSlots = () => {
     const slots: string[] = [];
-    const [startHour, startMin] = operatingHours.start.split(':').map(Number);
-    const [endHour, endMin] = operatingHours.end.split(':').map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
+    const startMinutes = timeToMinutes(operatingHours.start);
+    const endMinutes = timeToMinutes(operatingHours.end, true);
 
     for (let m = startMinutes; m < endMinutes; m += 30) {
       const h = Math.floor(m / 60);
@@ -2014,10 +2059,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
   const generateCalendarSlots = () => {
     const slots: { time: string; label: string }[] = [];
-    const [startH, startM] = operatingHours.start.split(':').map(Number);
-    const [endH, endM] = operatingHours.end.split(':').map(Number);
-    const startMin = startH * 60 + startM;
-    const endMin = endH * 60 + endM;
+    const startMin = timeToMinutes(operatingHours.start);
+    const endMin = timeToMinutes(operatingHours.end, true);
 
     for (let m = startMin; m < endMin; m += 30) {
       const h = Math.floor(m / 60);
@@ -2535,8 +2578,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                   >
                     {(() => {
                       const selectedCourt = courts.find(c => c.id === newBooking.court_id);
-                      if (selectedCourt?.court_slots?.slots) {
-                        return selectedCourt.court_slots.slots
+                      const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
+                      if (schedule?.slots) {
+                        return schedule.slots
                           .filter(s => s.durations.length > 0)
                           .map(s => (
                             <option key={s.time} value={s.time}>{s.time}</option>
@@ -2557,7 +2601,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                   >
                     {(() => {
                       const selectedCourt = courts.find(c => c.id === newBooking.court_id);
-                      const selectedSlot = selectedCourt?.court_slots?.slots?.find(s => s.time === newBooking.startTime);
+                      const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
+                      const selectedSlot = schedule?.slots?.find(s => s.time === newBooking.startTime);
                       if (selectedSlot) {
                         return selectedSlot.durations.map(d => (
                           <option key={d} value={d / 60}>
