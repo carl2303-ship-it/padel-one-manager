@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
-import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle } from 'lucide-react';
+import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle, Calendar } from 'lucide-react';
 import CourtManagement from './CourtManagement';
 import ClubManagement from './ClubManagement';
 
@@ -348,124 +348,30 @@ export default function Settings() {
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="flex items-center gap-3 p-4 bg-gray-50 border-b border-gray-100">
-              <Clock className="w-5 h-5 text-gray-600" />
-              <h2 className="font-semibold text-gray-900">{t.settings?.operatingHours || 'Operating Hours'}</h2>
+              <Calendar className="w-5 h-5 text-gray-600" />
+              <h2 className="font-semibold text-gray-900">Reservas</h2>
             </div>
             <form onSubmit={handleSaveHours} className="p-4 space-y-4">
-              <p className="text-sm text-gray-600">{t.settings?.operatingHoursDesc || 'Defina o horário de funcionamento e os slots disponíveis para reserva'}</p>
-              
-              {/* Opening / Closing time */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.openingTime || 'Hora de Abertura'}
-                  </label>
-                  <select
-                    value={bookingStartTime}
-                    onChange={(e) => handleStartTimeChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {timeOptions.map(time => (
-                      <option key={time} value={time}>{time}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.closingTime || 'Hora de Fecho'}
-                  </label>
-                  <select
-                    value={bookingEndTime}
-                    onChange={(e) => handleEndTimeChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {timeOptions.map(time => (
-                      <option key={time} value={time}>{time}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <p className="text-sm text-gray-600">
+                Configurações gerais de reservas. Os slots por campo são configurados em Definições → Campos.
+              </p>
 
-              {/* Selectable time slots grid */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
-                    {t.settings?.availableSlots || 'Slots Disponíveis para Reserva'}
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={selectAllSlots}
-                      className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
-                    >
-                      Selecionar Todos
-                    </button>
-                    <button
-                      type="button"
-                      onClick={deselectAllSlots}
-                      className="text-xs px-2 py-1 bg-gray-50 text-gray-600 rounded hover:bg-gray-100 transition"
-                    >
-                      Limpar
-                    </button>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 mb-2">
-                  Selecione os horários em que os jogadores podem reservar. Cada slot = 30 minutos.
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t.settings?.maxAdvanceDays || 'Reserva antecipada (dias)'}
+                </label>
+                <select
+                  value={maxAdvanceDays}
+                  onChange={(e) => setMaxAdvanceDays(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {[3, 5, 7, 10, 14, 21, 30].map(d => (
+                    <option key={d} value={d}>{d} {t.settings?.days || 'dias'}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Quantos dias em avanço os jogadores podem reservar
                 </p>
-                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
-                  {allPossibleSlots.map(slot => {
-                    const isSelected = availableBookingSlots.includes(slot);
-                    return (
-                      <button
-                        key={slot}
-                        type="button"
-                        onClick={() => toggleSlot(slot)}
-                        className={`px-2 py-2 text-sm font-medium rounded-lg border transition-all ${
-                          isSelected
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                            : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300 hover:text-gray-600'
-                        }`}
-                      >
-                        {slot}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  {availableBookingSlots.length} de {allPossibleSlots.length} slots selecionados
-                </p>
-              </div>
-
-              {/* Slot Duration & Max Advance Days */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.slotDuration || 'Duração da Reserva'}
-                  </label>
-                  <select
-                    value={bookingSlotDuration}
-                    onChange={(e) => setBookingSlotDuration(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value={60}>60 min (1h)</option>
-                    <option value={90}>90 min (1h30)</option>
-                    <option value={120}>120 min (2h)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.settings?.maxAdvanceDays || 'Reserva antecipada (dias)'}
-                  </label>
-                  <select
-                    value={maxAdvanceDays}
-                    onChange={(e) => setMaxAdvanceDays(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {[3, 5, 7, 10, 14, 21, 30].map(d => (
-                      <option key={d} value={d}>{d} {t.settings?.days || 'dias'}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               {hoursSuccess && (

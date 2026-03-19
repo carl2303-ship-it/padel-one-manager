@@ -26,12 +26,24 @@ import {
   CreditCard
 } from 'lucide-react';
 
+interface CourtSlotConfig {
+  time: string;
+  durations: number[];
+}
+
+interface CourtSlotsData {
+  operating_start: string;
+  operating_end: string;
+  slots: CourtSlotConfig[];
+}
+
 interface Court {
   id: string;
   name: string;
   type: string;
   hourly_rate: number;
   peak_rate: number;
+  court_slots: CourtSlotsData | null;
 }
 
 interface Booking {
@@ -413,7 +425,28 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       }
     }
 
-    if (settingsResult.data) {
+    // Derive operating hours from per-court slots (use earliest start and latest end across all courts)
+    if (courtsResult.data && courtsResult.data.length > 0) {
+      let earliestStart = '23:30';
+      let latestEnd = '00:00';
+      for (const court of courtsResult.data) {
+        if (court.court_slots) {
+          if (court.court_slots.operating_start < earliestStart) earliestStart = court.court_slots.operating_start;
+          if (court.court_slots.operating_end > latestEnd) latestEnd = court.court_slots.operating_end;
+        }
+      }
+      // Fallback to global settings if no courts have slot config
+      if (earliestStart === '23:30' || latestEnd === '00:00') {
+        if (settingsResult.data) {
+          earliestStart = settingsResult.data.booking_start_time || '08:00';
+          latestEnd = settingsResult.data.booking_end_time || '22:00';
+        } else {
+          earliestStart = '08:00';
+          latestEnd = '22:00';
+        }
+      }
+      setOperatingHours({ start: earliestStart, end: latestEnd });
+    } else if (settingsResult.data) {
       setOperatingHours({
         start: settingsResult.data.booking_start_time || '08:00',
         end: settingsResult.data.booking_end_time || '22:00'
@@ -2500,9 +2533,19 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     onChange={(e) => setNewBooking({ ...newBooking, startTime: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    {timeSlots.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
-                    ))}
+                    {(() => {
+                      const selectedCourt = courts.find(c => c.id === newBooking.court_id);
+                      if (selectedCourt?.court_slots?.slots) {
+                        return selectedCourt.court_slots.slots
+                          .filter(s => s.durations.length > 0)
+                          .map(s => (
+                            <option key={s.time} value={s.time}>{s.time}</option>
+                          ));
+                      }
+                      return timeSlots.map(slot => (
+                        <option key={slot} value={slot}>{slot}</option>
+                      ));
+                    })()}
                   </select>
                 </div>
                 <div>
@@ -2512,9 +2555,24 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     onChange={(e) => setNewBooking({ ...newBooking, duration: parseFloat(e.target.value) })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    <option value={1}>1h</option>
-                    <option value={1.5}>1h30</option>
-                    <option value={2}>2h</option>
+                    {(() => {
+                      const selectedCourt = courts.find(c => c.id === newBooking.court_id);
+                      const selectedSlot = selectedCourt?.court_slots?.slots?.find(s => s.time === newBooking.startTime);
+                      if (selectedSlot) {
+                        return selectedSlot.durations.map(d => (
+                          <option key={d} value={d / 60}>
+                            {d === 60 ? '1h' : d === 90 ? '1h30' : '2h'}
+                          </option>
+                        ));
+                      }
+                      return (
+                        <>
+                          <option value={1}>1h</option>
+                          <option value={1.5}>1h30</option>
+                          <option value={2}>2h</option>
+                        </>
+                      );
+                    })()}
                   </select>
                 </div>
               </div>

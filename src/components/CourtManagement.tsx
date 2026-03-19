@@ -13,8 +13,22 @@ import {
   Sun,
   Umbrella,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Copy,
+  Clock,
+  Settings
 } from 'lucide-react';
+
+interface CourtSlotConfig {
+  time: string;
+  durations: number[]; // [60, 90, 120]
+}
+
+interface CourtSlotsData {
+  operating_start: string;
+  operating_end: string;
+  slots: CourtSlotConfig[];
+}
 
 interface Court {
   id: string;
@@ -25,6 +39,7 @@ interface Court {
   is_active: boolean;
   description: string | null;
   sort_order: number;
+  court_slots: CourtSlotsData | null;
 }
 
 export default function CourtManagement() {
@@ -35,6 +50,7 @@ export default function CourtManagement() {
   const [editingCourt, setEditingCourt] = useState<Court | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showSlotsConfig, setShowSlotsConfig] = useState<string | null>(null); // court id
 
   const [form, setForm] = useState({
     name: '',
@@ -44,6 +60,11 @@ export default function CourtManagement() {
     is_active: true,
     description: ''
   });
+
+  // Slot configuration state
+  const [slotsOperatingStart, setSlotsOperatingStart] = useState('08:00');
+  const [slotsOperatingEnd, setSlotsOperatingEnd] = useState('22:00');
+  const [slotsConfig, setSlotsConfig] = useState<CourtSlotConfig[]>([]);
 
   useEffect(() => {
     if (user) {
@@ -65,6 +86,144 @@ export default function CourtManagement() {
       setCourts(data);
     }
     setLoading(false);
+  };
+
+  // Generate time options for dropdowns
+  const generateTimeOptions = () => {
+    const options = [];
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+        options.push(time);
+      }
+    }
+    return options;
+  };
+  const timeOptions = generateTimeOptions();
+
+  // Generate 30-min slots between two times
+  const generateSlotsForRange = (start: string, end: string): CourtSlotConfig[] => {
+    const slots: CourtSlotConfig[] = [];
+    const [startH, startM] = start.split(':').map(Number);
+    const [endH, endM] = end.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    for (let m = startMinutes; m < endMinutes; m += 30) {
+      const h = Math.floor(m / 60);
+      const min = m % 60;
+      const timeStr = `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+      slots.push({ time: timeStr, durations: [60, 90, 120] });
+    }
+    return slots;
+  };
+
+  // Open slot config for a court
+  const openSlotsConfig = (court: Court) => {
+    if (court.court_slots) {
+      setSlotsOperatingStart(court.court_slots.operating_start);
+      setSlotsOperatingEnd(court.court_slots.operating_end);
+      setSlotsConfig(court.court_slots.slots);
+    } else {
+      // Default: all slots with all durations
+      setSlotsOperatingStart('08:00');
+      setSlotsOperatingEnd('22:00');
+      setSlotsConfig(generateSlotsForRange('08:00', '22:00'));
+    }
+    setShowSlotsConfig(court.id);
+  };
+
+  const handleSlotsStartChange = (newStart: string) => {
+    setSlotsOperatingStart(newStart);
+    // Regenerate slots, preserving existing configurations
+    const newSlots = generateSlotsForRange(newStart, slotsOperatingEnd);
+    // Merge with existing to preserve duration settings
+    const merged = newSlots.map(ns => {
+      const existing = slotsConfig.find(s => s.time === ns.time);
+      return existing || ns;
+    });
+    setSlotsConfig(merged);
+  };
+
+  const handleSlotsEndChange = (newEnd: string) => {
+    setSlotsOperatingEnd(newEnd);
+    const newSlots = generateSlotsForRange(slotsOperatingStart, newEnd);
+    const merged = newSlots.map(ns => {
+      const existing = slotsConfig.find(s => s.time === ns.time);
+      return existing || ns;
+    });
+    setSlotsConfig(merged);
+  };
+
+  const toggleSlotDuration = (slotTime: string, duration: number) => {
+    setSlotsConfig(prev => prev.map(slot => {
+      if (slot.time !== slotTime) return slot;
+      const hasDuration = slot.durations.includes(duration);
+      const newDurations = hasDuration
+        ? slot.durations.filter(d => d !== duration)
+        : [...slot.durations, duration].sort((a, b) => a - b);
+      return { ...slot, durations: newDurations };
+    }));
+  };
+
+  const setAllSlotsDuration = (duration: number, enabled: boolean) => {
+    setSlotsConfig(prev => prev.map(slot => {
+      if (enabled) {
+        return { ...slot, durations: slot.durations.includes(duration) ? slot.durations : [...slot.durations, duration].sort((a, b) => a - b) };
+      } else {
+        return { ...slot, durations: slot.durations.filter(d => d !== duration) };
+      }
+    }));
+  };
+
+  const selectAllDurations = () => {
+    setSlotsConfig(prev => prev.map(slot => ({ ...slot, durations: [60, 90, 120] })));
+  };
+
+  const handleSaveSlotsConfig = async (courtId: string) => {
+    const courtSlotsData: CourtSlotsData = {
+      operating_start: slotsOperatingStart,
+      operating_end: slotsOperatingEnd,
+      slots: slotsConfig.filter(s => s.durations.length > 0) // Only save slots with at least one duration
+    };
+
+    const { error } = await supabase
+      .from('club_courts')
+      .update({ court_slots: courtSlotsData })
+      .eq('id', courtId);
+
+    if (!error) {
+      setShowSlotsConfig(null);
+      loadCourts();
+    } else {
+      alert('Erro ao guardar slots: ' + error.message);
+    }
+  };
+
+  const handleCopyCourt = async (court: Court) => {
+    if (!user) return;
+
+    const maxSortOrder = courts.length > 0 ? Math.max(...courts.map(c => c.sort_order)) : -1;
+    const newName = `${court.name} (cópia)`;
+
+    const { error } = await supabase
+      .from('club_courts')
+      .insert({
+        user_id: user.id,
+        name: newName,
+        type: court.type,
+        hourly_rate: court.hourly_rate,
+        peak_rate: court.peak_rate,
+        is_active: court.is_active,
+        description: court.description,
+        sort_order: maxSortOrder + 1,
+        court_slots: court.court_slots
+      });
+
+    if (!error) {
+      loadCourts();
+    } else {
+      alert('Erro ao copiar campo: ' + error.message);
+    }
   };
 
   const handleMoveUp = async (court: Court, index: number) => {
@@ -117,6 +276,13 @@ export default function CourtManagement() {
       }
     } else {
       const maxSortOrder = courts.length > 0 ? Math.max(...courts.map(c => c.sort_order)) : -1;
+      // Default slots for new court
+      const defaultSlots: CourtSlotsData = {
+        operating_start: '08:00',
+        operating_end: '22:00',
+        slots: generateSlotsForRange('08:00', '22:00')
+      };
+
       const { error } = await supabase
         .from('club_courts')
         .insert({
@@ -127,7 +293,8 @@ export default function CourtManagement() {
           peak_rate: form.peak_rate,
           is_active: form.is_active,
           description: form.description || null,
-          sort_order: maxSortOrder + 1
+          sort_order: maxSortOrder + 1,
+          court_slots: defaultSlots
         });
 
       if (!error) {
@@ -201,6 +368,17 @@ export default function CourtManagement() {
     }
   };
 
+  // Count configured slots for a court
+  const getSlotsSummary = (court: Court) => {
+    if (!court.court_slots) return null;
+    const activeSlots = court.court_slots.slots.filter(s => s.durations.length > 0);
+    return {
+      total: activeSlots.length,
+      start: court.court_slots.operating_start,
+      end: court.court_slots.operating_end,
+    };
+  };
+
   if (loading) {
     return (
       <div className="p-6 lg:p-8 flex items-center justify-center min-h-[400px]">
@@ -242,6 +420,7 @@ export default function CourtManagement() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {courts.map((court, index) => {
             const TypeIcon = getTypeIcon(court.type);
+            const slotsSummary = getSlotsSummary(court);
             return (
               <div
                 key={court.id}
@@ -295,28 +474,63 @@ export default function CourtManagement() {
                     <span className="text-sm text-gray-500">{t.courts.peakRate}</span>
                     <span className="text-sm font-medium text-gray-900">{court.peak_rate} EUR</span>
                   </div>
+
+                  {/* Slots summary */}
+                  <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-blue-500" />
+                      <span className="text-sm text-gray-500">Slots</span>
+                    </div>
+                    {slotsSummary ? (
+                      <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                        {slotsSummary.start}-{slotsSummary.end} · {slotsSummary.total} slots
+                      </span>
+                    ) : (
+                      <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                        Não configurado
+                      </span>
+                    )}
+                  </div>
+
                   {court.description && (
                     <p className="text-sm text-gray-500 pt-2 border-t border-gray-100">
                       {court.description}
                     </p>
                   )}
-                  <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-1 pt-3 border-t border-gray-100">
+                    <button
+                      onClick={() => openSlotsConfig(court)}
+                      className="flex-1 px-2 py-2 text-sm font-medium text-green-600 hover:bg-green-50 rounded-lg transition flex items-center justify-center gap-1"
+                      title="Configurar Slots"
+                    >
+                      <Settings className="w-4 h-4" />
+                      Slots
+                    </button>
                     <button
                       onClick={() => handleEdit(court)}
-                      className="flex-1 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center justify-center gap-1"
+                      className="flex-1 px-2 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center justify-center gap-1"
                     >
                       <Edit2 className="w-4 h-4" />
                       {t.common.edit}
                     </button>
                     <button
+                      onClick={() => handleCopyCourt(court)}
+                      className="px-2 py-2 text-sm font-medium text-purple-600 hover:bg-purple-50 rounded-lg transition flex items-center justify-center gap-1"
+                      title="Copiar Campo"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => handleToggleActive(court)}
-                      className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg transition flex items-center justify-center gap-1 ${
+                      className={`px-2 py-2 text-sm font-medium rounded-lg transition flex items-center justify-center gap-1 ${
                         court.is_active
                           ? 'text-yellow-600 hover:bg-yellow-50'
                           : 'text-green-600 hover:bg-green-50'
                       }`}
                     >
-                      {court.is_active ? t.courts.inactive : t.courts.active}
+                      {court.is_active ? '⏸' : '▶'}
                     </button>
                     <button
                       onClick={() => handleDelete(court.id)}
@@ -442,6 +656,195 @@ export default function CourtManagement() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Slots Configuration Modal */}
+      {showSlotsConfig && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-green-600" />
+                  Configurar Slots — {courts.find(c => c.id === showSlotsConfig)?.name}
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  Para cada slot de 30 min, defina as durações de aluguer disponíveis
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSlotsConfig(null)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* Operating hours */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Hora de Abertura
+                  </label>
+                  <select
+                    value={slotsOperatingStart}
+                    onChange={(e) => handleSlotsStartChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {timeOptions.map(time => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Hora de Fecho
+                  </label>
+                  <select
+                    value={slotsOperatingEnd}
+                    onChange={(e) => handleSlotsEndChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {timeOptions.map(time => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Quick actions */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-gray-600">Ações rápidas:</span>
+                <button
+                  type="button"
+                  onClick={selectAllDurations}
+                  className="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition font-medium"
+                >
+                  ✅ Tudo ativo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllSlotsDuration(60, true)}
+                  className="text-xs px-3 py-1.5 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition font-medium"
+                >
+                  Todos 60min
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllSlotsDuration(90, true)}
+                  className="text-xs px-3 py-1.5 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition font-medium"
+                >
+                  Todos 90min
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllSlotsDuration(120, true)}
+                  className="text-xs px-3 py-1.5 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition font-medium"
+                >
+                  Todos 120min
+                </button>
+              </div>
+
+              {/* Slots grid header */}
+              <div className="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                <div className="grid grid-cols-4 gap-0 p-3 border-b border-gray-200 bg-gray-100">
+                  <div className="text-sm font-semibold text-gray-700">Hora</div>
+                  <div className="text-center">
+                    <span className="text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">60 min</span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-xs font-semibold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">90 min</span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-xs font-semibold text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">120 min</span>
+                  </div>
+                </div>
+
+                {/* Slots rows */}
+                <div className="max-h-[400px] overflow-y-auto">
+                  {slotsConfig.map((slot, idx) => {
+                    const isEven = idx % 2 === 0;
+                    // Check if this slot + duration would exceed operating end
+                    const [slotH, slotM] = slot.time.split(':').map(Number);
+                    const slotMinutes = slotH * 60 + slotM;
+                    const [endH, endM] = slotsOperatingEnd.split(':').map(Number);
+                    const endMinutes = endH * 60 + endM;
+
+                    return (
+                      <div
+                        key={slot.time}
+                        className={`grid grid-cols-4 gap-0 p-2 items-center ${
+                          isEven ? 'bg-white' : 'bg-gray-50/50'
+                        } hover:bg-blue-50/30 transition`}
+                      >
+                        <div className="text-sm font-medium text-gray-800 pl-1">
+                          {slot.time}
+                        </div>
+                        {[60, 90, 120].map(duration => {
+                          const fitsInSchedule = slotMinutes + duration <= endMinutes;
+                          const isActive = slot.durations.includes(duration);
+                          return (
+                            <div key={duration} className="flex justify-center">
+                              {fitsInSchedule ? (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSlotDuration(slot.time, duration)}
+                                  className={`w-10 h-8 rounded-lg border-2 transition-all flex items-center justify-center ${
+                                    isActive
+                                      ? duration === 60
+                                        ? 'bg-green-500 border-green-500 text-white shadow-sm'
+                                        : duration === 90
+                                          ? 'bg-purple-500 border-purple-500 text-white shadow-sm'
+                                          : 'bg-orange-500 border-orange-500 text-white shadow-sm'
+                                      : 'bg-white border-gray-200 text-gray-300 hover:border-gray-400'
+                                  }`}
+                                >
+                                  {isActive ? (
+                                    <Check className="w-4 h-4" />
+                                  ) : (
+                                    <span className="text-xs">—</span>
+                                  )}
+                                </button>
+                              ) : (
+                                <div className="w-10 h-8 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center" title="Excede o horário de fecho">
+                                  <X className="w-3 h-3 text-gray-300" />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                {slotsConfig.filter(s => s.durations.length > 0).length} de {slotsConfig.length} slots ativos
+              </p>
+
+              {/* Save / Cancel buttons */}
+              <div className="flex gap-3 pt-2 sticky bottom-0 bg-white py-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSlotsConfig(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveSlotsConfig(showSlotsConfig)}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2"
+                >
+                  <Check className="w-4 h-4" />
+                  Guardar Slots
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

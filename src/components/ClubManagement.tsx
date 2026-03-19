@@ -20,7 +20,8 @@ import {
   LayoutGrid,
   Camera,
   Upload,
-  Loader2
+  Loader2,
+  Clock
 } from 'lucide-react';
 
 type PaymentMethod = 'at_club' | 'per_player' | 'full_court' | 'at_club_or_per_player' | 'at_club_or_full_court' | 'all';
@@ -42,6 +43,8 @@ interface Club {
   payment_method: PaymentMethod;
   stripe_publishable_key: string | null;
   stripe_secret_key: string | null;
+  opening_time: string | null;
+  closing_time: string | null;
 }
 
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
@@ -78,6 +81,8 @@ export default function ClubManagement() {
     payment_method: 'at_club' as PaymentMethod,
     stripe_publishable_key: '',
     stripe_secret_key: '',
+    opening_time: '08:00',
+    closing_time: '22:00',
   });
   const [uploadingPhoto, setUploadingPhoto] = useState<1 | 2 | null>(null);
 
@@ -100,6 +105,18 @@ export default function ClubManagement() {
     setLoading(false);
   };
 
+  const generateTimeOptions = () => {
+    const options = [];
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+        options.push(time);
+      }
+    }
+    return options;
+  };
+  const timeOptions = generateTimeOptions();
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -116,6 +133,8 @@ export default function ClubManagement() {
       payment_method: 'at_club',
       stripe_publishable_key: '',
       stripe_secret_key: '',
+      opening_time: '08:00',
+      closing_time: '22:00',
     });
     setEditingClub(null);
     setShowForm(false);
@@ -137,6 +156,8 @@ export default function ClubManagement() {
       payment_method: club.payment_method || 'at_club',
       stripe_publishable_key: club.stripe_publishable_key || '',
       stripe_secret_key: club.stripe_secret_key || '',
+      opening_time: club.opening_time || '08:00',
+      closing_time: club.closing_time || '22:00',
     });
     setEditingClub(club);
     setShowForm(true);
@@ -214,6 +235,8 @@ export default function ClubManagement() {
           payment_method: formData.payment_method,
           stripe_publishable_key: formData.stripe_publishable_key.trim() || null,
           stripe_secret_key: formData.stripe_secret_key.trim() || null,
+          opening_time: formData.opening_time,
+          closing_time: formData.closing_time,
           updated_at: new Date().toISOString()
         })
         .eq('id', editingClub.id);
@@ -241,6 +264,8 @@ export default function ClubManagement() {
           payment_method: formData.payment_method,
           stripe_publishable_key: formData.stripe_publishable_key.trim() || null,
           stripe_secret_key: formData.stripe_secret_key.trim() || null,
+          opening_time: formData.opening_time,
+          closing_time: formData.closing_time,
         });
 
       if (!error) {
@@ -528,6 +553,47 @@ export default function ClubManagement() {
               </div>
             </div>
 
+            {/* Operating Hours Section */}
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-green-600" />
+                Horário de Funcionamento
+              </h4>
+              <p className="text-xs text-gray-500 mb-3">
+                Horário geral do clube visível para os jogadores na app.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Hora de Abertura
+                  </label>
+                  <select
+                    value={formData.opening_time}
+                    onChange={(e) => setFormData({ ...formData, opening_time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {timeOptions.map(time => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Hora de Fecho
+                  </label>
+                  <select
+                    value={formData.closing_time}
+                    onChange={(e) => setFormData({ ...formData, closing_time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {timeOptions.map(time => (
+                      <option key={time} value={time}>{time}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
             {/* Payment Settings Section */}
             <div className="border-t border-gray-200 pt-4 mt-4">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -710,6 +776,12 @@ export default function ClubManagement() {
                       </span>
                     )}
                   </div>
+                  {(club.opening_time || club.closing_time) && (
+                    <div className="flex items-center gap-1 mt-1 text-sm text-gray-500">
+                      <Clock className="w-3 h-3" />
+                      {club.opening_time || '08:00'} - {club.closing_time || '22:00'}
+                    </div>
+                  )}
                   <div className="mt-2">
                     <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                       club.payment_method === 'at_club' ? 'bg-gray-100 text-gray-600' :
