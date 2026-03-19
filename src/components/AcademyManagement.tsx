@@ -279,6 +279,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   }
   const [metrics, setMetrics] = useState<AcademyMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsPeriod, setMetricsPeriod] = useState<'week' | 'month' | 'year' | 'all'>('all');
 
   // Reschedule lesson modal
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -320,6 +321,13 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       }
     }
   }, [user, activeTab, weekOffset]);
+
+  // Recarregar métricas quando o período mudar
+  useEffect(() => {
+    if (activeTab === 'metrics' && user) {
+      loadMetrics();
+    }
+  }, [metricsPeriod]);
 
   // Inicializar participantes quando tipo de grupo é selecionado
   useEffect(() => {
@@ -1753,8 +1761,24 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     setMetricsLoading(true);
 
     try {
-      // Buscar todas as aulas do clube
-      const { data: allClasses, error: classesError } = await supabase
+      // Calcular data de início baseada no período
+      const now = new Date();
+      let startDate: Date | null = null;
+      
+      if (metricsPeriod === 'week') {
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - 7);
+      } else if (metricsPeriod === 'month') {
+        startDate = new Date(now);
+        startDate.setMonth(now.getMonth() - 1);
+      } else if (metricsPeriod === 'year') {
+        startDate = new Date(now);
+        startDate.setFullYear(now.getFullYear() - 1);
+      }
+      // Se 'all', startDate fica null (sem filtro)
+
+      // Construir query base para aulas
+      let classesQuery = supabase
         .from('club_classes')
         .select(`
           id,
@@ -1764,23 +1788,45 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         `)
         .eq('club_owner_id', effectiveUserId);
 
+      // Aplicar filtro de data se necessário
+      if (startDate) {
+        classesQuery = classesQuery.gte('scheduled_at', startDate.toISOString());
+      }
+
+      const { data: allClasses, error: classesError } = await classesQuery;
+
       if (classesError) throw classesError;
 
-      // Buscar todos os enrollments com pagamento
-      const { data: allEnrollments, error: enrollmentsError } = await supabase
+      // Buscar todos os enrollments com pagamento (filtrar por data da aula)
+      let enrollmentsQuery = supabase
         .from('class_enrollments')
-        .select('id, class_id, student_name, payment_status, organizer_player_id, member_subscription_id')
+        .select('id, class_id, student_name, payment_status, organizer_player_id, member_subscription_id, created_at')
         .eq('payment_status', 'paid')
         .in('status', ['enrolled', 'attended']);
 
+      const { data: allEnrollments, error: enrollmentsError } = await enrollmentsQuery;
+
       if (enrollmentsError) throw enrollmentsError;
 
-      // Buscar packs ativos
-      const { data: packs, error: packsError } = await supabase
+      // Filtrar enrollments por data da aula (se período selecionado)
+      let filteredEnrollments = allEnrollments || [];
+      if (startDate && allClasses) {
+        const classIdsInPeriod = new Set(allClasses.map(c => c.id));
+        filteredEnrollments = filteredEnrollments.filter(e => classIdsInPeriod.has(e.class_id));
+      }
+
+      // Buscar packs (filtrar por data de compra se período selecionado)
+      let packsQuery = supabase
         .from('pack_purchases')
-        .select('id, pack_size, price_paid, completions:lesson_completions(count)')
+        .select('id, pack_size, price_paid, purchased_at, completions:lesson_completions(count)')
         .eq('club_owner_id', effectiveUserId)
         .eq('is_active', true);
+
+      if (startDate) {
+        packsQuery = packsQuery.gte('purchased_at', startDate.toISOString());
+      }
+
+      const { data: packs, error: packsError } = await packsQuery;
 
       if (packsError) throw packsError;
 
@@ -1796,8 +1842,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       const revenueByCategory = { single: 0, group: 0, pack: 0 };
 
       // Receita de aulas pontuais e grupos (baseado em enrollments pagos)
-      if (allEnrollments && allClasses) {
-        allEnrollments.forEach(enrollment => {
+      if (filteredEnrollments && allClasses) {
+        filteredEnrollments.forEach(enrollment => {
           const classData = allClasses.find(c => c.id === enrollment.class_id);
           if (classData && classData.class_type) {
             const category = (classData.class_type as any).class_category;
@@ -1815,9 +1861,6 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       // Receita de packs (baseado em pack_purchases)
       if (packs) {
         packs.forEach(pack => {
-          // Assumindo que o pack foi pago uma vez
-          // Precisamos buscar o preço do pack através do class_type
-          // Por agora, vamos contar apenas os packs que têm price_paid
           const packPrice = (pack as any).price_paid || 0;
           totalRevenue += packPrice;
           revenueByCategory.pack += packPrice;
@@ -1826,8 +1869,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       // Alunos únicos
       const uniqueStudents = new Set<string>();
-      if (allEnrollments) {
-        allEnrollments.forEach(e => {
+      if (filteredEnrollments) {
+        filteredEnrollments.forEach(e => {
           if (e.student_name) uniqueStudents.add(e.student_name);
           if (e.organizer_player_id) uniqueStudents.add(`player_${e.organizer_player_id}`);
           if (e.member_subscription_id) uniqueStudents.add(`member_${e.member_subscription_id}`);
@@ -1841,16 +1884,23 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       }).length || 0;
 
       // Séries de grupo ativas (buscar pack_purchases com class_category = 'group')
-      const { data: groupSeries } = await supabase
+      let groupSeriesQuery = supabase
         .from('pack_purchases')
         .select(`
           id,
           pack_size,
+          purchased_at,
           class_type:class_types(class_category),
           completions:lesson_completions(count)
         `)
         .eq('club_owner_id', effectiveUserId)
         .eq('is_active', true);
+
+      if (startDate) {
+        groupSeriesQuery = groupSeriesQuery.gte('purchased_at', startDate.toISOString());
+      }
+
+      const { data: groupSeries } = await groupSeriesQuery;
 
       const activeGroupSeries = groupSeries?.filter(gs => {
         const category = (gs as any).class_type?.class_category;
@@ -3010,6 +3060,29 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       {/* ==================== METRICS TAB ==================== */}
       {activeTab === 'metrics' && (
         <div className="space-y-6">
+          {/* Período Filter */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5" />
+                Métricas da Academia
+              </h2>
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-700">Período:</label>
+                <select
+                  value={metricsPeriod}
+                  onChange={(e) => setMetricsPeriod(e.target.value as 'week' | 'month' | 'year' | 'all')}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                >
+                  <option value="week">Última Semana</option>
+                  <option value="month">Último Mês</option>
+                  <option value="year">Último Ano</option>
+                  <option value="all">Todos</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           {metricsLoading ? (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
               <div className="text-gray-500">{t.message.loading}</div>
