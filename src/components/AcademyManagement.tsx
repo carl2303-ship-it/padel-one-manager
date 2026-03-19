@@ -279,7 +279,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   }
   const [metrics, setMetrics] = useState<AcademyMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [metricsPeriod, setMetricsPeriod] = useState<'week' | 'month' | 'year' | 'all'>('all');
+  const [metricsPeriod, setMetricsPeriod] = useState<'week' | 'month' | 'year' | 'all' | 'custom'>('all');
+  const [metricsCustomStart, setMetricsCustomStart] = useState('');
+  const [metricsCustomEnd, setMetricsCustomEnd] = useState('');
 
   // Reschedule lesson modal
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -322,12 +324,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
   }, [user, activeTab, weekOffset]);
 
-  // Recarregar métricas quando o período mudar
+  // Recarregar métricas quando o período ou datas customizadas mudarem
   useEffect(() => {
     if (activeTab === 'metrics' && user) {
-      loadMetrics();
+      // Só recarregar se for período customizado e ambas as datas estiverem preenchidas, ou se não for customizado
+      if (metricsPeriod !== 'custom' || (metricsCustomStart && metricsCustomEnd)) {
+        loadMetrics();
+      }
     }
-  }, [metricsPeriod]);
+  }, [metricsPeriod, metricsCustomStart, metricsCustomEnd]);
 
   // Inicializar participantes quando tipo de grupo é selecionado
   useEffect(() => {
@@ -1761,9 +1766,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     setMetricsLoading(true);
 
     try {
-      // Calcular data de início baseada no período
+      // Calcular data de início e fim baseada no período
       const now = new Date();
       let startDate: Date | null = null;
+      let endDate: Date | null = null;
       
       if (metricsPeriod === 'week') {
         startDate = new Date(now);
@@ -1774,8 +1780,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       } else if (metricsPeriod === 'year') {
         startDate = new Date(now);
         startDate.setFullYear(now.getFullYear() - 1);
+      } else if (metricsPeriod === 'custom') {
+        if (metricsCustomStart) {
+          startDate = new Date(metricsCustomStart);
+          startDate.setHours(0, 0, 0, 0);
+        }
+        if (metricsCustomEnd) {
+          endDate = new Date(metricsCustomEnd);
+          endDate.setHours(23, 59, 59, 999);
+        }
       }
-      // Se 'all', startDate fica null (sem filtro)
+      // Se 'all', startDate e endDate ficam null (sem filtro)
 
       // Construir query base para aulas
       let classesQuery = supabase
@@ -1791,6 +1806,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       // Aplicar filtro de data se necessário
       if (startDate) {
         classesQuery = classesQuery.gte('scheduled_at', startDate.toISOString());
+      }
+      if (endDate) {
+        classesQuery = classesQuery.lte('scheduled_at', endDate.toISOString());
       }
 
       const { data: allClasses, error: classesError } = await classesQuery;
@@ -1810,7 +1828,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       // Filtrar enrollments por data da aula (se período selecionado)
       let filteredEnrollments = allEnrollments || [];
-      if (startDate && allClasses) {
+      if ((startDate || endDate) && allClasses) {
         const classIdsInPeriod = new Set(allClasses.map(c => c.id));
         filteredEnrollments = filteredEnrollments.filter(e => classIdsInPeriod.has(e.class_id));
       }
@@ -1824,6 +1842,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       if (startDate) {
         packsQuery = packsQuery.gte('purchased_at', startDate.toISOString());
+      }
+      if (endDate) {
+        packsQuery = packsQuery.lte('purchased_at', endDate.toISOString());
       }
 
       const { data: packs, error: packsError } = await packsQuery;
@@ -1898,6 +1919,9 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       if (startDate) {
         groupSeriesQuery = groupSeriesQuery.gte('purchased_at', startDate.toISOString());
+      }
+      if (endDate) {
+        groupSeriesQuery = groupSeriesQuery.lte('purchased_at', endDate.toISOString());
       }
 
       const { data: groupSeries } = await groupSeriesQuery;
@@ -3062,24 +3086,67 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         <div className="space-y-6">
           {/* Período Filter */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <BarChart3 className="w-5 h-5" />
-                Métricas da Academia
-              </h2>
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700">Período:</label>
-                <select
-                  value={metricsPeriod}
-                  onChange={(e) => setMetricsPeriod(e.target.value as 'week' | 'month' | 'year' | 'all')}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
-                >
-                  <option value="week">Última Semana</option>
-                  <option value="month">Último Mês</option>
-                  <option value="year">Último Ano</option>
-                  <option value="all">Todos</option>
-                </select>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5" />
+                  Métricas da Academia
+                </h2>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-gray-700">Período:</label>
+                  <select
+                    value={metricsPeriod}
+                    onChange={(e) => {
+                      setMetricsPeriod(e.target.value as 'week' | 'month' | 'year' | 'all' | 'custom');
+                      if (e.target.value !== 'custom') {
+                        setMetricsCustomStart('');
+                        setMetricsCustomEnd('');
+                      }
+                    }}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                  >
+                    <option value="week">Última Semana</option>
+                    <option value="month">Último Mês</option>
+                    <option value="year">Último Ano</option>
+                    <option value="custom">Período Personalizado</option>
+                    <option value="all">Todos</option>
+                  </select>
+                </div>
               </div>
+              
+              {/* Campos de data customizada */}
+              {metricsPeriod === 'custom' && (
+                <div className="flex items-center gap-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">De:</label>
+                    <input
+                      type="date"
+                      value={metricsCustomStart}
+                      onChange={(e) => setMetricsCustomStart(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Até:</label>
+                    <input
+                      type="date"
+                      value={metricsCustomEnd}
+                      onChange={(e) => setMetricsCustomEnd(e.target.value)}
+                      min={metricsCustomStart || undefined}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                  </div>
+                  {metricsCustomStart && metricsCustomEnd && (
+                    <button
+                      onClick={loadMetrics}
+                      className="ml-auto px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Aplicar
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
