@@ -838,6 +838,37 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       });
     }
 
+    // Buscar player_accounts
+    {
+      let playerAccountsQuery = supabase
+        .from('player_accounts')
+        .select('id, name, phone_number, user_id')
+        .not('name', 'is', null);
+
+      if (normalizedPhone && normalizedPhone.length >= 6) {
+        playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+      } else if (name && name.length >= 2) {
+        playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
+      }
+
+      const { data: playerAccountsData } = await playerAccountsQuery.limit(10).order('name');
+      if (playerAccountsData) {
+        playerAccountsData.forEach((item: any) => {
+          const exists = allResults.some(r => 
+            r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+            r.member_phone === (item.phone_number || '')
+          );
+          if (!exists && item.name) {
+            allResults.push({
+              member_name: item.name,
+              member_phone: item.phone_number || '',
+              plan: null
+            });
+          }
+        });
+      }
+    }
+
     // Buscar jogadores de torneios
     const { data: clubsData } = await supabase
       .from('clubs')
