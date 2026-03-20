@@ -823,7 +823,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
     }
 
     // Buscar membros do clube
-    const { data: membersData } = await supabase
+    let memberQuery = supabase
       .from('member_subscriptions')
       .select(`
         id,
@@ -831,9 +831,15 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         member_phone,
         plan:plans(id, name, court_discount_percent)
       `)
-      .eq('club_id', clubsData[0].id)
-      .or(`member_name.ilike.%${name}%,member_phone.ilike.%${normalizedPhone}%`)
-      .limit(20);
+      .eq('club_id', clubsData[0].id);
+
+    if (normalizedPhone && normalizedPhone.length >= 6) {
+      memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
+    } else if (name && name.length >= 2) {
+      memberQuery = memberQuery.ilike('member_name', `%${name}%`);
+    }
+
+    const { data: membersData } = await memberQuery.limit(20);
 
     if (membersData) {
       for (const member of membersData) {
@@ -856,12 +862,18 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
 
       if (tournamentsData && tournamentsData.length > 0) {
         const tournamentIds = tournamentsData.map(t => t.id);
-        const { data: playersData } = await supabase
+        let playersQuery = supabase
           .from('players')
           .select('name, phone_number, organizer_player_id')
-          .in('tournament_id', tournamentIds)
-          .or(`name.ilike.%${name}%,phone_number.ilike.%${normalizedPhone}%`)
-          .limit(20);
+          .in('tournament_id', tournamentIds);
+
+        if (normalizedPhone && normalizedPhone.length >= 6) {
+          playersQuery = playersQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+        } else if (name && name.length >= 2) {
+          playersQuery = playersQuery.ilike('name', `%${name}%`);
+        }
+
+        const { data: playersData } = await playersQuery.limit(20);
 
         if (playersData) {
           for (const player of playersData) {
@@ -894,12 +906,18 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         if (openGamePlayersData && openGamePlayersData.length > 0) {
           const userIds = [...new Set(openGamePlayersData.map(p => p.user_id).filter(Boolean))];
           if (userIds.length > 0) {
-            const { data: playerAccountsData } = await supabase
+            let playerAccountsQuery = supabase
               .from('player_accounts')
               .select('user_id, name, phone_number')
-              .in('user_id', userIds)
-              .or(`name.ilike.%${name}%,phone_number.ilike.%${normalizedPhone}%`)
-              .limit(20);
+              .in('user_id', userIds);
+
+            if (normalizedPhone && normalizedPhone.length >= 6) {
+              playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+            } else if (name && name.length >= 2) {
+              playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
+            }
+
+            const { data: playerAccountsData } = await playerAccountsQuery.limit(20);
 
             if (playerAccountsData) {
               for (const account of playerAccountsData) {
