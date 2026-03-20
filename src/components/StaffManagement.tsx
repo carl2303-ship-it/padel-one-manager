@@ -189,12 +189,12 @@ export default function StaffManagement() {
         tournament_count: count || 0
       });
 
-      if (!form.name && data.name) {
-        setForm(f => ({ ...f, name: data.name }));
-      }
-      if (!form.email && data.email) {
-        setForm(f => ({ ...f, email: data.email }));
-      }
+      // Usar forma funcional para verificar o estado mais recente (evita race conditions)
+      setForm(f => ({
+        ...f,
+        name: (!f.name && data.name) ? data.name : f.name,
+        email: (!f.email && data.email) ? data.email : f.email
+      }));
     } else {
       setPlayerMatch(null);
     }
