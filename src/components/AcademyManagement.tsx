@@ -808,30 +808,17 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       member_subscription_id?: string | null;
     }> = [];
 
-    // Buscar clube primeiro
-    const { data: clubsData } = await supabase
-      .from('clubs')
-      .select('id')
-      .eq('owner_id', effectiveUserId)
-      .limit(1);
-
-    if (!clubsData || clubsData.length === 0) {
-      setNewStudentSearchResults([]);
-      setShowNewStudentDropdown(false);
-      setSearchingNewStudent(false);
-      return;
-    }
-
-    // Buscar membros do clube
+    // Buscar membros
     let memberQuery = supabase
       .from('member_subscriptions')
       .select(`
         id,
         member_name,
         member_phone,
-        plan:plans(id, name, court_discount_percent)
+        plan:membership_plans(name, court_discount_percent)
       `)
-      .eq('club_id', clubsData[0].id);
+      .eq('club_owner_id', effectiveUserId)
+      .eq('status', 'active');
 
     if (normalizedPhone && normalizedPhone.length >= 6) {
       memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
@@ -839,53 +826,62 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       memberQuery = memberQuery.ilike('member_name', `%${name}%`);
     }
 
-    const { data: membersData } = await memberQuery.limit(20);
-
+    const { data: membersData } = await memberQuery.limit(10).order('member_name');
     if (membersData) {
-      for (const member of membersData) {
+      membersData.forEach((item: any) => {
         allResults.push({
-          member_name: member.member_name,
-          member_phone: member.member_phone,
-          plan: member.plan ? { name: member.plan.name, court_discount_percent: member.plan.court_discount_percent } : null,
-          member_subscription_id: member.id
+          member_name: item.member_name,
+          member_phone: item.member_phone,
+          plan: item.plan,
+          member_subscription_id: item.id
         });
-      }
+      });
     }
 
     // Buscar jogadores de torneios
-    if (clubsData && clubsData.length > 0) {
+    const { data: clubsData } = await supabase
+      .from('clubs')
+      .select('id')
+      .eq('owner_id', effectiveUserId)
+      .limit(1)
+      .maybeSingle();
+
+    if (clubsData) {
       const { data: tournamentsData } = await supabase
         .from('tournaments')
         .select('id')
-        .eq('club_id', clubsData[0].id)
+        .eq('club_id', clubsData.id)
         .limit(100);
 
       if (tournamentsData && tournamentsData.length > 0) {
         const tournamentIds = tournamentsData.map(t => t.id);
-        let playersQuery = supabase
+        let tournamentPlayersQuery = supabase
           .from('players')
           .select('name, phone_number, organizer_player_id')
           .in('tournament_id', tournamentIds);
 
         if (normalizedPhone && normalizedPhone.length >= 6) {
-          playersQuery = playersQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+          tournamentPlayersQuery = tournamentPlayersQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
         } else if (name && name.length >= 2) {
-          playersQuery = playersQuery.ilike('name', `%${name}%`);
+          tournamentPlayersQuery = tournamentPlayersQuery.ilike('name', `%${name}%`);
         }
 
-        const { data: playersData } = await playersQuery.limit(20);
-
-        if (playersData) {
-          for (const player of playersData) {
-            if (!allResults.find(r => r.member_name === player.name && r.member_phone === player.phone_number)) {
+        const { data: tournamentPlayersData } = await tournamentPlayersQuery.limit(10).order('name');
+        if (tournamentPlayersData) {
+          tournamentPlayersData.forEach((item: any) => {
+            const exists = allResults.some(r => 
+              r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+              r.member_phone === (item.phone_number || '')
+            );
+            if (!exists && item.name) {
               allResults.push({
-                member_name: player.name,
-                member_phone: player.phone_number || '',
+                member_name: item.name,
+                member_phone: item.phone_number || '',
                 plan: null,
-                organizer_player_id: player.organizer_player_id || null
+                organizer_player_id: item.organizer_player_id || null
               });
             }
-          }
+          });
         }
       }
 
@@ -893,7 +889,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       const { data: openGamesData } = await supabase
         .from('open_games')
         .select('id')
-        .eq('club_id', clubsData[0].id)
+        .eq('club_id', clubsData.id)
         .limit(100);
 
       if (openGamesData && openGamesData.length > 0) {
@@ -904,32 +900,33 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           .in('game_id', gameIds);
 
         if (openGamePlayersData && openGamePlayersData.length > 0) {
-          const userIds = [...new Set(openGamePlayersData.map(p => p.user_id).filter(Boolean))];
-          if (userIds.length > 0) {
-            let playerAccountsQuery = supabase
-              .from('player_accounts')
-              .select('user_id, name, phone_number')
-              .in('user_id', userIds);
+          const userIds = [...new Set(openGamePlayersData.map(p => p.user_id))];
+          let playerAccountsQuery = supabase
+            .from('player_accounts')
+            .select('user_id, name, phone_number')
+            .in('user_id', userIds);
 
-            if (normalizedPhone && normalizedPhone.length >= 6) {
-              playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
-            } else if (name && name.length >= 2) {
-              playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
-            }
+          if (normalizedPhone && normalizedPhone.length >= 6) {
+            playerAccountsQuery = playerAccountsQuery.or(`phone_number.ilike.%${normalizedPhone}%,phone_number.ilike.%${phone}%`);
+          } else if (name && name.length >= 2) {
+            playerAccountsQuery = playerAccountsQuery.ilike('name', `%${name}%`);
+          }
 
-            const { data: playerAccountsData } = await playerAccountsQuery.limit(20);
-
-            if (playerAccountsData) {
-              for (const account of playerAccountsData) {
-                if (!allResults.find(r => r.member_name === account.name && r.member_phone === account.phone_number)) {
-                  allResults.push({
-                    member_name: account.name,
-                    member_phone: account.phone_number || '',
-                    plan: null
-                  });
-                }
+          const { data: playerAccountsData } = await playerAccountsQuery.limit(10).order('name');
+          if (playerAccountsData) {
+            playerAccountsData.forEach((item: any) => {
+              const exists = allResults.some(r => 
+                r.member_name.toLowerCase() === item.name?.toLowerCase() && 
+                r.member_phone === (item.phone_number || '')
+              );
+              if (!exists && item.name) {
+                allResults.push({
+                  member_name: item.name,
+                  member_phone: item.phone_number || '',
+                  plan: null
+                });
               }
-            }
+            });
           }
         }
       }
