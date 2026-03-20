@@ -241,6 +241,19 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
   const [focusedGroupInput, setFocusedGroupInput] = useState<number | null>(null);
   const [searchingGroupPlayer, setSearchingGroupPlayer] = useState<number | null>(null);
 
+  // Add/Replace student in group class
+  const [newStudentSearchName, setNewStudentSearchName] = useState('');
+  const [newStudentSearchPhone, setNewStudentSearchPhone] = useState('');
+  const [newStudentSearchResults, setNewStudentSearchResults] = useState<Array<{
+    member_name: string;
+    member_phone: string;
+    plan: { name: string; court_discount_percent: number } | null;
+    organizer_player_id?: string | null;
+    member_subscription_id?: string | null;
+  }>>([]);
+  const [searchingNewStudent, setSearchingNewStudent] = useState(false);
+  const [showNewStudentDropdown, setShowNewStudentDropdown] = useState(false);
+
   // Pack creation with scheduling
   const [packCoachId, setPackCoachId] = useState('');
   const [packCourtId, setPackCourtId] = useState('');
@@ -774,6 +787,143 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       return newMap;
     });
     setFocusedGroupInput(null);
+  };
+
+  const searchNewStudent = async (name: string, phone: string) => {
+    if (!effectiveUserId) return;
+    if ((!name || name.length < 2) && (!phone || phone.length < 6)) {
+      setNewStudentSearchResults([]);
+      setShowNewStudentDropdown(false);
+      return;
+    }
+
+    setSearchingNewStudent(true);
+    const normalizedPhone = phone ? normalizePhone(phone) : '';
+
+    const allResults: Array<{
+      member_name: string;
+      member_phone: string;
+      plan: { name: string; court_discount_percent: number } | null;
+      organizer_player_id?: string | null;
+      member_subscription_id?: string | null;
+    }> = [];
+
+    // Buscar clube primeiro
+    const { data: clubsData } = await supabase
+      .from('clubs')
+      .select('id')
+      .eq('owner_id', effectiveUserId)
+      .limit(1);
+
+    if (!clubsData || clubsData.length === 0) {
+      setNewStudentSearchResults([]);
+      setShowNewStudentDropdown(false);
+      setSearchingNewStudent(false);
+      return;
+    }
+
+    // Buscar membros do clube
+    const { data: membersData } = await supabase
+      .from('member_subscriptions')
+      .select(`
+        id,
+        member_name,
+        member_phone,
+        plan:plans(id, name, court_discount_percent)
+      `)
+      .eq('club_id', clubsData[0].id)
+      .or(`member_name.ilike.%${name}%,member_phone.ilike.%${normalizedPhone}%`)
+      .limit(20);
+
+    if (membersData) {
+      for (const member of membersData) {
+        allResults.push({
+          member_name: member.member_name,
+          member_phone: member.member_phone,
+          plan: member.plan ? { name: member.plan.name, court_discount_percent: member.plan.court_discount_percent } : null,
+          member_subscription_id: member.id
+        });
+      }
+    }
+
+    // Buscar jogadores de torneios
+    if (clubsData && clubsData.length > 0) {
+      const { data: tournamentsData } = await supabase
+        .from('tournaments')
+        .select('id')
+        .eq('club_id', clubsData[0].id)
+        .limit(100);
+
+      if (tournamentsData && tournamentsData.length > 0) {
+        const tournamentIds = tournamentsData.map(t => t.id);
+        const { data: playersData } = await supabase
+          .from('players')
+          .select('name, phone_number, organizer_player_id')
+          .in('tournament_id', tournamentIds)
+          .or(`name.ilike.%${name}%,phone_number.ilike.%${normalizedPhone}%`)
+          .limit(20);
+
+        if (playersData) {
+          for (const player of playersData) {
+            if (!allResults.find(r => r.member_name === player.name && r.member_phone === player.phone_number)) {
+              allResults.push({
+                member_name: player.name,
+                member_phone: player.phone_number || '',
+                plan: null,
+                organizer_player_id: player.organizer_player_id || null
+              });
+            }
+          }
+        }
+      }
+
+      // Buscar jogadores de jogos abertos
+      const { data: openGamesData } = await supabase
+        .from('open_games')
+        .select('id')
+        .eq('club_id', clubsData[0].id)
+        .limit(100);
+
+      if (openGamesData && openGamesData.length > 0) {
+        const gameIds = openGamesData.map(g => g.id);
+        const { data: openGamePlayersData } = await supabase
+          .from('open_game_players')
+          .select('user_id')
+          .in('game_id', gameIds);
+
+        if (openGamePlayersData && openGamePlayersData.length > 0) {
+          const userIds = [...new Set(openGamePlayersData.map(p => p.user_id).filter(Boolean))];
+          if (userIds.length > 0) {
+            const { data: playerAccountsData } = await supabase
+              .from('player_accounts')
+              .select('user_id, name, phone_number')
+              .in('user_id', userIds)
+              .or(`name.ilike.%${name}%,phone_number.ilike.%${normalizedPhone}%`)
+              .limit(20);
+
+            if (playerAccountsData) {
+              for (const account of playerAccountsData) {
+                if (!allResults.find(r => r.member_name === account.name && r.member_phone === account.phone_number)) {
+                  allResults.push({
+                    member_name: account.name,
+                    member_phone: account.phone_number || '',
+                    plan: null
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const sortedResults = allResults
+      .sort((a, b) => a.member_name.localeCompare(b.member_name))
+      .slice(0, 10);
+
+    setNewStudentSearchResults(sortedResults);
+    setShowNewStudentDropdown(sortedResults.length > 0);
+    setSearchingNewStudent(false);
   };
 
   const handleClearGroupPlayer = (playerIndex: number) => {
@@ -5586,10 +5736,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                 </h3>
                 <form onSubmit={async (e) => {
                   e.preventDefault();
-                  const form = e.target as HTMLFormElement;
-                  const nameInput = form.elements.namedItem('newStudentName') as HTMLInputElement;
-                  const newName = nameInput?.value?.trim();
-                  if (!newName) {
+                  if (!newStudentSearchName.trim()) {
                     alert('Nome do aluno é obrigatório');
                     return;
                   }
@@ -5598,7 +5745,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                     .from('class_enrollments')
                     .insert({
                       class_id: selectedGroupLesson.id,
-                      student_name: newName,
+                      student_name: newStudentSearchName,
+                      student_phone: newStudentSearchPhone || null,
+                      organizer_player_id: null,
+                      member_subscription_id: null,
                       status: 'enrolled',
                       payment_status: 'pending'
                     })
@@ -5613,19 +5763,97 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   if (newEnrollment) {
                     const updatedEnrollments = [...enrollments, newEnrollment as GroupClassEnrollment];
                     setSelectedGroupLesson({ ...selectedGroupLesson, enrollments: updatedEnrollments });
-                    nameInput.value = '';
+                    setNewStudentSearchName('');
+                    setNewStudentSearchPhone('');
+                    setNewStudentSearchResults([]);
+                    setShowNewStudentDropdown(false);
                     loadGroupClassSeries();
                   }
-                }} className="flex gap-2">
-                  <input
-                    type="text"
-                    name="newStudentName"
-                    placeholder="Nome do aluno"
-                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                  />
+                }} className="space-y-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={newStudentSearchName}
+                      onChange={(e) => {
+                        setNewStudentSearchName(e.target.value);
+                        if (e.target.value.length >= 2) {
+                          searchNewStudent(e.target.value, newStudentSearchPhone);
+                        } else {
+                          setNewStudentSearchResults([]);
+                          setShowNewStudentDropdown(false);
+                        }
+                      }}
+                      onFocus={() => {
+                        if (newStudentSearchResults.length > 0) {
+                          setShowNewStudentDropdown(true);
+                        }
+                      }}
+                      onBlur={() => {
+                        // Delay to allow click on dropdown
+                        setTimeout(() => setShowNewStudentDropdown(false), 200);
+                      }}
+                      placeholder="Nome do aluno"
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    />
+                    {searchingNewStudent && (
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                        <div className="animate-spin w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full" />
+                      </div>
+                    )}
+                    {showNewStudentDropdown && newStudentSearchResults.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {newStudentSearchResults.map((result, resultIdx) => (
+                          <div
+                            key={resultIdx}
+                            onClick={() => {
+                              setNewStudentSearchName(result.member_name);
+                              setNewStudentSearchPhone(result.member_phone);
+                              setShowNewStudentDropdown(false);
+                            }}
+                            className="px-3 py-2.5 hover:bg-purple-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                          >
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1">
+                                  <div className="text-sm font-medium text-gray-900 break-words">{result.member_name}</div>
+                                  <div className="text-xs text-gray-500 break-words">{result.member_phone}</div>
+                                </div>
+                                {result.plan && (
+                                  <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                                    <Award className="w-3 h-3" />
+                                    {result.plan.name} - {result.plan.court_discount_percent}%
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                    <input
+                      type="tel"
+                      value={newStudentSearchPhone}
+                      onChange={(e) => {
+                        setNewStudentSearchPhone(e.target.value);
+                        if (e.target.value.length >= 6) {
+                          searchNewStudent(newStudentSearchName, e.target.value);
+                        } else if (e.target.value.length === 0 && newStudentSearchName.length >= 2) {
+                          searchNewStudent(newStudentSearchName, '');
+                        } else {
+                          setNewStudentSearchResults([]);
+                          setShowNewStudentDropdown(false);
+                        }
+                      }}
+                      placeholder="Telefone (opcional)"
+                      className="w-full pl-8 pr-2 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    />
+                  </div>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition flex items-center gap-1.5 text-sm font-medium"
+                    className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition flex items-center justify-center gap-1.5 text-sm font-medium"
                   >
                     <Plus className="w-4 h-4" />
                     Adicionar
