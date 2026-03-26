@@ -1284,6 +1284,33 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         setGroupClassParticipants([]);
         setGroupClassSearchResults(new Map());
         
+        // Notify matching players about the new class
+        try {
+          const notifCoach = coaches.find(c => c.id === classForm.coach_id);
+          const { data: notifClub } = await supabase.from('clubs').select('name').eq('owner_id', effectiveUserId).maybeSingle();
+          const { data: { session: notifSession } } = await supabase.auth.getSession();
+          if (notifSession?.access_token) {
+            fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-new-class`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${notifSession.access_token}`,
+                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({
+                level: levelValue || null,
+                gender: genderValue || null,
+                clubName: notifClub?.name || 'Clube',
+                className: classType?.name || 'Aula',
+                coachName: notifCoach?.name || 'Professor',
+                scheduledAt: scheduledAt.toISOString(),
+              }),
+            }).catch(err => console.error('[AcademyManagement] Error notifying players:', err));
+          }
+        } catch (notifErr) {
+          console.error('[AcademyManagement] Error sending class notifications:', notifErr);
+        }
+
         // Recarregar dados
         loadData();
         if (activeTab === 'group-classes') {
@@ -1338,6 +1365,35 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
           event_type: 'training',
           notes: `${classType?.name || 'Class'}${coach ? ` - ${coach.name}` : ''}`
         });
+      }
+
+      // Notify matching players about the new class
+      if (newClass) {
+        try {
+          const notifCoach2 = coaches.find(c => c.id === classForm.coach_id);
+          const { data: notifClub2 } = await supabase.from('clubs').select('name').eq('owner_id', effectiveUserId).maybeSingle();
+          const { data: { session: notifSession2 } } = await supabase.auth.getSession();
+          if (notifSession2?.access_token) {
+            fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-new-class`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${notifSession2.access_token}`,
+                'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+              },
+              body: JSON.stringify({
+                level: levelValue || null,
+                gender: genderValue || null,
+                clubName: notifClub2?.name || 'Clube',
+                className: classType?.name || 'Aula',
+                coachName: notifCoach2?.name || 'Professor',
+                scheduledAt: scheduledAt.toISOString(),
+              }),
+            }).catch(err => console.error('[AcademyManagement] Error notifying players:', err));
+          }
+        } catch (notifErr) {
+          console.error('[AcademyManagement] Error sending class notifications:', notifErr);
+        }
       }
     }
     }
