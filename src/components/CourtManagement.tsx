@@ -49,6 +49,8 @@ interface Court {
   type: 'indoor' | 'outdoor' | 'covered';
   hourly_rate: number;
   peak_rate: number;
+  price_90min: number | null;
+  price_240min: number | null;
   is_active: boolean;
   description: string | null;
   sort_order: number;
@@ -97,6 +99,8 @@ export default function CourtManagement() {
     type: 'indoor' as 'indoor' | 'outdoor' | 'covered',
     hourly_rate: 20,
     peak_rate: 25,
+    price_90min: null as number | null,
+    price_240min: null as number | null,
     is_active: true,
     description: ''
   });
@@ -404,6 +408,8 @@ export default function CourtManagement() {
           type: form.type,
           hourly_rate: form.hourly_rate,
           peak_rate: form.peak_rate,
+          price_90min: form.price_90min,
+          price_240min: form.price_240min,
           is_active: form.is_active,
           description: form.description || null
         })
@@ -436,6 +442,8 @@ export default function CourtManagement() {
           type: form.type,
           hourly_rate: form.hourly_rate,
           peak_rate: form.peak_rate,
+          price_90min: form.price_90min,
+          price_240min: form.price_240min,
           is_active: form.is_active,
           description: form.description || null,
           sort_order: maxSortOrder + 1,
@@ -459,6 +467,8 @@ export default function CourtManagement() {
       type: court.type,
       hourly_rate: court.hourly_rate,
       peak_rate: court.peak_rate,
+      price_90min: court.price_90min,
+      price_240min: court.price_240min,
       is_active: court.is_active,
       description: court.description || ''
     });
@@ -488,6 +498,8 @@ export default function CourtManagement() {
       type: 'indoor',
       hourly_rate: 20,
       peak_rate: 25,
+      price_90min: null,
+      price_240min: null,
       is_active: true,
       description: ''
     });
@@ -688,12 +700,22 @@ export default function CourtManagement() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.hourlyRate} (EUR)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.hourlyRate} (EUR) — 60min</label>
                   <input type="number" value={form.hourly_rate} onChange={(e) => setForm({ ...form, hourly_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.peakRate} (EUR)</label>
                   <input type="number" value={form.peak_rate} onChange={(e) => setForm({ ...form, peak_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço 90min (EUR)</label>
+                  <input type="number" value={form.price_90min ?? ''} onChange={(e) => setForm({ ...form, price_90min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`Auto: ${(form.hourly_rate * 1.5).toFixed(2)}`} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço 240min / 4h (EUR)</label>
+                  <input type="number" value={form.price_240min ?? ''} onChange={(e) => setForm({ ...form, price_240min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`Auto: ${(form.hourly_rate * 4).toFixed(2)}`} />
                 </div>
               </div>
               <div>

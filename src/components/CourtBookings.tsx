@@ -78,6 +78,8 @@ interface Court {
   type: string;
   hourly_rate: number;
   peak_rate: number;
+  price_90min: number | null;
+  price_240min: number | null;
   court_slots: CourtSlotsData | null;
 }
 
@@ -745,6 +747,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const getBasePrice = () => {
     const court = courts.find(c => c.id === newBooking.court_id);
     if (!court) return 0;
+    const durationMin = newBooking.duration * 60;
+    if (durationMin === 90 && court.price_90min != null) return court.price_90min;
+    if (durationMin === 240 && court.price_240min != null) return court.price_240min;
     return newBooking.duration * court.hourly_rate;
   };
 
@@ -2168,7 +2173,30 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               <ChevronLeft className="w-5 h-5" />
             </button>
             <div className="text-center">
-              <h2 className="text-lg font-semibold text-gray-900 capitalize">{formatDate(selectedDate)}</h2>
+              <div className="relative inline-block">
+                <h2
+                  className="text-lg font-semibold text-gray-900 capitalize cursor-pointer hover:text-blue-600 transition-colors"
+                  onClick={() => {
+                    const picker = document.getElementById('booking-date-picker') as HTMLInputElement;
+                    picker?.showPicker?.();
+                    picker?.click();
+                  }}
+                >
+                  {formatDate(selectedDate)}
+                </h2>
+                <input
+                  id="booking-date-picker"
+                  type="date"
+                  value={selectedDate.toISOString().split('T')[0]}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      const [y, m, d] = e.target.value.split('-').map(Number);
+                      setSelectedDate(new Date(y, m - 1, d));
+                    }
+                  }}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                />
+              </div>
               <button
                 onClick={() => setSelectedDate(new Date())}
                 className="text-sm text-blue-600 hover:text-blue-700"
