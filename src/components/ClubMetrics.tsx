@@ -139,7 +139,12 @@ interface TournamentMetric {
   tournamentName: string;
   startDate: string;
   registrations: number;
+  uniquePlayers: number;
+  clubMembers: number;
+  maleCount: number;
+  femaleCount: number;
   revenue: number;
+  registrationFeeRevenue: number;
 }
 
 type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
@@ -625,12 +630,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     const { data: tournaments } = await supabase
       .from('tournaments')
-      .select(`
-        id,
-        name,
-        start_date,
-        end_date
-      `)
+      .select('id, name, start_date, end_date')
       .eq('club_id', clubData.id)
       .gte('start_date', startDateOnly)
       .lte('start_date', endDateOnly)
@@ -643,30 +643,81 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     const tournamentIds = tournaments.map(t => t.id);
 
-    const { data: payments } = await supabase
-      .from('payment_transactions')
-      .select('tournament_id, amount, status')
-      .in('tournament_id', tournamentIds)
-      .eq('status', 'succeeded');
+    const [paymentsResult, playersResult, categoriesResult, teamsResult] = await Promise.all([
+      supabase.from('payment_transactions').select('tournament_id, amount, status').in('tournament_id', tournamentIds).eq('status', 'succeeded'),
+      supabase.from('players').select('tournament_id, name, phone_number, category_id').in('tournament_id', tournamentIds),
+      supabase.from('tournament_categories').select('id, tournament_id, registration_fee').in('tournament_id', tournamentIds),
+      supabase.from('teams').select('tournament_id, player1_id, player2_id').in('tournament_id', tournamentIds),
+    ]);
 
-    const { data: players } = await supabase
-      .from('players')
-      .select('tournament_id')
-      .in('tournament_id', tournamentIds);
+    const payments = paymentsResult.data || [];
+    const allPlayers = playersResult.data || [];
+    const categories = categoriesResult.data || [];
+    const teams = teamsResult.data || [];
+
+    const allPhones = [...new Set(allPlayers.map(p => p.phone_number).filter(Boolean))];
+    let accountsByPhone: Record<string, { gender?: string; favorite_club_id?: string | null }> = {};
+    if (allPhones.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < allPhones.length; i += batchSize) {
+        const batch = allPhones.slice(i, i + batchSize);
+        const { data: accounts } = await supabase
+          .from('player_accounts')
+          .select('phone_number, gender, favorite_club_id')
+          .in('phone_number', batch);
+        if (accounts) {
+          for (const acc of accounts) {
+            accountsByPhone[acc.phone_number] = { gender: acc.gender, favorite_club_id: acc.favorite_club_id };
+          }
+        }
+      }
+    }
 
     const metrics: TournamentMetric[] = tournaments.map(t => {
-      const tournamentPayments = payments?.filter(p => p.tournament_id === t.id) || [];
-      const tournamentPlayers = players?.filter(p => p.tournament_id === t.id) || [];
+      const tournamentPayments = payments.filter(p => p.tournament_id === t.id);
+      const tournamentPlayers = allPlayers.filter(p => p.tournament_id === t.id);
+      const tournamentTeams = teams.filter(tm => tm.tournament_id === t.id);
+      const tournamentCategories = categories.filter(c => c.tournament_id === t.id);
 
       const revenue = tournamentPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const registrations = tournamentPlayers.length;
+
+      const uniqueNames = new Set(tournamentPlayers.map(p => p.name?.toLowerCase().trim()).filter(Boolean));
+      const uniquePlayers = uniqueNames.size;
+
+      let clubMembers = 0;
+      let maleCount = 0;
+      let femaleCount = 0;
+      const countedPhones = new Set<string>();
+
+      for (const p of tournamentPlayers) {
+        const phone = p.phone_number;
+        if (!phone || countedPhones.has(phone)) continue;
+        countedPhones.add(phone);
+        const acc = accountsByPhone[phone];
+        if (acc) {
+          if (acc.favorite_club_id === clubData.id) clubMembers++;
+          if (acc.gender === 'male') maleCount++;
+          else if (acc.gender === 'female') femaleCount++;
+        }
+      }
+
+      const avgFee = tournamentCategories.length > 0
+        ? tournamentCategories.reduce((sum, c) => sum + Number(c.registration_fee || 0), 0) / tournamentCategories.length
+        : 0;
+      const registrationFeeRevenue = avgFee > 0 ? registrations * avgFee : 0;
 
       return {
         tournamentId: t.id,
         tournamentName: t.name,
         startDate: t.start_date,
         registrations,
-        revenue
+        uniquePlayers,
+        clubMembers,
+        maleCount,
+        femaleCount,
+        revenue,
+        registrationFeeRevenue
       };
     });
 
@@ -1376,43 +1427,67 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             {expandedSections.tournaments && (
               <div className="border-t border-gray-200 p-5 space-y-6">
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-3">Tournament Revenue</h3>
+                  <h3 className="text-sm font-medium text-gray-700 mb-3">Métricas de Torneios</h3>
                   {tournamentMetrics.length === 0 ? (
                     <div className="text-center py-8">
                       <Trophy className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                      <p className="text-sm text-gray-500">No tournaments linked to this club for this period</p>
-                      <p className="text-xs text-gray-400 mt-1">Link tournaments to your club in the tournament app to see revenue here</p>
+                      <p className="text-sm text-gray-500">Nenhum torneio associado a este clube no período</p>
+                      <p className="text-xs text-gray-400 mt-1">Associe torneios ao seu clube na app de torneios</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-gray-600 border-b border-gray-200">
-                            <th className="pb-2 font-medium">Tournament</th>
-                            <th className="pb-2 font-medium text-right">Date</th>
-                            <th className="pb-2 font-medium text-right">Registrations</th>
-                            <th className="pb-2 font-medium text-right">Revenue</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tournamentMetrics.map(tournament => (
-                            <tr key={tournament.tournamentId} className="border-b border-gray-100 last:border-0">
-                              <td className="py-3 font-medium text-gray-900">{tournament.tournamentName}</td>
-                              <td className="py-3 text-right text-gray-700">{new Date(tournament.startDate).toLocaleDateString()}</td>
-                              <td className="py-3 text-right text-amber-600 font-medium">{tournament.registrations}</td>
-                              <td className="py-3 text-right text-emerald-600 font-medium">{formatCurrency(tournament.revenue)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr className="bg-gray-50 font-semibold">
-                            <td className="py-3 text-gray-900">Total</td>
-                            <td className="py-3"></td>
-                            <td className="py-3 text-right text-amber-600">{financialSummary.tournamentsRegistrations}</td>
-                            <td className="py-3 text-right text-emerald-600">{formatCurrency(financialSummary.tournamentsRevenue)}</td>
-                          </tr>
-                        </tfoot>
-                      </table>
+                    <div className="space-y-4">
+                      {tournamentMetrics.map(tournament => (
+                        <div key={tournament.tournamentId} className="border border-gray-200 rounded-xl p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-semibold text-gray-900">{tournament.tournamentName}</h4>
+                            <span className="text-xs text-gray-500">{new Date(tournament.startDate).toLocaleDateString()}</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div className="bg-blue-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-blue-600 font-medium">Inscrições</p>
+                              <p className="text-xl font-bold text-blue-700">{tournament.registrations}</p>
+                            </div>
+                            <div className="bg-purple-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-purple-600 font-medium">Jogadores únicos</p>
+                              <p className="text-xl font-bold text-purple-700">{tournament.uniquePlayers}</p>
+                            </div>
+                            <div className="bg-amber-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-amber-600 font-medium">Membros clube</p>
+                              <p className="text-xl font-bold text-amber-700">{tournament.clubMembers}</p>
+                            </div>
+                            <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                              <p className="text-xs text-emerald-600 font-medium">Receita</p>
+                              <p className="text-xl font-bold text-emerald-700">{formatCurrency(tournament.revenue || tournament.registrationFeeRevenue)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 mt-3 text-sm text-gray-600">
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
+                              {tournament.maleCount} Masculinos
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="w-2.5 h-2.5 rounded-full bg-pink-500 inline-block"></span>
+                              {tournament.femaleCount} Femininos
+                            </span>
+                            {tournament.registrations - tournament.maleCount - tournament.femaleCount > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2.5 h-2.5 rounded-full bg-gray-400 inline-block"></span>
+                                {tournament.registrations - tournament.maleCount - tournament.femaleCount} N/D
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <div className="bg-gray-50 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+                        <div className="text-sm font-semibold text-gray-700">
+                          Total: {tournamentMetrics.length} torneios
+                        </div>
+                        <div className="flex flex-wrap gap-4 text-sm font-medium">
+                          <span className="text-blue-600">{financialSummary.tournamentsRegistrations} inscrições</span>
+                          <span className="text-purple-600">{tournamentMetrics.reduce((s, t) => s + t.uniquePlayers, 0)} jogadores únicos</span>
+                          <span className="text-emerald-600">{formatCurrency(financialSummary.tournamentsRevenue)}</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
