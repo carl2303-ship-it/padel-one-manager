@@ -50,7 +50,9 @@ interface Court {
   hourly_rate: number;
   peak_rate: number;
   price_90min: number | null;
-  price_240min: number | null;
+  price_120min: number | null;
+  peak_price_90min: number | null;
+  peak_price_120min: number | null;
   is_active: boolean;
   description: string | null;
   sort_order: number;
@@ -100,7 +102,9 @@ export default function CourtManagement() {
     hourly_rate: 20,
     peak_rate: 25,
     price_90min: null as number | null,
-    price_240min: null as number | null,
+    price_120min: null as number | null,
+    peak_price_90min: null as number | null,
+    peak_price_120min: null as number | null,
     is_active: true,
     description: ''
   });
@@ -409,7 +413,9 @@ export default function CourtManagement() {
           hourly_rate: form.hourly_rate,
           peak_rate: form.peak_rate,
           price_90min: form.price_90min,
-          price_240min: form.price_240min,
+          price_120min: form.price_120min,
+          peak_price_90min: form.peak_price_90min,
+          peak_price_120min: form.peak_price_120min,
           is_active: form.is_active,
           description: form.description || null
         })
@@ -443,7 +449,9 @@ export default function CourtManagement() {
           hourly_rate: form.hourly_rate,
           peak_rate: form.peak_rate,
           price_90min: form.price_90min,
-          price_240min: form.price_240min,
+          price_120min: form.price_120min,
+          peak_price_90min: form.peak_price_90min,
+          peak_price_120min: form.peak_price_120min,
           is_active: form.is_active,
           description: form.description || null,
           sort_order: maxSortOrder + 1,
@@ -468,7 +476,9 @@ export default function CourtManagement() {
       hourly_rate: court.hourly_rate,
       peak_rate: court.peak_rate,
       price_90min: court.price_90min,
-      price_240min: court.price_240min,
+      price_120min: court.price_120min,
+      peak_price_90min: court.peak_price_90min,
+      peak_price_120min: court.peak_price_120min,
       is_active: court.is_active,
       description: court.description || ''
     });
@@ -499,7 +509,9 @@ export default function CourtManagement() {
       hourly_rate: 20,
       peak_rate: 25,
       price_90min: null,
-      price_240min: null,
+      price_120min: null,
+      peak_price_90min: null,
+      peak_price_120min: null,
       is_active: true,
       description: ''
     });
@@ -698,25 +710,38 @@ export default function CourtManagement() {
                   <option value="covered">{t.courts.covered}</option>
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.hourlyRate} (EUR) — 60min</label>
-                  <input type="number" value={form.hourly_rate} onChange={(e) => setForm({ ...form, hourly_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-gray-800">Preços Normais (EUR)</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">60 min *</label>
+                    <input type="number" value={form.hourly_rate} onChange={(e) => setForm({ ...form, hourly_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">90 min</label>
+                    <input type="number" value={form.price_90min ?? ''} onChange={(e) => setForm({ ...form, price_90min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`${(form.hourly_rate * 1.5).toFixed(0)}`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">120 min</label>
+                    <input type="number" value={form.price_120min ?? ''} onChange={(e) => setForm({ ...form, price_120min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`${(form.hourly_rate * 2).toFixed(0)}`} />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.peakRate} (EUR)</label>
-                  <input type="number" value={form.peak_rate} onChange={(e) => setForm({ ...form, peak_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+                <p className="text-sm font-semibold text-gray-800 pt-2">Preços Hora de Ponta (EUR)</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">60 min *</label>
+                    <input type="number" value={form.peak_rate} onChange={(e) => setForm({ ...form, peak_rate: parseFloat(e.target.value) || 0 })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">90 min</label>
+                    <input type="number" value={form.peak_price_90min ?? ''} onChange={(e) => setForm({ ...form, peak_price_90min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`${(form.peak_rate * 1.5).toFixed(0)}`} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">120 min</label>
+                    <input type="number" value={form.peak_price_120min ?? ''} onChange={(e) => setForm({ ...form, peak_price_120min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`${(form.peak_rate * 2).toFixed(0)}`} />
+                  </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço 90min (EUR)</label>
-                  <input type="number" value={form.price_90min ?? ''} onChange={(e) => setForm({ ...form, price_90min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`Auto: ${(form.hourly_rate * 1.5).toFixed(2)}`} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço 240min / 4h (EUR)</label>
-                  <input type="number" value={form.price_240min ?? ''} onChange={(e) => setForm({ ...form, price_240min: e.target.value ? parseFloat(e.target.value) : null })} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" placeholder={`Auto: ${(form.hourly_rate * 4).toFixed(2)}`} />
-                </div>
+                <p className="text-xs text-gray-500">Campos vazios calculam automaticamente a partir do preço de 60min</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.courts.description}</label>

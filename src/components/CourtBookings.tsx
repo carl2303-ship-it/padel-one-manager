@@ -79,7 +79,9 @@ interface Court {
   hourly_rate: number;
   peak_rate: number;
   price_90min: number | null;
-  price_240min: number | null;
+  price_120min: number | null;
+  peak_price_90min: number | null;
+  peak_price_120min: number | null;
   court_slots: CourtSlotsData | null;
 }
 
@@ -747,9 +749,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   const getBasePrice = () => {
     const court = courts.find(c => c.id === newBooking.court_id);
     if (!court) return 0;
-    const durationMin = newBooking.duration * 60;
-    if (durationMin === 90 && court.price_90min != null) return court.price_90min;
-    if (durationMin === 240 && court.price_240min != null) return court.price_240min;
+    const durationMin = Math.round(newBooking.duration * 60);
+    if (durationMin === 90) return court.price_90min ?? court.hourly_rate * 1.5;
+    if (durationMin === 120) return court.price_120min ?? court.hourly_rate * 2;
     return newBooking.duration * court.hourly_rate;
   };
 
@@ -2172,20 +2174,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
-            <div className="text-center">
-              <div className="relative inline-block">
-                <h2
-                  className="text-lg font-semibold text-gray-900 capitalize cursor-pointer hover:text-blue-600 transition-colors"
-                  onClick={() => {
-                    const picker = document.getElementById('booking-date-picker') as HTMLInputElement;
-                    picker?.showPicker?.();
-                    picker?.click();
-                  }}
-                >
-                  {formatDate(selectedDate)}
-                </h2>
+            <div className="text-center flex flex-col items-center gap-1">
+              <h2 className="text-lg font-semibold text-gray-900 capitalize">{formatDate(selectedDate)}</h2>
+              <div className="flex items-center gap-2">
                 <input
-                  id="booking-date-picker"
                   type="date"
                   value={selectedDate.toISOString().split('T')[0]}
                   onChange={(e) => {
@@ -2194,15 +2186,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       setSelectedDate(new Date(y, m - 1, d));
                     }
                   }}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  className="px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <button
+                  onClick={() => setSelectedDate(new Date())}
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  {t.bookings.today}
+                </button>
               </div>
-              <button
-                onClick={() => setSelectedDate(new Date())}
-                className="text-sm text-blue-600 hover:text-blue-700"
-              >
-                {t.bookings.today}
-              </button>
             </div>
             <button
               onClick={() => navigateDate(1)}
