@@ -1221,38 +1221,29 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         }
 
         if (newStatus === 'paid') {
-          // 2. Create player_transaction with correct individual price
-          const txData: any = {
-            club_owner_id: user?.id,
-            player_name: player.name || 'Jogador',
-            player_phone: normalizedPhone || 'unknown',
-            transaction_type: 'open_game',
-            amount: player.price || 0,
-            reference_id: selectedOpenGame.id,
-            reference_type: 'open_game',
-            notes: `Jogo Aberto: ${getGameTypeLabel(selectedOpenGame.game_type)} - ${selectedOpenGame.court_name || 'Campo'}`
+          const rpcParams: any = {
+            p_club_owner_id: effectiveUserId,
+            p_player_name: player.name || 'Jogador',
+            p_player_phone: normalizedPhone || 'unknown',
+            p_transaction_type: 'open_game',
+            p_amount: player.price || 0,
+            p_reference_id: selectedOpenGame.id,
+            p_reference_type: 'open_game',
+            p_notes: `Jogo Aberto: ${getGameTypeLabel(selectedOpenGame.game_type)} - ${selectedOpenGame.court_name || 'Campo'}`
           };
-          if (playerAccountId) {
-            txData.player_account_id = playerAccountId;
-          }
-          console.log('[Payment] Creating transaction:', txData);
-          
-          const { data: txResult, error: txError } = await supabase
-            .from('player_transactions')
-            .insert(txData)
-            .select();
-          
+          if (playerAccountId) rpcParams.p_player_account_id = playerAccountId;
+
+          console.log('[Payment] Creating transaction via RPC:', rpcParams);
+          const { data: txResult, error: txError } = await supabase.rpc('insert_player_transaction', rpcParams);
           console.log('[Payment] Transaction result:', { txResult, txError });
         } else {
-          // 3. Remove transaction when payment is cancelled
-          const { data: delResult, error: delError } = await supabase
-            .from('player_transactions')
-            .delete()
-            .eq('reference_id', selectedOpenGame.id)
-            .eq('reference_type', 'open_game')
-            .eq('player_name', player.name || '')
-            .select();
-          
+          console.log('[Payment] Deleting transaction via RPC');
+          const { data: delResult, error: delError } = await supabase.rpc('delete_player_transaction', {
+            p_club_owner_id: effectiveUserId,
+            p_reference_id: selectedOpenGame.id,
+            p_reference_type: 'open_game',
+            p_player_name: player.name || ''
+          });
           console.log('[Payment] Delete result:', { delResult, delError });
         }
       }
@@ -1613,28 +1604,32 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
 
     if (newStatus === 'paid') {
-      // Create transaction
-      const txData: any = {
-        club_owner_id: user?.id,
-        player_name: player.name,
-        player_phone: normalizedPhone || 'unknown',
-        transaction_type: 'booking',
-        amount: player.final_price || 0,
-        reference_id: selectedTournament.id,
-        reference_type: 'tournament',
-        notes: `Torneio: ${selectedTournament.name}${player.category_name ? ' - ' + player.category_name : ''}`
+      const rpcParams: any = {
+        p_club_owner_id: effectiveUserId,
+        p_player_name: player.name,
+        p_player_phone: normalizedPhone || 'unknown',
+        p_transaction_type: 'booking',
+        p_amount: player.final_price || 0,
+        p_reference_id: selectedTournament.id,
+        p_reference_type: 'tournament',
+        p_notes: `Torneio: ${selectedTournament.name}${player.category_name ? ' - ' + player.category_name : ''}`
       };
-      if (playerAccountId) txData.player_account_id = playerAccountId;
+      if (playerAccountId) rpcParams.p_player_account_id = playerAccountId;
 
-      await supabase.from('player_transactions').insert(txData);
+      const { error: txError } = await supabase.rpc('insert_player_transaction', rpcParams);
+      if (txError) {
+        console.error('[Tournament] Error creating player transaction:', txError, rpcParams);
+      }
     } else {
-      // Remove transaction
-      await supabase
-        .from('player_transactions')
-        .delete()
-        .eq('reference_id', selectedTournament.id)
-        .eq('reference_type', 'tournament')
-        .eq('player_name', player.name);
+      const { error: delError } = await supabase.rpc('delete_player_transaction', {
+        p_club_owner_id: effectiveUserId,
+        p_reference_id: selectedTournament.id,
+        p_reference_type: 'tournament',
+        p_player_name: player.name
+      });
+      if (delError) {
+        console.error('[Tournament] Error deleting player transaction:', delError);
+      }
     }
 
     // Reload tournament details

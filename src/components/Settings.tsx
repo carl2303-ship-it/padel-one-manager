@@ -3,11 +3,20 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
-import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle, Calendar } from 'lucide-react';
+import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle, Calendar, QrCode, ExternalLink, Copy, Plus, Trash2, Tag } from 'lucide-react';
 import CourtManagement from './CourtManagement';
 import ClubManagement from './ClubManagement';
 
-type SettingsTab = 'general' | 'courts' | 'clubs';
+type SettingsTab = 'general' | 'courts' | 'clubs' | 'pricing';
+
+interface PricingExtra {
+  name: string;
+  price: string;
+}
+
+interface PricingConfig {
+  equipment: PricingExtra[];
+}
 
 export default function Settings() {
   const { t } = useI18n();
@@ -40,6 +49,13 @@ export default function Settings() {
   const [hoursSaving, setHoursSaving] = useState(false);
   const [hoursSuccess, setHoursSuccess] = useState('');
 
+  const [clubId, setClubId] = useState<string | null>(null);
+  const [pricingConfig, setPricingConfig] = useState<PricingConfig>({
+    equipment: [],
+  });
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingSuccess, setPricingSuccess] = useState('');
+
   useEffect(() => {
     if (user) {
       loadSettings();
@@ -63,8 +79,20 @@ export default function Settings() {
       if (data.available_booking_slots && Array.isArray(data.available_booking_slots)) {
         setAvailableBookingSlots(data.available_booking_slots);
       } else {
-        // Default: all slots between start and end are available
         setAvailableBookingSlots(generateSlotsForRange(data.booking_start_time || '08:00', data.booking_end_time || '22:00'));
+      }
+    }
+
+    const { data: clubData } = await supabase
+      .from('clubs')
+      .select('id, pricing_config')
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (clubData) {
+      setClubId(clubData.id);
+      if (clubData.pricing_config) {
+        setPricingConfig(clubData.pricing_config as PricingConfig);
       }
     }
   };
@@ -221,9 +249,24 @@ export default function Settings() {
     }
   };
 
+  const savePricingConfig = async () => {
+    if (!user || !clubId) return;
+    setPricingSaving(true);
+    await supabase
+      .from('clubs')
+      .update({ pricing_config: pricingConfig })
+      .eq('id', clubId);
+    setPricingSuccess('Preçário guardado!');
+    setTimeout(() => setPricingSuccess(''), 3000);
+    setPricingSaving(false);
+  };
+
+  const getPricingUrl = () => `${window.location.origin}/pricing/${clubId}`;
+
   const tabs = [
     { id: 'general' as SettingsTab, label: t.settings.title, icon: SettingsIcon },
     { id: 'courts' as SettingsTab, label: t.nav.courts, icon: MapPin },
+    { id: 'pricing' as SettingsTab, label: 'Preçário', icon: Tag },
     { id: 'clubs' as SettingsTab, label: t.clubs?.title || 'Clubs', icon: Building2 },
   ];
 
@@ -490,6 +533,132 @@ export default function Settings() {
 
       {activeTab === 'courts' && (
         <CourtManagement />
+      )}
+
+      {activeTab === 'pricing' && (
+        <div className="max-w-2xl space-y-6">
+          {/* Info */}
+          <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 text-sm text-blue-800">
+            <p className="font-medium mb-1">Página pública do preçário</p>
+            <p className="text-blue-600">
+              Os <strong>preços dos campos</strong> são lidos das definições dos campos e os <strong>planos de membro</strong> da tab Jogadores.
+              Aqui podes gerir os <strong>equipamentos e extras</strong> que aparecem na página.
+            </p>
+          </div>
+
+          {/* QR Code & Link */}
+          {clubId && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border border-blue-200 p-5">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
+                <QrCode className="w-5 h-5 text-blue-600" />
+                Link & QR Code do Preçário
+              </h3>
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="text"
+                  value={getPricingUrl()}
+                  readOnly
+                  className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono text-gray-600"
+                />
+                <button
+                  onClick={() => { navigator.clipboard.writeText(getPricingUrl()); alert('Link copiado!'); }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition flex items-center gap-1"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copiar
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => window.open(`https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(getPricingUrl())}`, '_blank')}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-1"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Ver QR Code
+                </button>
+                <button
+                  onClick={() => window.open(getPricingUrl(), '_blank')}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center gap-1"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Pré-visualizar
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-3">
+                Imprime o QR Code e coloca na receção ou entrada do clube para os clientes acederem ao preçário.
+              </p>
+            </div>
+          )}
+
+          {/* Equipment & Extras */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900">Equipamentos & Acessórios</h3>
+              <button
+                onClick={() => setPricingConfig(prev => ({
+                  ...prev,
+                  equipment: [...prev.equipment, { name: '', price: '' }]
+                }))}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" /> Adicionar
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              {pricingConfig.equipment.map((eq, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Nome"
+                    value={eq.name}
+                    onChange={e => {
+                      const updated = [...pricingConfig.equipment];
+                      updated[i] = { ...updated[i], name: e.target.value };
+                      setPricingConfig(prev => ({ ...prev, equipment: updated }));
+                    }}
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Preço"
+                    value={eq.price}
+                    onChange={e => {
+                      const updated = [...pricingConfig.equipment];
+                      updated[i] = { ...updated[i], price: e.target.value };
+                      setPricingConfig(prev => ({ ...prev, equipment: updated }));
+                    }}
+                    className="w-24 px-3 py-2 border border-gray-200 rounded-lg text-sm text-right"
+                  />
+                  <button
+                    onClick={() => {
+                      const updated = pricingConfig.equipment.filter((_, idx) => idx !== i);
+                      setPricingConfig(prev => ({ ...prev, equipment: updated }));
+                    }}
+                    className="p-2 rounded-lg bg-red-100 text-red-600 hover:bg-red-200 transition"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Save */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={savePricingConfig}
+              disabled={pricingSaving}
+              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50"
+            >
+              {pricingSaving ? 'A guardar...' : 'Guardar Preçário'}
+            </button>
+            {pricingSuccess && (
+              <span className="text-green-600 text-sm font-medium flex items-center gap-1">
+                <Check className="w-4 h-4" /> {pricingSuccess}
+              </span>
+            )}
+          </div>
+        </div>
       )}
 
       {activeTab === 'clubs' && (

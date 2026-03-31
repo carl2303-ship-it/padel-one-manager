@@ -15,6 +15,7 @@ import SuperAdminDashboard from './components/SuperAdminDashboard';
 import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
 import PublicMenu from './components/PublicMenu';
+import PublicPricing from './components/PublicPricing';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -198,7 +199,7 @@ function App() {
     setCheckingPermissions(false);
   };
 
-  // Check if this is a public menu page (no auth needed)
+  // Check if this is a public page (no auth needed)
   const pathname = window.location.pathname;
   const menuMatch = pathname.match(/^\/menu\/([a-f0-9-]+)$/i);
   if (menuMatch) {
@@ -206,6 +207,11 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const tableNum = urlParams.get('mesa') || urlParams.get('table');
     return <PublicMenu clubId={menuClubId} tableNumber={tableNum} />;
+  }
+
+  const pricingMatch = pathname.match(/^\/pricing\/([a-f0-9-]+)$/i);
+  if (pricingMatch) {
+    return <PublicPricing clubId={pricingMatch[1]} />;
   }
 
   if (authLoading || checkingPermissions) {

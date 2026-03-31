@@ -139,12 +139,9 @@ interface TournamentMetric {
   tournamentName: string;
   startDate: string;
   registrations: number;
-  uniquePlayers: number;
+  newPlayers: number;
   clubMembers: number;
-  maleCount: number;
-  femaleCount: number;
   revenue: number;
-  registrationFeeRevenue: number;
 }
 
 type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
@@ -376,7 +373,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
       players.forEach(p => {
         if (p.name) {
-          const key = p.name.toLowerCase();
+          const key = p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
           const existing = memberMap.get(key);
           const playerShare = (Number(b.price) || 0) / 4;
           if (existing) {
@@ -385,7 +382,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           } else {
             memberMap.set(key, {
               memberId: key,
-              memberName: p.name,
+              memberName: p.name.trim(),
               totalBookings: 1,
               totalSpent: playerShare
             });
@@ -630,7 +627,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     const { data: tournaments } = await supabase
       .from('tournaments')
-      .select('id, name, start_date, end_date')
+      .select('id, name, start_date, end_date, registration_fee, member_price, non_member_price')
       .eq('club_id', clubData.id)
       .gte('start_date', startDateOnly)
       .lte('start_date', endDateOnly)
@@ -643,84 +640,79 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     const tournamentIds = tournaments.map(t => t.id);
 
-    const [paymentsResult, playersResult, categoriesResult, teamsResult] = await Promise.all([
-      supabase.from('payment_transactions').select('tournament_id, amount, status').in('tournament_id', tournamentIds).eq('status', 'succeeded'),
-      supabase.from('players').select('tournament_id, name, phone_number, category_id').in('tournament_id', tournamentIds),
-      supabase.from('tournament_categories').select('id, tournament_id, registration_fee').in('tournament_id', tournamentIds),
-      supabase.from('teams').select('tournament_id, player1_id, player2_id').in('tournament_id', tournamentIds),
+    const [playersResult, categoriesResult, membersResult] = await Promise.all([
+      supabase.from('players').select('tournament_id, name, phone_number, category_id, payment_status').in('tournament_id', tournamentIds),
+      supabase.from('tournament_categories').select('id, tournament_id, registration_fee, member_price, non_member_price').in('tournament_id', tournamentIds),
+      supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active'),
     ]);
 
-    const payments = paymentsResult.data || [];
     const allPlayers = playersResult.data || [];
-    const categories = categoriesResult.data || [];
-    const teams = teamsResult.data || [];
+    const allCategories = categoriesResult.data || [];
+    const memberPhones = new Set((membersResult.data || []).map((m: any) => m.member_phone).filter(Boolean));
 
-    const allPhones = [...new Set(allPlayers.map(p => p.phone_number).filter(Boolean))];
-    let accountsByPhone: Record<string, { gender?: string; favorite_club_id?: string | null }> = {};
-    if (allPhones.length > 0) {
-      const batchSize = 100;
-      for (let i = 0; i < allPhones.length; i += batchSize) {
-        const batch = allPhones.slice(i, i + batchSize);
-        const { data: accounts } = await supabase
-          .from('player_accounts')
-          .select('phone_number, gender, favorite_club_id')
-          .in('phone_number', batch);
-        if (accounts) {
-          for (const acc of accounts) {
-            accountsByPhone[acc.phone_number] = { gender: acc.gender, favorite_club_id: acc.favorite_club_id };
-          }
-        }
-      }
-    }
+    const sortedTournaments = [...tournaments].sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+    const seenPlayerNames = new Set<string>();
+    const metricsMap = new Map<string, TournamentMetric>();
 
-    const metrics: TournamentMetric[] = tournaments.map(t => {
-      const tournamentPayments = payments.filter(p => p.tournament_id === t.id);
+    for (const t of sortedTournaments) {
       const tournamentPlayers = allPlayers.filter(p => p.tournament_id === t.id);
-      const tournamentTeams = teams.filter(tm => tm.tournament_id === t.id);
-      const tournamentCategories = categories.filter(c => c.tournament_id === t.id);
-
-      const revenue = tournamentPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const registrations = tournamentPlayers.length;
 
-      const uniqueNames = new Set(tournamentPlayers.map(p => p.name?.toLowerCase().trim()).filter(Boolean));
-      const uniquePlayers = uniqueNames.size;
-
+      let newPlayers = 0;
       let clubMembers = 0;
-      let maleCount = 0;
-      let femaleCount = 0;
       const countedPhones = new Set<string>();
 
       for (const p of tournamentPlayers) {
+        const normalName = p.name ? p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim() : '';
+        if (normalName && !seenPlayerNames.has(normalName)) {
+          newPlayers++;
+        }
+
         const phone = p.phone_number;
-        if (!phone || countedPhones.has(phone)) continue;
-        countedPhones.add(phone);
-        const acc = accountsByPhone[phone];
-        if (acc) {
-          if (acc.favorite_club_id === clubData.id) clubMembers++;
-          if (acc.gender === 'male') maleCount++;
-          else if (acc.gender === 'female') femaleCount++;
+        if (phone && !countedPhones.has(phone)) {
+          countedPhones.add(phone);
+          if (memberPhones.has(phone)) clubMembers++;
         }
       }
 
-      const avgFee = tournamentCategories.length > 0
-        ? tournamentCategories.reduce((sum, c) => sum + Number(c.registration_fee || 0), 0) / tournamentCategories.length
-        : 0;
-      const registrationFeeRevenue = avgFee > 0 ? registrations * avgFee : 0;
+      for (const p of tournamentPlayers) {
+        const normalName = p.name ? p.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim() : '';
+        if (normalName) seenPlayerNames.add(normalName);
+      }
 
-      return {
+      const tournamentCategories = allCategories.filter(c => c.tournament_id === t.id);
+      const paidPlayers = tournamentPlayers.filter(p => p.payment_status === 'paid');
+      const tournRegFee = Number((t as any).registration_fee) || 0;
+      const tournMemberPrice = Number((t as any).member_price) || 0;
+      const tournNonMemberPrice = Number((t as any).non_member_price) || 0;
+
+      let revenue = 0;
+      for (const p of paidPlayers) {
+        const cat = tournamentCategories.find(c => c.id === p.category_id);
+        const catRegFee = Number(cat?.registration_fee) || 0;
+        const catMemberPrice = Number((cat as any)?.member_price) || 0;
+        const catNonMemberPrice = Number((cat as any)?.non_member_price) || 0;
+        const isMember = p.phone_number ? memberPhones.has(p.phone_number) : false;
+
+        if (isMember) {
+          revenue += catMemberPrice || tournMemberPrice || catRegFee || tournRegFee;
+        } else {
+          revenue += catNonMemberPrice || tournNonMemberPrice || catRegFee || tournRegFee;
+        }
+      }
+
+      metricsMap.set(t.id, {
         tournamentId: t.id,
         tournamentName: t.name,
         startDate: t.start_date,
         registrations,
-        uniquePlayers,
+        newPlayers,
         clubMembers,
-        maleCount,
-        femaleCount,
-        revenue,
-        registrationFeeRevenue
-      };
-    });
+        revenue
+      });
+    }
 
+    const metrics = tournaments.map(t => metricsMap.get(t.id)!);
     setTournamentMetrics(metrics);
   };
 
@@ -748,18 +740,14 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       }
     });
 
-    // Calculate from traditional sources (for backwards compatibility and completeness)
     const bookingsRevenueFromCourts = courtMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
     const academyRevenueFromCoaches = coachMetrics.reduce((sum, c) => sum + c.totalRevenue, 0);
     const barRevenueFromOrders = categoryMetrics.reduce((sum, c) => sum + c.revenue, 0);
-    const tournamentsRevenueFromPayments = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
 
-    // Combine both sources: player_transactions (new system) + traditional sources (old system)
-    // player_transactions is the primary source for new transactions, traditional sources for legacy data
     const bookingsRevenue = bookingsRevenueFromTxns + bookingsRevenueFromCourts;
     const academyRevenue = academyRevenueFromTxns + academyRevenueFromCoaches;
     const barRevenue = barRevenueFromTxns + barRevenueFromOrders;
-    const tournamentsRevenue = tournamentsRevenueFromTxns + tournamentsRevenueFromPayments;
+    const tournamentsRevenue = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
     
     const sponsorsRevenue = sponsorPayments.filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.amount), 0);
     const tournamentsRegistrations = tournamentMetrics.reduce((sum, t) => sum + t.registrations, 0);
@@ -799,17 +787,19 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
   };
 
   useEffect(() => {
+    const normalizeKey = (name: string) =>
+      name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
     const aggregatePlayerSpending = async () => {
       const customerMap = new Map<string, CustomerMetric>();
-      customerMetrics.forEach(c => customerMap.set(c.customerName.toLowerCase(), c));
+      customerMetrics.forEach(c => customerMap.set(normalizeKey(c.customerName), c));
 
       const playerMap = new Map<string, PlayerTotalSpending>();
 
-      // Add regular bookings from court_bookings
       memberBookings.forEach(member => {
-        const key = member.memberName.toLowerCase();
+        const key = normalizeKey(member.memberName);
         playerMap.set(key, {
-          playerName: member.memberName,
+          playerName: member.memberName.trim(),
           bookingsSpent: member.totalSpent,
           tournamentSpent: 0,
           academySpent: 0,
@@ -818,10 +808,9 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         });
       });
 
-      // Add player_transactions (open games, tournaments, individual pricing)
       const transactions = await loadPlayerTransactions();
       transactions.forEach(tx => {
-        const key = tx.player_name.toLowerCase();
+        const key = normalizeKey(tx.player_name);
         const existing = playerMap.get(key);
         const amount = Number(tx.amount);
         const isTournament = tx.reference_type === 'tournament';
@@ -839,7 +828,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           existing.totalSpent += amount;
         } else {
           playerMap.set(key, {
-            playerName: tx.player_name,
+            playerName: tx.player_name.trim(),
             bookingsSpent: !isTournament && (tx.transaction_type === 'open_game' || tx.transaction_type === 'booking') ? amount : 0,
             tournamentSpent: isTournament ? amount : 0,
             academySpent: tx.transaction_type === 'academy' ? amount : 0,
@@ -849,16 +838,91 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         }
       });
 
-      // Add academy from class bookings
+      // Add tournament fees from players table (fallback when player_transactions has no tournament entries)
+      const hasTournamentTxns = transactions.some(tx => tx.reference_type === 'tournament');
+      if (!hasTournamentTxns && effectiveUserId) {
+        const { startDate, endDate } = getDateRange();
+        const startDateOnly = startDate.split('T')[0];
+        const endDateOnly = endDate.split('T')[0];
+
+        const { data: clubData } = await supabase
+          .from('clubs')
+          .select('id')
+          .eq('owner_id', effectiveUserId)
+          .maybeSingle();
+
+        if (clubData) {
+          const { data: tournaments } = await supabase
+            .from('tournaments')
+            .select('id, start_date, registration_fee, member_price, non_member_price')
+            .eq('club_id', clubData.id)
+            .gte('start_date', startDateOnly)
+            .lte('start_date', endDateOnly);
+
+          if (tournaments && tournaments.length > 0) {
+            const tournamentIds = tournaments.map(t => t.id);
+            const tournMap = new Map(tournaments.map(t => [t.id, t]));
+
+            const [paidPlayersResult, categoriesResult, membersResult] = await Promise.all([
+              supabase.from('players').select('name, tournament_id, category_id, phone_number, payment_status').in('tournament_id', tournamentIds).eq('payment_status', 'paid'),
+              supabase.from('tournament_categories').select('id, tournament_id, registration_fee, member_price, non_member_price').in('tournament_id', tournamentIds),
+              supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active'),
+            ]);
+
+            const paidPlayers = paidPlayersResult.data || [];
+            const categories = categoriesResult.data || [];
+            const spendingMemberPhones = new Set((membersResult.data || []).map((m: any) => m.member_phone).filter(Boolean));
+
+            for (const p of paidPlayers) {
+              if (!p.name) continue;
+              const cat = categories.find(c => c.id === p.category_id);
+              const tourn = tournMap.get(p.tournament_id);
+              const isMember = p.phone_number ? spendingMemberPhones.has(p.phone_number) : false;
+
+              const catRegFee = Number(cat?.registration_fee) || 0;
+              const catMemberPrice = Number((cat as any)?.member_price) || 0;
+              const catNonMemberPrice = Number((cat as any)?.non_member_price) || 0;
+              const tournRegFee = Number(tourn?.registration_fee) || 0;
+              const tournMemberPrice = Number(tourn?.member_price) || 0;
+              const tournNonMemberPrice = Number(tourn?.non_member_price) || 0;
+
+              let fee = 0;
+              if (isMember) {
+                fee = catMemberPrice || tournMemberPrice || catRegFee || tournRegFee;
+              } else {
+                fee = catNonMemberPrice || tournNonMemberPrice || catRegFee || tournRegFee;
+              }
+              if (fee <= 0) continue;
+
+              const key = normalizeKey(p.name);
+              const existing = playerMap.get(key);
+              if (existing) {
+                existing.tournamentSpent += fee;
+                existing.totalSpent += fee;
+              } else {
+                playerMap.set(key, {
+                  playerName: p.name.trim(),
+                  bookingsSpent: 0,
+                  tournamentSpent: fee,
+                  academySpent: 0,
+                  barSpent: 0,
+                  totalSpent: fee
+                });
+              }
+            }
+          }
+        }
+      }
+
       studentMetrics.forEach(student => {
-        const key = student.studentName.toLowerCase();
+        const key = normalizeKey(student.studentName);
         const existing = playerMap.get(key);
         if (existing) {
           existing.academySpent += student.totalSpent;
           existing.totalSpent += student.totalSpent;
         } else {
           playerMap.set(key, {
-            playerName: student.studentName,
+            playerName: student.studentName.trim(),
             bookingsSpent: 0,
             tournamentSpent: 0,
             academySpent: student.totalSpent,
@@ -868,15 +932,15 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         }
       });
 
-      // Add bar from orders
-      customerMap.forEach((customer, key) => {
+      customerMap.forEach((customer) => {
+        const key = normalizeKey(customer.customerName);
         const existing = playerMap.get(key);
         if (existing) {
           existing.barSpent += customer.totalSpent;
           existing.totalSpent += customer.totalSpent;
         } else {
           playerMap.set(key, {
-            playerName: customer.customerName,
+            playerName: customer.customerName.trim(),
             bookingsSpent: 0,
             tournamentSpent: 0,
             academySpent: 0,
@@ -1448,8 +1512,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                               <p className="text-xl font-bold text-blue-700">{tournament.registrations}</p>
                             </div>
                             <div className="bg-purple-50 rounded-lg p-3 text-center">
-                              <p className="text-xs text-purple-600 font-medium">Jogadores únicos</p>
-                              <p className="text-xl font-bold text-purple-700">{tournament.uniquePlayers}</p>
+                              <p className="text-xs text-purple-600 font-medium">Novos jogadores</p>
+                              <p className="text-xl font-bold text-purple-700">{tournament.newPlayers}</p>
                             </div>
                             <div className="bg-amber-50 rounded-lg p-3 text-center">
                               <p className="text-xs text-amber-600 font-medium">Membros clube</p>
@@ -1457,24 +1521,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                             </div>
                             <div className="bg-emerald-50 rounded-lg p-3 text-center">
                               <p className="text-xs text-emerald-600 font-medium">Receita</p>
-                              <p className="text-xl font-bold text-emerald-700">{formatCurrency(tournament.revenue || tournament.registrationFeeRevenue)}</p>
+                              <p className="text-xl font-bold text-emerald-700">{formatCurrency(tournament.revenue)}</p>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-4 mt-3 text-sm text-gray-600">
-                            <span className="flex items-center gap-1">
-                              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span>
-                              {tournament.maleCount} Masculinos
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <span className="w-2.5 h-2.5 rounded-full bg-pink-500 inline-block"></span>
-                              {tournament.femaleCount} Femininos
-                            </span>
-                            {tournament.registrations - tournament.maleCount - tournament.femaleCount > 0 && (
-                              <span className="flex items-center gap-1">
-                                <span className="w-2.5 h-2.5 rounded-full bg-gray-400 inline-block"></span>
-                                {tournament.registrations - tournament.maleCount - tournament.femaleCount} N/D
-                              </span>
-                            )}
                           </div>
                         </div>
                       ))}
@@ -1484,7 +1532,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                         </div>
                         <div className="flex flex-wrap gap-4 text-sm font-medium">
                           <span className="text-blue-600">{financialSummary.tournamentsRegistrations} inscrições</span>
-                          <span className="text-purple-600">{tournamentMetrics.reduce((s, t) => s + t.uniquePlayers, 0)} jogadores únicos</span>
+                          <span className="text-purple-600">{tournamentMetrics.reduce((s, t) => s + t.newPlayers, 0)} novos jogadores</span>
                           <span className="text-emerald-600">{formatCurrency(financialSummary.tournamentsRevenue)}</span>
                         </div>
                       </div>
