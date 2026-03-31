@@ -23,7 +23,9 @@ import {
   Building2,
   Target,
   FileText,
-  Trophy
+  Trophy,
+  Award,
+  Filter
 } from 'lucide-react';
 
 interface ClubMetricsProps {
@@ -93,6 +95,14 @@ interface PlayerTotalSpending {
   academySpent: number;
   barSpent: number;
   totalSpent: number;
+  isMember?: boolean;
+}
+
+interface MembershipMetrics {
+  totalMembers: number;
+  activeMembers: number;
+  totalRevenue: number;
+  plans: { name: string; count: number; revenue: number }[];
 }
 
 interface Sponsor {
@@ -131,6 +141,7 @@ interface FinancialSummary {
   tournamentsRevenue: number;
   tournamentsCount: number;
   tournamentsRegistrations: number;
+  membershipsRevenue: number;
   totalRevenue: number;
 }
 
@@ -179,9 +190,12 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     tournamentsRevenue: 0,
     tournamentsCount: 0,
     tournamentsRegistrations: 0,
+    membershipsRevenue: 0,
     totalRevenue: 0
   });
   const [tournamentMetrics, setTournamentMetrics] = useState<TournamentMetric[]>([]);
+  const [membershipMetrics, setMembershipMetrics] = useState<MembershipMetrics>({ totalMembers: 0, activeMembers: 0, totalRevenue: 0, plans: [] });
+  const [spendingFilter, setSpendingFilter] = useState<'all' | 'members' | 'non-members'>('all');
 
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [sponsorPayments, setSponsorPayments] = useState<SponsorPayment[]>([]);
@@ -220,7 +234,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     bookings: false,
     academy: false,
     bar: false,
-    tournaments: false
+    tournaments: false,
+    memberships: false
   });
 
   const getDateRange = () => {
@@ -284,7 +299,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       loadBarMetrics(),
       loadSponsorsData(),
       loadTournamentMetrics(),
-      loadPlayerTransactions()
+      loadPlayerTransactions(),
+      loadMembershipMetrics()
     ]);
     setLoading(false);
   };
@@ -716,6 +732,34 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     setTournamentMetrics(metrics);
   };
 
+  const loadMembershipMetrics = async () => {
+    if (!effectiveUserId) return;
+    const { data: subs } = await supabase
+      .from('member_subscriptions')
+      .select('id, member_name, member_phone, plan_name, amount_paid, status, start_date, end_date')
+      .eq('club_owner_id', effectiveUserId);
+
+    if (!subs) return;
+    const active = subs.filter(s => s.status === 'active');
+    const totalRevenue = subs.reduce((sum, s) => sum + (Number(s.amount_paid) || 0), 0);
+
+    const planMap = new Map<string, { count: number; revenue: number }>();
+    subs.forEach(s => {
+      const name = s.plan_name || 'Sem plano';
+      const entry = planMap.get(name) || { count: 0, revenue: 0 };
+      entry.count++;
+      entry.revenue += Number(s.amount_paid) || 0;
+      planMap.set(name, entry);
+    });
+
+    setMembershipMetrics({
+      totalMembers: subs.length,
+      activeMembers: active.length,
+      totalRevenue,
+      plans: Array.from(planMap.entries()).map(([name, data]) => ({ name, ...data })).sort((a, b) => b.revenue - a.revenue)
+    });
+  };
+
   const calculateFinancialSummary = () => {
     // Calculate from player_transactions (the single source of truth for player spending)
     let bookingsRevenueFromTxns = 0;
@@ -752,6 +796,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     const sponsorsRevenue = sponsorPayments.filter(p => p.status === 'paid').reduce((sum, p) => sum + Number(p.amount), 0);
     const tournamentsRegistrations = tournamentMetrics.reduce((sum, t) => sum + t.registrations, 0);
 
+    const membershipsRevenue = membershipMetrics.totalRevenue;
+
     setFinancialSummary({
       bookingsRevenue,
       academyRevenue,
@@ -760,13 +806,14 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       tournamentsRevenue,
       tournamentsCount: tournamentMetrics.length,
       tournamentsRegistrations,
-      totalRevenue: bookingsRevenue + academyRevenue + barRevenue + sponsorsRevenue + tournamentsRevenue
+      membershipsRevenue,
+      totalRevenue: bookingsRevenue + academyRevenue + barRevenue + sponsorsRevenue + tournamentsRevenue + membershipsRevenue
     });
   };
 
   useEffect(() => {
     calculateFinancialSummary();
-  }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics, playerTransactions]);
+  }, [courtMetrics, coachMetrics, categoryMetrics, sponsorPayments, tournamentMetrics, playerTransactions, membershipMetrics]);
 
   const loadPlayerTransactions = async () => {
     if (!effectiveUserId) return [];
@@ -794,6 +841,13 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
       const customerMap = new Map<string, CustomerMetric>();
       customerMetrics.forEach(c => customerMap.set(normalizeKey(c.customerName), c));
 
+      const { data: activeMemberSubs } = await supabase
+        .from('member_subscriptions')
+        .select('member_name, member_phone')
+        .eq('club_owner_id', effectiveUserId || '')
+        .eq('status', 'active');
+      const memberNameKeys = new Set((activeMemberSubs || []).map(s => normalizeKey(s.member_name)));
+
       const playerMap = new Map<string, PlayerTotalSpending>();
 
       memberBookings.forEach(member => {
@@ -804,7 +858,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
           tournamentSpent: 0,
           academySpent: 0,
           barSpent: 0,
-          totalSpent: member.totalSpent
+          totalSpent: member.totalSpent,
+          isMember: memberNameKeys.has(key)
         });
       });
 
@@ -833,7 +888,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             tournamentSpent: isTournament ? amount : 0,
             academySpent: tx.transaction_type === 'academy' ? amount : 0,
             barSpent: tx.transaction_type === 'bar' ? amount : 0,
-            totalSpent: amount
+            totalSpent: amount,
+            isMember: memberNameKeys.has(key)
           });
         }
       });
@@ -906,7 +962,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                   tournamentSpent: fee,
                   academySpent: 0,
                   barSpent: 0,
-                  totalSpent: fee
+                  totalSpent: fee,
+                  isMember: memberNameKeys.has(key)
                 });
               }
             }
@@ -927,7 +984,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             tournamentSpent: 0,
             academySpent: student.totalSpent,
             barSpent: 0,
-            totalSpent: student.totalSpent
+            totalSpent: student.totalSpent,
+            isMember: memberNameKeys.has(key)
           });
         }
       });
@@ -945,7 +1003,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             tournamentSpent: 0,
             academySpent: 0,
             barSpent: customer.totalSpent,
-            totalSpent: customer.totalSpent
+            totalSpent: customer.totalSpent,
+            isMember: memberNameKeys.has(key)
           });
         }
       });
@@ -1221,7 +1280,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                 <p className="text-emerald-100 text-sm">Total revenue breakdown</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               <div className="bg-white/10 backdrop-blur rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Calendar className="w-4 h-4 text-emerald-200" />
@@ -1249,6 +1308,14 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                   <span className="text-sm text-emerald-100">Tournaments</span>
                 </div>
                 <div className="text-2xl font-bold">{formatCurrency(financialSummary.tournamentsRevenue)}</div>
+              </div>
+              <div className="bg-white/10 backdrop-blur rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Award className="w-4 h-4 text-emerald-200" />
+                  <span className="text-sm text-emerald-100">Memberships</span>
+                </div>
+                <div className="text-2xl font-bold">{formatCurrency(financialSummary.membershipsRevenue)}</div>
+                <div className="text-xs text-emerald-200 mt-1">{membershipMetrics.activeMembers} activos</div>
               </div>
               <div className="bg-white/10 backdrop-blur rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-1">
@@ -1542,23 +1609,125 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
               </div>
             )}
           </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => toggleSection('memberships')}
+              className="w-full flex items-center justify-between p-5 text-left hover:bg-gray-50 transition"
+            >
+              <div className="flex items-center gap-3">
+                <Award className="w-5 h-5 text-purple-600" />
+                <span className="font-semibold text-gray-900">Memberships</span>
+                <span className="text-emerald-600 font-medium">{formatCurrency(membershipMetrics.totalRevenue)}</span>
+                <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full font-medium">
+                  {membershipMetrics.activeMembers} activos
+                </span>
+              </div>
+              {expandedSections.memberships ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+            </button>
+
+            {expandedSections.memberships && (
+              <div className="border-t border-gray-200 p-5 space-y-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  <div className="bg-purple-50 rounded-lg p-4 text-center">
+                    <p className="text-xs text-purple-600 font-medium">Total Membros</p>
+                    <p className="text-2xl font-bold text-purple-700">{membershipMetrics.totalMembers}</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-4 text-center">
+                    <p className="text-xs text-emerald-600 font-medium">Membros Activos</p>
+                    <p className="text-2xl font-bold text-emerald-700">{membershipMetrics.activeMembers}</p>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-4 text-center">
+                    <p className="text-xs text-blue-600 font-medium">Receita Total</p>
+                    <p className="text-2xl font-bold text-blue-700">{formatCurrency(membershipMetrics.totalRevenue)}</p>
+                  </div>
+                </div>
+
+                {membershipMetrics.plans.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-3">Por Plano</h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-gray-600 border-b border-gray-200">
+                            <th className="pb-2 font-medium">Plano</th>
+                            <th className="pb-2 font-medium text-right">Subscrições</th>
+                            <th className="pb-2 font-medium text-right">Receita</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {membershipMetrics.plans.map(plan => (
+                            <tr key={plan.name} className="border-b border-gray-100 last:border-0">
+                              <td className="py-3 font-medium text-gray-900">{plan.name}</td>
+                              <td className="py-3 text-right text-gray-700">{plan.count}</td>
+                              <td className="py-3 text-right text-emerald-600 font-medium">{formatCurrency(plan.revenue)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-gray-50 font-semibold">
+                            <td className="py-3 text-gray-900">Total</td>
+                            <td className="py-3 text-right text-gray-900">{membershipMetrics.plans.reduce((s, p) => s + p.count, 0)}</td>
+                            <td className="py-3 text-right text-emerald-700">{formatCurrency(membershipMetrics.totalRevenue)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {activeTab === 'players' && (
+      {activeTab === 'players' && (() => {
+        const filteredSpending = spendingFilter === 'all' ? playerTotalSpending
+          : spendingFilter === 'members' ? playerTotalSpending.filter(p => p.isMember)
+          : playerTotalSpending.filter(p => !p.isMember);
+        return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="p-5 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-600" />
-              Player Spending Analysis
-            </h2>
-            <p className="text-sm text-gray-600 mt-1">See what each player spends at your club across all services</p>
+          <div className="p-5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                Player Spending Analysis
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">See what each player spends at your club across all services</p>
+            </div>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setSpendingFilter('all')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  spendingFilter === 'all' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                onClick={() => setSpendingFilter('members')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition flex items-center gap-1 ${
+                  spendingFilter === 'members' ? 'bg-white shadow text-purple-700' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Award className="w-3 h-3" />
+                Membros
+              </button>
+              <button
+                onClick={() => setSpendingFilter('non-members')}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  spendingFilter === 'non-members' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Não membros
+              </button>
+            </div>
           </div>
 
-          {playerTotalSpending.length === 0 ? (
+          {filteredSpending.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
               <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p>No player data available for this period</p>
+              <p>{spendingFilter === 'all' ? 'No player data available for this period' : `Nenhum ${spendingFilter === 'members' ? 'membro' : 'não-membro'} encontrado`}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1594,9 +1763,16 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {playerTotalSpending.map((player, idx) => (
+                  {filteredSpending.map((player, idx) => (
                     <tr key={idx} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                      <td className="py-3 px-5 font-medium text-gray-900">{player.playerName}</td>
+                      <td className="py-3 px-5 font-medium text-gray-900">
+                        <span className="flex items-center gap-2">
+                          {player.playerName}
+                          {player.isMember && (
+                            <span className="bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 rounded-full font-medium">Membro</span>
+                          )}
+                        </span>
+                      </td>
                       <td className="py-3 px-3 text-right text-gray-600">
                         {player.bookingsSpent > 0 ? formatCurrency(player.bookingsSpent) : '-'}
                       </td>
@@ -1617,21 +1793,21 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                 </tbody>
                 <tfoot>
                   <tr className="bg-gray-100 font-semibold">
-                    <td className="py-3 px-5 text-gray-900">TOTAL</td>
+                    <td className="py-3 px-5 text-gray-900">TOTAL ({filteredSpending.length})</td>
                     <td className="py-3 px-3 text-right text-gray-900">
-                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.bookingsSpent, 0))}
+                      {formatCurrency(filteredSpending.reduce((sum, p) => sum + p.bookingsSpent, 0))}
                     </td>
                     <td className="py-3 px-3 text-right text-gray-900">
-                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.tournamentSpent, 0))}
+                      {formatCurrency(filteredSpending.reduce((sum, p) => sum + p.tournamentSpent, 0))}
                     </td>
                     <td className="py-3 px-3 text-right text-gray-900">
-                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.academySpent, 0))}
+                      {formatCurrency(filteredSpending.reduce((sum, p) => sum + p.academySpent, 0))}
                     </td>
                     <td className="py-3 px-3 text-right text-gray-900">
-                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.barSpent, 0))}
+                      {formatCurrency(filteredSpending.reduce((sum, p) => sum + p.barSpent, 0))}
                     </td>
                     <td className="py-3 px-5 text-right text-emerald-700 bg-emerald-100">
-                      {formatCurrency(playerTotalSpending.reduce((sum, p) => sum + p.totalSpent, 0))}
+                      {formatCurrency(filteredSpending.reduce((sum, p) => sum + p.totalSpent, 0))}
                     </td>
                   </tr>
                 </tfoot>
@@ -1639,7 +1815,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {activeTab === 'sponsors' && (
         <div className="space-y-4">

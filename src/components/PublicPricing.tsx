@@ -101,6 +101,8 @@ export default function PublicPricing({ clubId }: Props) {
               .select('*')
               .eq('user_id', ownerId)
               .eq('is_active', true)
+              .eq('show_on_pricing', true)
+              .order('sort_order')
               .order('price'),
           ]);
           setCourts(courtRes.data || []);

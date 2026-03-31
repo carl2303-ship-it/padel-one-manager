@@ -117,6 +117,8 @@ export default function CourtManagement() {
   // Store both schedules while editing
   const [summerSchedule, setSummerSchedule] = useState<ScheduleConfig | null>(null);
   const [winterSchedule, setWinterSchedule] = useState<ScheduleConfig | null>(null);
+  const [showCopySlots, setShowCopySlots] = useState(false);
+  const [copySlotsTargets, setCopySlotsTargets] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (user) {
@@ -350,6 +352,48 @@ export default function CourtManagement() {
       loadCourts();
     } else {
       alert('Erro ao guardar slots: ' + error.message);
+    }
+  };
+
+  const handleCopySlotsToOthers = async () => {
+    if (!showSlotsConfig || copySlotsTargets.size === 0) return;
+
+    const currentSchedule: ScheduleConfig = {
+      operating_start: slotsOperatingStart,
+      operating_end: slotsOperatingEnd,
+      slots: slotsConfig.filter(s => s.durations.length > 0)
+    };
+    const finalSummer = scheduleTab === 'summer' ? currentSchedule : (summerSchedule || {
+      operating_start: '08:00', operating_end: '22:00', slots: generateSlotsForRange('08:00', '22:00')
+    });
+    const finalWinter = scheduleTab === 'winter' ? currentSchedule : (winterSchedule || {
+      operating_start: '09:00', operating_end: '21:00', slots: generateSlotsForRange('09:00', '21:00')
+    });
+
+    const courtSlotsData: CourtSlotsData = {
+      schedules: {
+        summer: { ...finalSummer, slots: finalSummer.slots.filter(s => s.durations.length > 0) },
+        winter: { ...finalWinter, slots: finalWinter.slots.filter(s => s.durations.length > 0) }
+      }
+    };
+
+    let errors = 0;
+    for (const targetId of copySlotsTargets) {
+      const { error } = await supabase
+        .from('club_courts')
+        .update({ court_slots: courtSlotsData })
+        .eq('id', targetId);
+      if (error) errors++;
+    }
+
+    if (errors === 0) {
+      setShowCopySlots(false);
+      setCopySlotsTargets(new Set());
+      setShowSlotsConfig(null);
+      loadCourts();
+      alert(`Slots copiados para ${copySlotsTargets.size} campo(s)!`);
+    } else {
+      alert(`Erro ao copiar para ${errors} campo(s)`);
     }
   };
 
@@ -907,9 +951,60 @@ export default function CourtManagement() {
                 ({scheduleTab === 'summer' ? '☀️ Verão' : '❄️ Inverno'})
               </p>
 
+              {/* Copy slots to other courts */}
+              {showCopySlots && (
+                <div className="bg-purple-50 rounded-xl border border-purple-200 p-4 mt-2">
+                  <p className="text-sm font-medium text-purple-800 mb-2">Copiar slots para:</p>
+                  <div className="space-y-2 mb-3">
+                    {courts.filter(c => c.id !== showSlotsConfig).map(c => (
+                      <label key={c.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={copySlotsTargets.has(c.id)}
+                          onChange={(e) => {
+                            const next = new Set(copySlotsTargets);
+                            e.target.checked ? next.add(c.id) : next.delete(c.id);
+                            setCopySlotsTargets(next);
+                          }}
+                          className="w-4 h-4 text-purple-600 border-gray-300 rounded"
+                        />
+                        <span className="text-gray-700">{c.name}</span>
+                        <span className="text-xs text-gray-400">({c.type})</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setShowCopySlots(false); setCopySlotsTargets(new Set()); }}
+                      className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                    >Cancelar</button>
+                    <button
+                      type="button"
+                      onClick={handleCopySlotsToOthers}
+                      disabled={copySlotsTargets.size === 0}
+                      className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-1"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copiar para {copySlotsTargets.size} campo(s)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Save / Cancel buttons */}
               <div className="flex gap-3 pt-2 sticky bottom-0 bg-white py-3 border-t border-gray-100">
                 <button type="button" onClick={() => setShowSlotsConfig(null)} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancelar</button>
+                {courts.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => { setShowCopySlots(!showCopySlots); setCopySlotsTargets(new Set()); }}
+                    className="px-4 py-2 border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition flex items-center gap-1"
+                  >
+                    <Copy className="w-4 h-4" />
+                    Copiar para...
+                  </button>
+                )}
                 <button type="button" onClick={() => handleSaveSlotsConfig(showSlotsConfig)} className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center justify-center gap-2">
                   <Check className="w-4 h-4" />
                   Guardar Slots (Verão + Inverno)

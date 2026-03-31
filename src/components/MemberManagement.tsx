@@ -17,7 +17,9 @@ import {
   Eye,
   Calendar,
   Medal,
-  Filter
+  Filter,
+  Download,
+  ArrowUpDown
 } from 'lucide-react';
 
 interface MembershipPlan {
@@ -100,12 +102,9 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
-  const [activeTab, setActiveTab] = useState<'subscriptions' | 'plans'>('subscriptions');
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [showPlanForm, setShowPlanForm] = useState(false);
   const [showSubscriptionForm, setShowSubscriptionForm] = useState(false);
-  const [editingPlan, setEditingPlan] = useState<MembershipPlan | null>(null);
   const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -137,21 +136,12 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   }
   const [tournamentPlayers, setTournamentPlayers] = useState<TournamentPlayerInfo[]>([]);
 
-  // Filters
+  // Filters & sorting
   const [filterMemberType, setFilterMemberType] = useState<'all' | 'members' | 'gold'>('all');
   const [filterAge, setFilterAge] = useState<string>('all');
   const [filterGender, setFilterGender] = useState<'all' | 'male' | 'female'>('all');
-
-  const [planForm, setPlanForm] = useState({
-    name: '',
-    duration_months: 1,
-    price: 50,
-    benefits: '',
-    court_discount_percent: 10,
-    bar_discount_percent: 0,
-    academy_discount_percent: 0,
-    is_active: true
-  });
+  const [sortField, setSortField] = useState<'name' | 'phone' | 'plan' | 'date' | 'status'>('name');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const [subscriptionForm, setSubscriptionForm] = useState({
     plan_id: '',
@@ -357,7 +347,64 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
       });
     }
 
+    filtered.sort((a, b) => {
+      let cmp = 0;
+      switch (sortField) {
+        case 'name':
+          cmp = (a.member_name || '').localeCompare(b.member_name || '', 'pt');
+          break;
+        case 'phone':
+          cmp = (a.member_phone || '').localeCompare(b.member_phone || '');
+          break;
+        case 'plan':
+          cmp = (a.plan?.name || '').localeCompare(b.plan?.name || '', 'pt');
+          break;
+        case 'date':
+          cmp = new Date(a.end_date).getTime() - new Date(b.end_date).getTime();
+          break;
+        case 'status':
+          cmp = (a.status || '').localeCompare(b.status || '');
+          break;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
     return filtered;
+  };
+
+  const toggleSort = (field: typeof sortField) => {
+    if (sortField === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const exportList = (format: 'csv' | 'phones' | 'emails') => {
+    const data = getFilteredSubscriptions();
+    let content = '';
+    let filename = '';
+
+    if (format === 'csv') {
+      content = 'Nome;Telefone;Email;Plano;Estado;Expira\n' +
+        data.map(s => `${s.member_name || ''};${s.member_phone || ''};${s.member_email || ''};${s.plan?.name || ''};${s.status};${s.end_date}`).join('\n');
+      filename = 'membros.csv';
+    } else if (format === 'phones') {
+      content = data.filter(s => s.member_phone).map(s => `${s.member_name || 'N/A'}\t${s.member_phone}`).join('\n');
+      filename = 'telefones.txt';
+    } else {
+      content = data.filter(s => s.member_email).map(s => `${s.member_name || 'N/A'}\t${s.member_email}`).join('\n');
+      filename = 'emails.txt';
+    }
+
+    const blob = new Blob(['\uFEFF' + content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const loadTournamentHistory = async (member: Subscription) => {
@@ -478,50 +525,6 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
     }
   };
 
-  const handleSubmitPlan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!effectiveUserId) return;
-
-    setSaving(true);
-    const benefitsArray = planForm.benefits.split('\n').filter(b => b.trim());
-
-    if (editingPlan) {
-      await supabase
-        .from('membership_plans')
-        .update({
-          name: planForm.name,
-          duration_months: planForm.duration_months,
-          price: planForm.price,
-          benefits: benefitsArray,
-          court_discount_percent: planForm.court_discount_percent,
-          bar_discount_percent: planForm.bar_discount_percent,
-          academy_discount_percent: planForm.academy_discount_percent,
-          is_active: planForm.is_active
-        })
-        .eq('id', editingPlan.id);
-    } else {
-      await supabase
-        .from('membership_plans')
-        .insert({
-          user_id: effectiveUserId,
-          name: planForm.name,
-          duration_months: planForm.duration_months,
-          price: planForm.price,
-          benefits: benefitsArray,
-          court_discount_percent: planForm.court_discount_percent,
-          bar_discount_percent: planForm.bar_discount_percent,
-          academy_discount_percent: planForm.academy_discount_percent,
-          is_active: planForm.is_active
-        });
-    }
-
-    setShowPlanForm(false);
-    setEditingPlan(null);
-    resetPlanForm();
-    loadData();
-    setSaving(false);
-  };
-
   const handleSubmitSubscription = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!effectiveUserId || !subscriptionForm.plan_id) return;
@@ -618,44 +621,10 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
     }
   };
 
-  const handleDeletePlan = async (planId: string) => {
-    if (!confirm(t.message.confirmDelete)) return;
-    await supabase.from('membership_plans').delete().eq('id', planId);
-    loadData();
-  };
-
   const handleDeleteSubscription = async (subId: string) => {
     if (!confirm(t.message.confirmDelete)) return;
     await supabase.from('member_subscriptions').delete().eq('id', subId);
     loadData();
-  };
-
-  const handleEditPlan = (plan: MembershipPlan) => {
-    setEditingPlan(plan);
-    setPlanForm({
-      name: plan.name,
-      duration_months: plan.duration_months,
-      price: plan.price,
-      benefits: (plan.benefits || []).join('\n'),
-      court_discount_percent: plan.court_discount_percent,
-      bar_discount_percent: plan.bar_discount_percent || 0,
-      academy_discount_percent: plan.academy_discount_percent || 0,
-      is_active: plan.is_active
-    });
-    setShowPlanForm(true);
-  };
-
-  const resetPlanForm = () => {
-    setPlanForm({
-      name: '',
-      duration_months: 1,
-      price: 50,
-      benefits: '',
-      court_discount_percent: 10,
-      bar_discount_percent: 0,
-      academy_discount_percent: 0,
-      is_active: true
-    });
   };
 
   const resetSubscriptionForm = () => {
@@ -672,7 +641,10 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    const d = new Date(dateString);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${day}/${month}/${d.getFullYear()}`;
   };
 
   const getStatusColor = (status: string) => {
@@ -700,49 +672,36 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
     <div className="p-6 lg:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900">{t.members.title}</h1>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setActiveTab('subscriptions')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'subscriptions' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              {t.members.subscriptions}
+        <div className="flex items-center gap-2">
+          <div className="relative group">
+            <button className="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition flex items-center gap-1.5">
+              <Download className="w-4 h-4" />
+              Exportar
             </button>
-            <button
-              onClick={() => setActiveTab('plans')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'plans' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              {t.members.plans}
-            </button>
+            <div className="absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 w-44 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-20">
+              <button onClick={() => exportList('csv')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">CSV completo</button>
+              <button onClick={() => exportList('phones')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Lista de telefones</button>
+              <button onClick={() => exportList('emails')} className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">Lista de emails</button>
+            </div>
           </div>
           <button
             onClick={() => {
-              if (activeTab === 'plans') {
-                resetPlanForm();
-                setEditingPlan(null);
-                setShowPlanForm(true);
-              } else {
-                resetSubscriptionForm();
-                setEditingSubscription(null);
-                setPlayerMatch(null);
-                setShowSubscriptionForm(true);
-              }
+              resetSubscriptionForm();
+              setEditingSubscription(null);
+              setPlayerMatch(null);
+              setShowSubscriptionForm(true);
             }}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
-            {activeTab === 'plans' ? t.members.addPlan : t.members.addMember}
+            {t.members.addMember}
           </button>
         </div>
       </div>
 
-      {activeTab === 'subscriptions' ? (
-        <>
-          {/* Filters */}
+      {/* Subscriptions */}
+      <>
+        {/* Filters */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
             <div className="flex flex-wrap gap-4 items-center">
               <div className="flex items-center gap-2">
@@ -822,11 +781,17 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
               <table className="w-full text-xs">
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
-                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.name}</th>
-                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.phone}</th>
-                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2 hidden sm:table-cell">{t.members.plan}</th>
-                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.expiresOn}</th>
-                    <th className="text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.members.status}</th>
+                    {([['name', t.members.name], ['phone', t.members.phone], ['plan', t.members.plan, 'hidden sm:table-cell'], ['date', t.members.expiresOn], ['status', t.members.status]] as const).map(([field, label, extra]) => (
+                      <th key={field}
+                        className={`text-left text-[10px] font-medium text-gray-500 uppercase px-2 py-2 cursor-pointer hover:text-gray-800 select-none ${extra || ''}`}
+                        onClick={() => toggleSort(field as typeof sortField)}
+                      >
+                        <span className="inline-flex items-center gap-0.5">
+                          {label}
+                          {sortField === field && <ArrowUpDown className="w-3 h-3 text-blue-500" />}
+                        </span>
+                      </th>
+                    ))}
                     <th className="text-right text-[10px] font-medium text-gray-500 uppercase px-2 py-2">{t.common.actions}</th>
                   </tr>
                 </thead>
@@ -952,7 +917,7 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                           </span>
                         </td>
                         <td className="px-2 py-2 text-right text-[10px] text-gray-500">
-                          {new Date(player.last_game_date).toLocaleDateString('pt-PT')}
+                          {formatDate(player.last_game_date)}
                         </td>
                       </tr>
                     ))}
@@ -1031,7 +996,7 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                           </span>
                         </td>
                         <td className="px-2 py-2 text-right text-[10px] text-gray-500">
-                          {new Date(player.last_tournament_date).toLocaleDateString('pt-PT')}
+                          {formatDate(player.last_tournament_date)}
                         </td>
                       </tr>
                     ))}
@@ -1041,222 +1006,7 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
             </div>
           )}
         </>
-      ) : (
-        plans.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-            <Award className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">{t.members.noMembers}</h3>
-            <p className="text-gray-500 mb-6">{t.members.addFirst}</p>
-            <button
-              onClick={() => setShowPlanForm(true)}
-              className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
-            >
-              {t.members.addPlan}
-            </button>
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {plans.map(plan => (
-              <div
-                key={plan.id}
-                className={`bg-white rounded-xl shadow-sm border overflow-hidden ${
-                  plan.is_active ? 'border-gray-100' : 'border-red-100'
-                }`}
-              >
-                <div className={`p-4 ${plan.is_active ? 'bg-emerald-600' : 'bg-gray-400'}`}>
-                  <div className="flex items-center justify-between text-white">
-                    <span className="font-medium">{plan.name}</span>
-                    <span className="text-sm opacity-80">{plan.duration_months} {plan.duration_months === 1 ? 'month' : 'months'}</span>
-                  </div>
-                </div>
-                <div className="p-4 space-y-3">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-gray-900">{plan.price} EUR</div>
-                    <div className="text-sm text-gray-500">/ {plan.duration_months} {plan.duration_months === 1 ? 'month' : 'months'}</div>
-                  </div>
-                  {(plan.court_discount_percent > 0 || plan.bar_discount_percent > 0 || plan.academy_discount_percent > 0) && (
-                    <div className="bg-emerald-50 text-emerald-700 text-sm px-3 py-2 rounded-lg space-y-1">
-                      {plan.court_discount_percent > 0 && (
-                        <div className="flex justify-between">
-                          <span>{t.courts?.title || 'Courts'}</span>
-                          <span className="font-medium">{plan.court_discount_percent}%</span>
-                        </div>
-                      )}
-                      {plan.bar_discount_percent > 0 && (
-                        <div className="flex justify-between">
-                          <span>{t.bar?.title || 'Bar'}</span>
-                          <span className="font-medium">{plan.bar_discount_percent}%</span>
-                        </div>
-                      )}
-                      {plan.academy_discount_percent > 0 && (
-                        <div className="flex justify-between">
-                          <span>{t.academy?.title || 'Academy'}</span>
-                          <span className="font-medium">{plan.academy_discount_percent}%</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {plan.benefits && plan.benefits.length > 0 && (
-                    <ul className="space-y-2 text-sm text-gray-600">
-                      {plan.benefits.map((benefit, idx) => (
-                        <li key={idx} className="flex items-start gap-2">
-                          <Check className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-                          {benefit}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
-                    <button
-                      onClick={() => handleEditPlan(plan)}
-                      className="flex-1 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center justify-center gap-1"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                      {t.common.edit}
-                    </button>
-                    <button
-                      onClick={() => handleDeletePlan(plan.id)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      )}
-
-      {showPlanForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {editingPlan ? t.common.edit : t.members.addPlan}
-              </h2>
-              <button onClick={() => { setShowPlanForm(false); setEditingPlan(null); resetPlanForm(); }} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleSubmitPlan} className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t.members.planName}</label>
-                <input
-                  type="text"
-                  value={planForm.name}
-                  onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Monthly Plan"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.members.duration}</label>
-                  <select
-                    value={planForm.duration_months}
-                    onChange={(e) => setPlanForm({ ...planForm, duration_months: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value={1}>1 month</option>
-                    <option value={3}>3 months</option>
-                    <option value={6}>6 months</option>
-                    <option value={12}>12 months</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.members.price} (EUR)</label>
-                  <input
-                    type="number"
-                    value={planForm.price}
-                    onChange={(e) => setPlanForm({ ...planForm, price: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    min="0"
-                    step="0.01"
-                    required
-                  />
-                </div>
-              </div>
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-gray-700">{t.members?.discounts || 'Discounts'} (%)</label>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t.courts?.title || 'Courts'}</label>
-                    <input
-                      type="number"
-                      value={planForm.court_discount_percent}
-                      onChange={(e) => setPlanForm({ ...planForm, court_discount_percent: e.target.valueAsNumber || 0 })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      min="0"
-                      max="100"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t.bar?.title || 'Bar'}</label>
-                    <input
-                      type="number"
-                      value={planForm.bar_discount_percent}
-                      onChange={(e) => setPlanForm({ ...planForm, bar_discount_percent: e.target.valueAsNumber || 0 })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      min="0"
-                      max="100"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">{t.academy?.title || 'Academy'}</label>
-                    <input
-                      type="number"
-                      value={planForm.academy_discount_percent}
-                      onChange={(e) => setPlanForm({ ...planForm, academy_discount_percent: e.target.valueAsNumber || 0 })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      min="0"
-                      max="100"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t.members.benefits} (one per line)</label>
-                <textarea
-                  value={planForm.benefits}
-                  onChange={(e) => setPlanForm({ ...planForm, benefits: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  rows={3}
-                  placeholder="Free court booking&#10;Priority scheduling&#10;Guest passes"
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="plan_active"
-                  checked={planForm.is_active}
-                  onChange={(e) => setPlanForm({ ...planForm, is_active: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                />
-                <label htmlFor="plan_active" className="text-sm text-gray-700">{t.members.active}</label>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowPlanForm(false); setEditingPlan(null); resetPlanForm(); }}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                >
-                  {t.common.cancel}
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Check className="w-4 h-4" />
-                  {saving ? t.message.saving : t.common.save}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      
 
       {showSubscriptionForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1565,7 +1315,7 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
                           <div className="flex items-center gap-3 mt-1">
                             <span className="text-xs text-gray-500 flex items-center gap-1">
                               <Calendar className="w-3 h-3" />
-                              {new Date(tournament.start_date).toLocaleDateString()}
+                              {formatDate(tournament.start_date)}
                             </span>
                             {tournament.category_name && (
                               <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">

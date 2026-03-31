@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
-import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle, Calendar, QrCode, ExternalLink, Copy, Plus, Trash2, Tag } from 'lucide-react';
+import { Check, Lock, Image, MapPin, Settings as SettingsIcon, Clock, Building2, Bell, BellOff, CheckCircle, AlertCircle, Calendar, QrCode, ExternalLink, Copy, Plus, Trash2, Tag, X, Edit2, Eye, EyeOff, Award, ChevronUp, ChevronDown } from 'lucide-react';
 import CourtManagement from './CourtManagement';
 import ClubManagement from './ClubManagement';
 
@@ -16,6 +16,20 @@ interface PricingExtra {
 
 interface PricingConfig {
   equipment: PricingExtra[];
+}
+
+interface MembershipPlan {
+  id: string;
+  name: string;
+  duration_months: number;
+  price: number;
+  benefits: string[];
+  court_discount_percent: number;
+  bar_discount_percent: number;
+  academy_discount_percent: number;
+  is_active: boolean;
+  show_on_pricing: boolean;
+  sort_order: number;
 }
 
 export default function Settings() {
@@ -56,6 +70,22 @@ export default function Settings() {
   const [pricingSaving, setPricingSaving] = useState(false);
   const [pricingSuccess, setPricingSuccess] = useState('');
 
+  const [plans, setPlans] = useState<MembershipPlan[]>([]);
+  const [showPlanForm, setShowPlanForm] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<MembershipPlan | null>(null);
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planForm, setPlanForm] = useState({
+    name: '',
+    duration_months: 1,
+    price: 50,
+    benefits: '',
+    court_discount_percent: 10,
+    bar_discount_percent: 0,
+    academy_discount_percent: 0,
+    is_active: true,
+    show_on_pricing: true,
+  });
+
   useEffect(() => {
     if (user) {
       loadSettings();
@@ -95,6 +125,14 @@ export default function Settings() {
         setPricingConfig(clubData.pricing_config as PricingConfig);
       }
     }
+
+    const { data: plansData } = await supabase
+      .from('membership_plans')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('sort_order')
+      .order('price');
+    if (plansData) setPlans(plansData);
   };
 
   // Generate all 30-min slots between two times
@@ -247,6 +285,79 @@ export default function Settings() {
         setPushMessage({ type: 'error', text: 'Erro ao ativar notificações' });
       }
     }
+  };
+
+  const resetPlanForm = () => {
+    setPlanForm({ name: '', duration_months: 1, price: 50, benefits: '', court_discount_percent: 10, bar_discount_percent: 0, academy_discount_percent: 0, is_active: true, show_on_pricing: true });
+  };
+
+  const handleEditPlan = (plan: MembershipPlan) => {
+    setEditingPlan(plan);
+    setPlanForm({
+      name: plan.name,
+      duration_months: plan.duration_months,
+      price: plan.price,
+      benefits: (plan.benefits || []).join('\n'),
+      court_discount_percent: plan.court_discount_percent,
+      bar_discount_percent: plan.bar_discount_percent || 0,
+      academy_discount_percent: plan.academy_discount_percent || 0,
+      is_active: plan.is_active,
+      show_on_pricing: plan.show_on_pricing ?? true,
+    });
+    setShowPlanForm(true);
+  };
+
+  const handleSubmitPlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setPlanSaving(true);
+    const benefitsArray = planForm.benefits.split('\n').filter(b => b.trim());
+
+    if (editingPlan) {
+      await supabase.from('membership_plans').update({
+        name: planForm.name, duration_months: planForm.duration_months, price: planForm.price,
+        benefits: benefitsArray, court_discount_percent: planForm.court_discount_percent,
+        bar_discount_percent: planForm.bar_discount_percent, academy_discount_percent: planForm.academy_discount_percent,
+        is_active: planForm.is_active, show_on_pricing: planForm.show_on_pricing,
+      }).eq('id', editingPlan.id);
+    } else {
+      const maxOrder = plans.length > 0 ? Math.max(...plans.map(p => p.sort_order ?? 0)) : -1;
+      await supabase.from('membership_plans').insert({
+        user_id: user.id, name: planForm.name, duration_months: planForm.duration_months, price: planForm.price,
+        benefits: benefitsArray, court_discount_percent: planForm.court_discount_percent,
+        bar_discount_percent: planForm.bar_discount_percent, academy_discount_percent: planForm.academy_discount_percent,
+        is_active: planForm.is_active, show_on_pricing: planForm.show_on_pricing, sort_order: maxOrder + 1,
+      });
+    }
+
+    setShowPlanForm(false);
+    setEditingPlan(null);
+    resetPlanForm();
+    setPlanSaving(false);
+    loadSettings();
+  };
+
+  const handleDeletePlan = async (planId: string) => {
+    if (!confirm('Tens a certeza que queres apagar este plano?')) return;
+    await supabase.from('membership_plans').delete().eq('id', planId);
+    loadSettings();
+  };
+
+  const togglePlanPricing = async (plan: MembershipPlan) => {
+    await supabase.from('membership_plans').update({ show_on_pricing: !plan.show_on_pricing }).eq('id', plan.id);
+    loadSettings();
+  };
+
+  const movePlan = async (index: number, direction: -1 | 1) => {
+    const swapIndex = index + direction;
+    if (swapIndex < 0 || swapIndex >= plans.length) return;
+    const a = plans[index];
+    const b = plans[swapIndex];
+    await Promise.all([
+      supabase.from('membership_plans').update({ sort_order: b.sort_order }).eq('id', a.id),
+      supabase.from('membership_plans').update({ sort_order: a.sort_order }).eq('id', b.id),
+    ]);
+    loadSettings();
   };
 
   const savePricingConfig = async () => {
@@ -541,9 +652,78 @@ export default function Settings() {
           <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 text-sm text-blue-800">
             <p className="font-medium mb-1">Página pública do preçário</p>
             <p className="text-blue-600">
-              Os <strong>preços dos campos</strong> são lidos das definições dos campos e os <strong>planos de membro</strong> da tab Jogadores.
-              Aqui podes gerir os <strong>equipamentos e extras</strong> que aparecem na página.
+              Os <strong>preços dos campos</strong> são lidos das definições dos campos.
+              Aqui geres os <strong>planos de membro</strong>, <strong>equipamentos e extras</strong> que aparecem na página pública.
             </p>
+          </div>
+
+          {/* Membership Plans */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Award className="w-4 h-4 text-emerald-600" />
+                Planos de Membro
+              </h3>
+              <button
+                onClick={() => { resetPlanForm(); setEditingPlan(null); setShowPlanForm(true); }}
+                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" /> Adicionar
+              </button>
+            </div>
+            <div className="p-4">
+              {plans.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">Nenhum plano criado</p>
+              ) : (
+                <div className="space-y-2">
+                  {plans.map((plan, idx) => (
+                    <div key={plan.id} className={`flex items-center gap-2 p-3 rounded-lg border ${plan.is_active ? 'border-gray-200 bg-gray-50' : 'border-red-200 bg-red-50'}`}>
+                      <div className="flex flex-col gap-0.5">
+                        <button onClick={() => movePlan(idx, -1)} disabled={idx === 0}
+                          className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-default">
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => movePlan(idx, 1)} disabled={idx === plans.length - 1}
+                          className="p-0.5 rounded text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-default">
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm text-gray-900">{plan.name}</span>
+                          {!plan.is_active && <span className="text-xs text-red-500 bg-red-100 px-1.5 py-0.5 rounded">Inativo</span>}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {plan.price}€ / {plan.duration_months === 1 ? '1 mês' : plan.duration_months === 12 ? '1 ano' : `${plan.duration_months} meses`}
+                          {plan.court_discount_percent > 0 && ` · ${plan.court_discount_percent}% campos`}
+                          {plan.bar_discount_percent > 0 && ` · ${plan.bar_discount_percent}% bar`}
+                          {plan.benefits?.length > 0 && ` · ${plan.benefits.length} benefício(s)`}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => togglePlanPricing(plan)}
+                        className={`p-1.5 rounded-lg text-xs transition ${plan.show_on_pricing ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-gray-200 text-gray-500 hover:bg-gray-300'}`}
+                        title={plan.show_on_pricing ? 'Visível no preçário' : 'Oculto no preçário'}
+                      >
+                        {plan.show_on_pricing ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => handleEditPlan(plan)}
+                        className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeletePlan(plan.id)}
+                        className="p-1.5 rounded-lg text-red-600 hover:bg-red-50 transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* QR Code & Link */}
@@ -663,6 +843,93 @@ export default function Settings() {
 
       {activeTab === 'clubs' && (
         <ClubManagement />
+      )}
+
+      {/* Plan Form Modal */}
+      {showPlanForm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">
+                {editingPlan ? 'Editar Plano' : 'Novo Plano'}
+              </h2>
+              <button onClick={() => { setShowPlanForm(false); setEditingPlan(null); resetPlanForm(); }} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmitPlan} className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome do plano</label>
+                <input type="text" value={planForm.name} onChange={e => setPlanForm({ ...planForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Duração</label>
+                  <select value={planForm.duration_months} onChange={e => setPlanForm({ ...planForm, duration_months: parseInt(e.target.value) })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value={1}>1 mês</option>
+                    <option value={3}>3 meses</option>
+                    <option value={6}>6 meses</option>
+                    <option value={12}>12 meses</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Preço (EUR)</label>
+                  <input type="number" value={planForm.price} onChange={e => setPlanForm({ ...planForm, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" step="0.01" required />
+                </div>
+              </div>
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-gray-700">Descontos (%)</label>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Campos</label>
+                    <input type="number" value={planForm.court_discount_percent} onChange={e => setPlanForm({ ...planForm, court_discount_percent: e.target.valueAsNumber || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" max="100" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Bar</label>
+                    <input type="number" value={planForm.bar_discount_percent} onChange={e => setPlanForm({ ...planForm, bar_discount_percent: e.target.valueAsNumber || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" max="100" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Academia</label>
+                    <input type="number" value={planForm.academy_discount_percent} onChange={e => setPlanForm({ ...planForm, academy_discount_percent: e.target.valueAsNumber || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" max="100" />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Benefícios (um por linha)</label>
+                <textarea value={planForm.benefits} onChange={e => setPlanForm({ ...planForm, benefits: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" rows={3}
+                  placeholder="1 Jogo diário&#10;Descontos em torneios&#10;Promoções exclusivas" />
+              </div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={planForm.is_active} onChange={e => setPlanForm({ ...planForm, is_active: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                  Ativo
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={planForm.show_on_pricing} onChange={e => setPlanForm({ ...planForm, show_on_pricing: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500" />
+                  Mostrar no preçário
+                </label>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => { setShowPlanForm(false); setEditingPlan(null); resetPlanForm(); }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Cancelar</button>
+                <button type="submit" disabled={planSaving}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Check className="w-4 h-4" />
+                  {planSaving ? 'A guardar...' : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
