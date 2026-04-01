@@ -1056,6 +1056,18 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     setItemForm(prev => ({ ...prev, image_url: '' }));
   };
 
+  const moveCategory = async (index: number, direction: 'up' | 'down') => {
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= categories.length) return;
+    const current = categories[index];
+    const swap = categories[swapIndex];
+    await Promise.all([
+      supabase.from('menu_categories').update({ sort_order: swap.sort_order }).eq('id', current.id),
+      supabase.from('menu_categories').update({ sort_order: current.sort_order }).eq('id', swap.id)
+    ]);
+    loadData();
+  };
+
   const handleDeleteCategory = async (id: string) => {
     if (!confirm(t.message.confirmDelete)) return;
     await supabase.from('menu_categories').delete().eq('id', id);
@@ -1739,12 +1751,30 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               </button>
             </div>
           ) : (
-            categories.map(category => {
+            categories.map((category, catIdx) => {
               const categoryItems = menuItems.filter(item => item.category_id === category.id);
               return (
                 <div key={category.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                   <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100">
-                    <h3 className="font-semibold text-gray-900">{category.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col">
+                        <button
+                          onClick={() => moveCategory(catIdx, 'up')}
+                          disabled={catIdx === 0}
+                          className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => moveCategory(catIdx, 'down')}
+                          disabled={catIdx === categories.length - 1}
+                          className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <h3 className="font-semibold text-gray-900">{category.name}</h3>
+                    </div>
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleEditCategory(category)}
