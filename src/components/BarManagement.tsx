@@ -1072,8 +1072,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     const current = categories[index];
     const swap = categories[swapIndex];
     await Promise.all([
-      supabase.from('menu_categories').update({ sort_order: swap.sort_order }).eq('id', current.id),
-      supabase.from('menu_categories').update({ sort_order: current.sort_order }).eq('id', swap.id)
+      supabase.from('menu_categories').update({ sort_order: swapIndex }).eq('id', current.id),
+      supabase.from('menu_categories').update({ sort_order: index }).eq('id', swap.id)
     ]);
     loadData();
   };
@@ -1091,8 +1091,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     const current = catItems[index];
     const swap = catItems[swapIndex];
     await Promise.all([
-      supabase.from('menu_items').update({ sort_order: swap.sort_order }).eq('id', current.id),
-      supabase.from('menu_items').update({ sort_order: current.sort_order }).eq('id', swap.id)
+      supabase.from('menu_items').update({ sort_order: swapIndex }).eq('id', current.id),
+      supabase.from('menu_items').update({ sort_order: index }).eq('id', swap.id)
     ]);
     loadData();
   };
