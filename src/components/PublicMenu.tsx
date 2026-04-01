@@ -12,7 +12,9 @@ import {
   Loader2,
   Bell,
   Clock,
-  Phone
+  Phone,
+  Star,
+  ArrowLeft
 } from 'lucide-react';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -33,6 +35,8 @@ interface MenuItem {
   price: number;
   image_url: string | null;
   is_food: boolean;
+  is_highlighted?: boolean;
+  sort_order?: number;
 }
 
 interface CartItem {
@@ -169,16 +173,14 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
     const { data: itemsData } = await anonSupabase
       .from('menu_items')
-      .select('id, category_id, name, description, price, image_url, is_food')
+      .select('*')
       .eq('club_owner_id', clubData.owner_id)
       .eq('is_available', true)
       .order('name');
 
     setCategories(categoriesData || []);
     setMenuItems(itemsData || []);
-    if (categoriesData && categoriesData.length > 0) {
-      setSelectedCategory(categoriesData[0].id);
-    }
+    setSelectedCategory(null);
     setLoading(false);
   };
 
@@ -531,165 +533,230 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
     ? menuItems.filter(i => i.category_id === selectedCategory)
     : menuItems;
 
+  const selectedCategoryName = categories.find(c => c.id === selectedCategory)?.name || '';
+
+  const getCategoryItemCount = (catId: string) => menuItems.filter(i => i.category_id === catId).length;
+  const getCategoryHighlights = (catId: string) => menuItems.filter(i => i.category_id === catId && i.is_highlighted);
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="sticky top-0 z-30 bg-white shadow-sm">
-        {/* Club Banner */}
-        {(club.photo_url_1 || club.photo_url_2) && (
-          <div className="flex h-32 overflow-hidden">
-            {club.photo_url_1 && (
-              <img src={club.photo_url_1} alt="" className={`${club.photo_url_2 ? 'w-1/2' : 'w-full'} object-cover`} />
-            )}
-            {club.photo_url_2 && (
-              <img src={club.photo_url_2} alt="" className={`${club.photo_url_1 ? 'w-1/2' : 'w-full'} object-cover`} />
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-3 p-4">
-          {club.logo_url && (
-            <img src={club.logo_url} alt="" className="w-10 h-10 rounded-lg object-cover" />
-          )}
-          <div className="flex-1">
-            <h1 className="font-bold text-gray-900">{club.name}</h1>
-            {mesa && <p className="text-xs text-gray-500">{mesa === 'Balcão' ? '🏪 Balcão' : `Mesa ${mesa}`}</p>}
-          </div>
-          {totalItems > 0 && (
-            <button
-              onClick={() => setShowCart(true)}
-              className="relative p-2.5 bg-emerald-600 text-white rounded-xl"
-            >
-              <ShoppingCart className="w-5 h-5" />
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full font-bold">
-                {totalItems}
-              </span>
-            </button>
-          )}
-        </div>
 
-        {/* Category tabs */}
-        {categories.length > 0 && (
-          <div className="flex gap-1 px-4 pb-3 overflow-x-auto">
-            {categories.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`flex-shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition ${
-                  selectedCategory === cat.id
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {cat.name}
-              </button>
-            ))}
+      {/* ===== CATEGORIES PAGE (no category selected) ===== */}
+      {!selectedCategory ? (
+        <div className="min-h-screen">
+          {/* Hero Header */}
+          <div className="bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 text-white pt-12 pb-10 px-6">
+            <div className="flex flex-col items-center text-center">
+              {club.logo_url ? (
+                <img src={club.logo_url} alt={club.name} className="w-24 h-24 rounded-2xl object-cover shadow-lg border-2 border-white/20 mb-4" />
+              ) : (
+                <div className="w-24 h-24 rounded-2xl bg-white/10 flex items-center justify-center mb-4">
+                  <Coffee className="w-10 h-10 text-white/60" />
+                </div>
+              )}
+              <h1 className="text-lg font-semibold text-white/90 tracking-wide">{club.name}</h1>
+              {mesa && (
+                <p className="text-sm text-white/50 mt-1">{mesa === 'Balcão' ? 'Balcão' : `Mesa ${mesa}`}</p>
+              )}
+              <div className="mt-6">
+                <h2 className="text-4xl font-black tracking-tight">MENU</h2>
+                <div className="w-12 h-1 bg-emerald-500 rounded-full mx-auto mt-2" />
+              </div>
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Table Number input if not from QR */}
-      {!tableNumber && !mesa && (
-        <div className="p-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-            <p className="text-sm font-medium text-amber-800 mb-2">📍 Qual é a sua mesa?</p>
-            <input
-              type="text"
-              value={mesa}
-              onChange={(e) => setMesa(e.target.value)}
-              placeholder="Número da mesa..."
-              className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Menu Items */}
-      <div className="p-4 space-y-3 pb-24">
-        {filteredItems.length === 0 ? (
-          <div className="text-center py-12">
-            <Coffee className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">Sem items disponíveis</p>
-          </div>
-        ) : (
-          filteredItems.map(item => {
-            const qty = getCartQuantity(item.id);
-            return (
-              <div
-                key={item.id}
-                className={`bg-white rounded-xl shadow-sm border p-4 transition ${
-                  qty > 0 ? 'border-emerald-300 ring-1 ring-emerald-100' : 'border-gray-200'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {item.image_url && (
-                    <img src={item.image_url} alt="" className="w-16 h-16 rounded-lg object-cover flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="font-semibold text-gray-900 flex items-center gap-1.5">
-                          {item.is_food ? (
-                            <ChefHat className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                          ) : (
-                            <Coffee className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                          )}
-                          {item.name}
-                        </h3>
-                        {item.description && (
-                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{item.description}</p>
+          {/* Category Grid */}
+          <div className="p-4 pb-28 space-y-3">
+            {categories.length === 0 ? (
+              <div className="text-center py-16">
+                <Coffee className="w-16 h-16 text-gray-200 mx-auto mb-4" />
+                <p className="text-gray-400 text-lg">Menu não disponível</p>
+              </div>
+            ) : (
+              categories.map(cat => {
+                const itemCount = getCategoryItemCount(cat.id);
+                const highlights = getCategoryHighlights(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 p-5 text-left hover:shadow-md hover:border-emerald-200 active:scale-[0.98] transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-lg font-bold text-gray-900">{cat.name}</h3>
+                        <p className="text-sm text-gray-400 mt-0.5">{itemCount} {itemCount === 1 ? 'item' : 'itens'}</p>
+                        {highlights.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mt-2">
+                            {highlights.slice(0, 3).map(h => (
+                              <span key={h.id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full text-xs font-medium">
+                                <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                                {h.name}
+                              </span>
+                            ))}
+                            {highlights.length > 3 && (
+                              <span className="text-xs text-gray-400">+{highlights.length - 3}</span>
+                            )}
+                          </div>
                         )}
                       </div>
-                      <span className="font-bold text-emerald-700 text-lg whitespace-nowrap">
-                        {item.price.toFixed(2)}€
-                      </span>
+                      <div className="ml-3 w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <ArrowLeft className="w-5 h-5 text-emerald-600 rotate-180" />
+                      </div>
                     </div>
-                    <div className="flex items-center justify-end gap-2 mt-2">
-                      {qty > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => removeFromCart(item.id)}
-                            className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                          <span className="font-bold text-gray-900 w-6 text-center">{qty}</span>
-                          <button
-                            onClick={() => addToCart(item)}
-                            className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => addToCart(item)}
-                          className="px-4 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-100 transition flex items-center gap-1"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Adicionar
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ===== ITEMS PAGE (category selected) ===== */
+        <>
+          {/* Sticky Header with back */}
+          <div className="sticky top-0 z-30 bg-white border-b border-gray-100 shadow-sm">
+            <div className="flex items-center gap-3 px-3 py-3">
+              <button
+                onClick={() => setSelectedCategory(null)}
+                className="p-2 hover:bg-gray-100 rounded-xl transition"
+              >
+                <ArrowLeft className="w-5 h-5 text-gray-700" />
+              </button>
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {club.logo_url && (
+                  <img src={club.logo_url} alt="" className="w-8 h-8 rounded-lg object-cover" />
+                )}
+                <div className="min-w-0">
+                  <h1 className="font-bold text-gray-900 truncate">{selectedCategoryName}</h1>
+                  <p className="text-xs text-gray-400">{club.name}{mesa ? ` · ${mesa === 'Balcão' ? 'Balcão' : `Mesa ${mesa}`}` : ''}</p>
                 </div>
               </div>
-            );
-          })
-        )}
-      </div>
+              {totalItems > 0 && (
+                <button
+                  onClick={() => setShowCart(true)}
+                  className="relative p-2.5 bg-emerald-600 text-white rounded-xl"
+                >
+                  <ShoppingCart className="w-5 h-5" />
+                  <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full font-bold">
+                    {totalItems}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* Category quick-switch pills */}
+            <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto scrollbar-hide">
+              {categories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${
+                    selectedCategory === cat.id
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 active:bg-gray-200'
+                  }`}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Items List */}
+          <div className="p-4 space-y-3 pb-28">
+            {filteredItems.length === 0 ? (
+              <div className="text-center py-16">
+                <Coffee className="w-14 h-14 text-gray-200 mx-auto mb-4" />
+                <p className="text-gray-400">Sem itens nesta categoria</p>
+              </div>
+            ) : (
+              filteredItems.map(item => {
+                const qty = getCartQuantity(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`bg-white rounded-2xl border p-4 transition-all ${
+                      qty > 0
+                        ? 'border-emerald-300 ring-1 ring-emerald-100 shadow-sm'
+                        : item.is_highlighted
+                        ? 'border-amber-200 bg-amber-50/30 shadow-sm'
+                        : 'border-gray-100 shadow-sm'
+                    }`}
+                  >
+                    <div className="flex gap-3">
+                      {item.image_url && (
+                        <img src={item.image_url} alt="" className="w-20 h-20 rounded-xl object-cover flex-shrink-0" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="font-semibold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                              {item.name}
+                              {item.is_highlighted && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 flex-shrink-0" />}
+                              {item.is_food && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded text-[10px] font-semibold">
+                                  <ChefHat className="w-3 h-3" />
+                                </span>
+                              )}
+                            </h3>
+                            {item.description && (
+                              <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{item.description}</p>
+                            )}
+                          </div>
+                          <span className="font-bold text-emerald-700 text-lg whitespace-nowrap">
+                            {item.price.toFixed(2)}€
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-end mt-3">
+                          {qty > 0 ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => removeFromCart(item.id)}
+                                className="w-9 h-9 flex items-center justify-center bg-red-50 text-red-600 rounded-xl active:bg-red-100 transition"
+                              >
+                                <Minus className="w-4 h-4" />
+                              </button>
+                              <span className="font-bold text-gray-900 w-8 text-center text-lg">{qty}</span>
+                              <button
+                                onClick={() => addToCart(item)}
+                                className="w-9 h-9 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-xl active:bg-emerald-100 transition"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => addToCart(item)}
+                              className="px-5 py-2 bg-emerald-600 text-white rounded-xl text-sm font-semibold active:bg-emerald-700 transition flex items-center gap-1.5 shadow-sm"
+                            >
+                              <Plus className="w-4 h-4" />
+                              Adicionar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
+      )}
 
       {/* Floating Cart Button */}
       {totalItems > 0 && !showCart && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white via-white to-transparent z-20">
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white via-white/95 to-transparent z-20">
           <button
             onClick={() => setShowCart(true)}
-            className="w-full bg-emerald-600 text-white rounded-2xl py-4 px-6 font-semibold shadow-lg hover:bg-emerald-700 transition flex items-center justify-between"
+            className="w-full bg-emerald-600 text-white rounded-2xl py-4 px-6 font-semibold shadow-lg active:bg-emerald-700 transition flex items-center justify-between"
           >
             <div className="flex items-center gap-2">
               <ShoppingCart className="w-5 h-5" />
               <span>Ver Pedido ({totalItems} {totalItems === 1 ? 'item' : 'itens'})</span>
             </div>
-            <span className="text-lg font-bold">{totalPrice.toFixed(2)}€</span>
+            <span className="text-lg font-bold">{totalPriceWithDiscount.toFixed(2)}€</span>
           </button>
         </div>
       )}

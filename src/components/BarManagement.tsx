@@ -26,7 +26,8 @@ import {
   Smartphone,
   Upload,
   Image,
-  Loader2
+  Loader2,
+  Star
 } from 'lucide-react';
 import BarMetricsDashboard from './BarMetricsDashboard';
 import { compressImage } from '../lib/imageCompressor';
@@ -47,6 +48,8 @@ interface MenuItem {
   is_available: boolean;
   is_food: boolean;
   image_url: string | null;
+  is_highlighted: boolean;
+  sort_order: number;
 }
 
 // Orders are now unified in club_orders (QrOrder interface used for all)
@@ -162,7 +165,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     price: 0,
     is_available: true,
     is_food: false,
-    image_url: ''
+    image_url: '',
+    is_highlighted: false
   });
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -327,6 +331,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         .from('menu_items')
         .select('*')
         .eq('club_owner_id', effectiveUserId)
+        .order('sort_order')
         .order('name'),
       supabase
         .from('bar_tabs')
@@ -955,10 +960,12 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           price: itemForm.price,
           is_available: itemForm.is_available,
           is_food: itemForm.is_food,
-          image_url: itemForm.image_url.trim() || null
+          image_url: itemForm.image_url.trim() || null,
+          is_highlighted: itemForm.is_highlighted
         })
         .eq('id', editingItem.id);
     } else {
+      const catItems = menuItems.filter(i => i.category_id === itemForm.category_id);
       await supabase.from('menu_items').insert({
         club_owner_id: effectiveUserId,
         category_id: itemForm.category_id,
@@ -967,7 +974,9 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         price: itemForm.price,
         is_available: itemForm.is_available,
         is_food: itemForm.is_food,
-        image_url: itemForm.image_url.trim() || null
+        image_url: itemForm.image_url.trim() || null,
+        is_highlighted: itemForm.is_highlighted,
+        sort_order: catItems.length
       });
     }
 
@@ -993,13 +1002,14 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       price: item.price,
       is_available: item.is_available,
       is_food: item.is_food || false,
-      image_url: item.image_url || ''
+      image_url: item.image_url || '',
+      is_highlighted: item.is_highlighted || false
     });
     setShowItemForm(true);
   };
 
   const resetItemForm = () => {
-    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false, image_url: '' });
+    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false, image_url: '', is_highlighted: false });
   };
 
   const handleMenuImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1071,6 +1081,24 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
   const handleDeleteCategory = async (id: string) => {
     if (!confirm(t.message.confirmDelete)) return;
     await supabase.from('menu_categories').delete().eq('id', id);
+    loadData();
+  };
+
+  const moveItem = async (categoryId: string, index: number, direction: 'up' | 'down') => {
+    const catItems = menuItems.filter(i => i.category_id === categoryId);
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= catItems.length) return;
+    const current = catItems[index];
+    const swap = catItems[swapIndex];
+    await Promise.all([
+      supabase.from('menu_items').update({ sort_order: swap.sort_order }).eq('id', current.id),
+      supabase.from('menu_items').update({ sort_order: current.sort_order }).eq('id', swap.id)
+    ]);
+    loadData();
+  };
+
+  const toggleItemHighlight = async (item: MenuItem) => {
+    await supabase.from('menu_items').update({ is_highlighted: !item.is_highlighted }).eq('id', item.id);
     loadData();
   };
 
@@ -1794,9 +1822,25 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                     <div className="p-8 text-center text-gray-500">{t.bar.noItems}</div>
                   ) : (
                     <div className="divide-y divide-gray-100">
-                      {categoryItems.map(item => (
-                        <div key={item.id} className="p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                      {categoryItems.map((item, itemIdx) => (
+                        <div key={item.id} className={`p-4 flex items-center justify-between ${item.is_highlighted ? 'bg-amber-50 border-l-4 border-l-amber-400' : ''}`}>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <div className="flex flex-col flex-shrink-0">
+                              <button
+                                onClick={() => moveItem(category.id, itemIdx, 'up')}
+                                disabled={itemIdx === 0}
+                                className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                              >
+                                <ChevronUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => moveItem(category.id, itemIdx, 'down')}
+                                disabled={itemIdx === categoryItems.length - 1}
+                                className="p-0.5 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+                              >
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                             {item.image_url ? (
                               <img src={item.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-200" />
                             ) : (
@@ -1805,13 +1849,16 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                               </div>
                             )}
                             <div className="min-w-0">
-                              <div className="font-medium text-gray-900">{item.name}</div>
+                              <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                                {item.name}
+                                {item.is_highlighted && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />}
+                              </div>
                               {item.description && (
                                 <div className="text-sm text-gray-500 truncate">{item.description}</div>
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3">
                             <span className="font-bold text-gray-900">{item.price.toFixed(2)} EUR</span>
                             {item.is_food && (
                               <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 flex items-center gap-1">
@@ -1819,6 +1866,13 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                                 Cozinha
                               </span>
                             )}
+                            <button
+                              onClick={() => toggleItemHighlight(item)}
+                              className={`p-2 rounded-lg transition ${item.is_highlighted ? 'text-amber-500 hover:bg-amber-50' : 'text-gray-400 hover:bg-gray-50'}`}
+                              title={item.is_highlighted ? 'Remover destaque' : 'Destacar'}
+                            >
+                              <Star className={`w-4 h-4 ${item.is_highlighted ? 'fill-amber-500' : ''}`} />
+                            </button>
                             <button
                               onClick={() => handleToggleItemAvailability(item)}
                               className={`px-2 py-1 rounded text-xs font-medium ${
@@ -2271,6 +2325,19 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   <label htmlFor="item_is_food" className="text-sm text-gray-700 flex items-center gap-1">
                     <ChefHat className="w-4 h-4 text-orange-500" />
                     Comida (vai para cozinha)
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="item_highlighted"
+                    checked={itemForm.is_highlighted}
+                    onChange={(e) => setItemForm({ ...itemForm, is_highlighted: e.target.checked })}
+                    className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                  />
+                  <label htmlFor="item_highlighted" className="text-sm text-gray-700 flex items-center gap-1">
+                    <Star className="w-4 h-4 text-amber-500" />
+                    Destacar no menu
                   </label>
                 </div>
               </div>
