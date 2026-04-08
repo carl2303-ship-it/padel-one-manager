@@ -572,7 +572,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         plan:membership_plans(name, court_discount_percent)
       `)
       .eq('club_owner_id', effectiveUserId)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .gte('end_date', new Date().toISOString().split('T')[0]);
 
     if (normalizedPhone && normalizedPhone.length >= 6) {
       memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
@@ -818,7 +819,8 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
         plan:membership_plans(name, court_discount_percent)
       `)
       .eq('club_owner_id', effectiveUserId)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .gte('end_date', new Date().toISOString().split('T')[0]);
 
     if (normalizedPhone && normalizedPhone.length >= 6) {
       memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
@@ -1180,6 +1182,7 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   .select('id')
                   .eq('club_owner_id', effectiveUserId)
                   .eq('status', 'active')
+                  .gte('end_date', new Date().toISOString().split('T')[0])
                   .or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${participant.phone}%`)
                   .maybeSingle();
                 

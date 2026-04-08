@@ -659,7 +659,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
     const [playersResult, categoriesResult, membersResult] = await Promise.all([
       supabase.from('players').select('tournament_id, name, phone_number, category_id, payment_status').in('tournament_id', tournamentIds),
       supabase.from('tournament_categories').select('id, tournament_id, registration_fee, member_price, non_member_price').in('tournament_id', tournamentIds),
-      supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active'),
+      supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active').gte('end_date', new Date().toISOString().split('T')[0]),
     ]);
 
     const allPlayers = playersResult.data || [];
@@ -845,7 +845,8 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
         .from('member_subscriptions')
         .select('member_name, member_phone')
         .eq('club_owner_id', effectiveUserId || '')
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0]);
       const memberNameKeys = new Set((activeMemberSubs || []).map(s => normalizeKey(s.member_name)));
 
       const playerMap = new Map<string, PlayerTotalSpending>();
@@ -922,7 +923,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
             const [paidPlayersResult, categoriesResult, membersResult] = await Promise.all([
               supabase.from('players').select('name, tournament_id, category_id, phone_number, payment_status').in('tournament_id', tournamentIds).eq('payment_status', 'paid'),
               supabase.from('tournament_categories').select('id, tournament_id, registration_fee, member_price, non_member_price').in('tournament_id', tournamentIds),
-              supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active'),
+              supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', effectiveUserId).eq('status', 'active').gte('end_date', new Date().toISOString().split('T')[0]),
             ]);
 
             const paidPlayers = paidPlayersResult.data || [];

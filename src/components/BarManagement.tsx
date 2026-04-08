@@ -396,6 +396,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         .eq('club_owner_id', effectiveUserId)
         .eq('player_account_id', playerAccountId)
         .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0])
         .maybeSingle();
       
       if (subscription?.plan) {
@@ -412,6 +413,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         .eq('club_owner_id', effectiveUserId)
         .eq('member_phone', normalizedPhone)
         .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0])
         .maybeSingle();
       
       if (subscription?.plan) {
@@ -447,6 +449,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         .eq('club_owner_id', effectiveUserId)
         .eq('member_phone', normalizedPhone)
         .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0])
         .maybeSingle();
 
       if (memberSub) {

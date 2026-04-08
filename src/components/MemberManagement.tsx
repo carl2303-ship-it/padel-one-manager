@@ -163,6 +163,14 @@ export default function MemberManagement({ staffClubOwnerId }: MemberManagementP
   const loadData = async () => {
     if (!effectiveUserId) return;
 
+    const todayStr = new Date().toISOString().split('T')[0];
+    await supabase
+      .from('member_subscriptions')
+      .update({ status: 'expired' })
+      .eq('club_owner_id', effectiveUserId)
+      .eq('status', 'active')
+      .lt('end_date', todayStr);
+
     const [plansResult, subscriptionsResult] = await Promise.all([
       supabase
         .from('membership_plans')

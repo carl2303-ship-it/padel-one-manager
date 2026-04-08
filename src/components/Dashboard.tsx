@@ -57,6 +57,19 @@ interface Stats {
   monthRevenue: number;
 }
 
+interface MembershipAlerts {
+  expiringNextMonth: number;
+  expired: number;
+}
+
+interface AlertMember {
+  id: string;
+  member_name: string | null;
+  member_phone: string | null;
+  end_date: string;
+  status: string;
+}
+
 interface Member {
   id: string;
   member_name: string;
@@ -85,6 +98,13 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [memberSearchResults, setMemberSearchResults] = useState<Member[]>([]);
   const [searchingMembers, setSearchingMembers] = useState(false);
+  const [membershipAlerts, setMembershipAlerts] = useState<MembershipAlerts>({
+    expiringNextMonth: 0,
+    expired: 0
+  });
+  const [showMembershipAlertModal, setShowMembershipAlertModal] = useState(false);
+  const [expiringMembers, setExpiringMembers] = useState<AlertMember[]>([]);
+  const [expiredMembers, setExpiredMembers] = useState<AlertMember[]>([]);
 
   useEffect(() => {
     if (effectiveUserId) {
@@ -100,12 +120,28 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    const todayStr = today.toISOString().split('T')[0];
+    const nextMonth = new Date(today);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const nextMonthStr = nextMonth.toISOString().split('T')[0];
+
+    await supabase
+      .from('member_subscriptions')
+      .update({ status: 'expired' })
+      .eq('club_owner_id', effectiveUserId)
+      .eq('status', 'active')
+      .lt('end_date', todayStr);
+
     const [
       bookingsResult,
       membersResult,
       classesResult,
       ordersResult,
-      recentBookingsResult
+      recentBookingsResult,
+      expiringNextMonthResult,
+      expiredResult,
+      expiringMembersResult,
+      expiredMembersResult
     ] = await Promise.all([
       supabase
         .from('court_bookings')
@@ -118,7 +154,8 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
         .from('member_subscriptions')
         .select('id')
         .eq('club_owner_id', effectiveUserId)
-        .eq('status', 'active'),
+        .eq('status', 'active')
+        .gte('end_date', todayStr),
       supabase
         .from('club_classes')
         .select('id')
@@ -144,7 +181,36 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
         .eq('status', 'confirmed')
         .gte('start_time', today.toISOString())
         .order('start_time', { ascending: true })
-        .limit(5)
+        .limit(5),
+      supabase
+        .from('member_subscriptions')
+        .select('id', { count: 'exact', head: true })
+        .eq('club_owner_id', effectiveUserId)
+        .eq('status', 'active')
+        .gte('end_date', todayStr)
+        .lte('end_date', nextMonthStr),
+      supabase
+        .from('member_subscriptions')
+        .select('id', { count: 'exact', head: true })
+        .eq('club_owner_id', effectiveUserId)
+        .or(`status.eq.expired,end_date.lt.${todayStr}`)
+      ,
+      supabase
+        .from('member_subscriptions')
+        .select('id, member_name, member_phone, end_date, status')
+        .eq('club_owner_id', effectiveUserId)
+        .eq('status', 'active')
+        .gte('end_date', todayStr)
+        .lte('end_date', nextMonthStr)
+        .order('end_date', { ascending: true })
+        .limit(100),
+      supabase
+        .from('member_subscriptions')
+        .select('id, member_name, member_phone, end_date, status')
+        .eq('club_owner_id', effectiveUserId)
+        .or(`status.eq.expired,end_date.lt.${todayStr}`)
+        .order('end_date', { ascending: false })
+        .limit(100)
     ]);
 
     setStats({
@@ -156,6 +222,12 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
     });
 
     setRecentBookings(recentBookingsResult.data as unknown as Booking[] || []);
+    setMembershipAlerts({
+      expiringNextMonth: expiringNextMonthResult.count || 0,
+      expired: expiredResult.count || 0
+    });
+    setExpiringMembers((expiringMembersResult.data || []) as AlertMember[]);
+    setExpiredMembers((expiredMembersResult.data || []) as AlertMember[]);
     setLoading(false);
   };
 
@@ -322,6 +394,34 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
             })}
           </div>
         </div>
+
+        <div
+          onClick={() => setShowMembershipAlertModal(true)}
+          className="bg-white rounded-xl shadow-sm border border-gray-100 text-left hover:shadow-md transition cursor-pointer"
+        >
+          <div className="p-5 border-b border-gray-100">
+            <h2 className="font-semibold text-gray-900">Alertas de Membership</h2>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="text-sm text-amber-700">Expiram no próximo mês</div>
+              <div className="text-2xl font-bold text-amber-900">{membershipAlerts.expiringNextMonth}</div>
+            </div>
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+              <div className="text-sm text-red-700">Já expirados</div>
+              <div className="text-2xl font-bold text-red-900">{membershipAlerts.expired}</div>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate('members');
+              }}
+              className="w-full mt-1 px-4 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition"
+            >
+              Ver membros
+            </button>
+          </div>
+        </div>
       </div>
 
       {showMemberSearch && (
@@ -408,6 +508,67 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMembershipAlertModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">Alertas de Membership</h2>
+              <button
+                onClick={() => setShowMembershipAlertModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-4 grid md:grid-cols-2 gap-4 max-h-[70vh] overflow-y-auto">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <h3 className="font-medium text-amber-900 mb-3">Expiram no próximo mês ({expiringMembers.length})</h3>
+                {expiringMembers.length === 0 ? (
+                  <p className="text-sm text-amber-800">Sem membros a expirar no próximo mês.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {expiringMembers.map((m) => (
+                      <div key={m.id} className="bg-white rounded p-2 border border-amber-100">
+                        <div className="font-medium text-sm text-gray-900">{m.member_name || 'Sem nome'}</div>
+                        <div className="text-xs text-gray-600">{m.member_phone || '-'}</div>
+                        <div className="text-xs text-amber-700">Expira em: {new Date(m.end_date).toLocaleDateString('pt-PT')}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                <h3 className="font-medium text-red-900 mb-3">Já expirados ({expiredMembers.length})</h3>
+                {expiredMembers.length === 0 ? (
+                  <p className="text-sm text-red-800">Sem memberships expirados.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {expiredMembers.map((m) => (
+                      <div key={m.id} className="bg-white rounded p-2 border border-red-100">
+                        <div className="font-medium text-sm text-gray-900">{m.member_name || 'Sem nome'}</div>
+                        <div className="text-xs text-gray-600">{m.member_phone || '-'}</div>
+                        <div className="text-xs text-red-700">Expirou em: {new Date(m.end_date).toLocaleDateString('pt-PT')}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowMembershipAlertModal(false);
+                  onNavigate('members');
+                }}
+                className="w-full px-4 py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 transition"
+              >
+                Ir para gestão de membros
+              </button>
             </div>
           </div>
         </div>

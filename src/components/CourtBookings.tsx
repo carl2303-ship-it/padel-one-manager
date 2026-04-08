@@ -541,7 +541,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         plan:membership_plans(name, court_discount_percent)
       `)
       .eq('club_owner_id', effectiveUserId)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .gte('end_date', new Date().toISOString().split('T')[0]);
 
     if (normalizedPhone && normalizedPhone.length >= 6) {
       memberQuery = memberQuery.or(`member_phone.ilike.%${normalizedPhone}%,member_phone.ilike.%${phone}%`);
@@ -964,6 +965,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           `)
           .eq('club_owner_id', effectiveUserId)
           .eq('status', 'active')
+          .gte('end_date', new Date().toISOString().split('T')[0])
           .in('member_phone', playerPhones);
         
         if (members) {
@@ -1446,7 +1448,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       .from('member_subscriptions')
       .select('member_name, member_phone, plan:membership_plans(name, court_discount_percent)')
       .eq('club_owner_id', effectiveUserId)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      .gte('end_date', new Date().toISOString().split('T')[0]);
 
     console.log('[Tournament] Member subscriptions found:', memberSubs?.length || 0, memberSubs?.map((s: any) => ({ name: s.member_name, phone: s.member_phone, plan: s.plan?.name })));
 
