@@ -13,10 +13,84 @@ interface NotifyRequest {
   bookingId?: string;
   courtName?: string;
   playerName?: string;
+  playerNames?: string[];
   className?: string;
   classDate?: string;
   classTime?: string;
   scheduledAt?: string;
+  endAt?: string;
+}
+
+function formatPtDateTime(iso?: string): string {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '-';
+  return d.toLocaleString('pt-PT', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function sendBookingEmailToManager(params: {
+  resendApiKey: string;
+  recipientEmails: string[];
+  managerName?: string;
+  clubName?: string;
+  type: 'booking_created' | 'booking_cancelled';
+  bookingId?: string;
+  courtName?: string;
+  playerNames?: string[];
+  scheduledAt?: string;
+  endAt?: string;
+}) {
+  const playerNames = (params.playerNames || []).filter(Boolean);
+  const namesText = playerNames.length ? playerNames.join(', ') : 'Cliente';
+  const isCreated = params.type === 'booking_created';
+  const subject = isCreated
+    ? `Nova reserva de campo${params.clubName ? ` - ${params.clubName}` : ''}`
+    : `Reserva de campo cancelada${params.clubName ? ` - ${params.clubName}` : ''}`;
+  const startLabel = formatPtDateTime(params.scheduledAt);
+  const endLabel = formatPtDateTime(params.endAt);
+  const dateTimeLabel = endLabel !== '-' ? `${startLabel} - ${endLabel}` : startLabel;
+  const statusLabel = isCreated ? 'Nova reserva' : 'Reserva cancelada';
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; color: #111827;">
+      <h2 style="margin-bottom: 8px;">${subject}</h2>
+      ${params.clubName ? `<p style="margin: 0 0 8px; color:#6b7280;"><strong>Clube:</strong> ${params.clubName}</p>` : ''}
+      <p style="margin-top: 0;">Olá ${params.managerName || 'Manager'},</p>
+      <p>Recebeste uma atualização de reserva no teu clube.</p>
+      <table style="border-collapse: collapse; width: 100%; margin-top: 12px;">
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Estado</strong></td><td style="padding: 8px; border: 1px solid #e5e7eb;">${statusLabel}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Jogadores</strong></td><td style="padding: 8px; border: 1px solid #e5e7eb;">${namesText}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Data/Hora</strong></td><td style="padding: 8px; border: 1px solid #e5e7eb;">${dateTimeLabel}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>Campo</strong></td><td style="padding: 8px; border: 1px solid #e5e7eb;">${params.courtName || 'Campo'}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb;"><strong>ID Reserva</strong></td><td style="padding: 8px; border: 1px solid #e5e7eb;">${params.bookingId || '-'}</td></tr>
+      </table>
+    </div>
+  `;
+
+  const emailResp = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${params.resendApiKey}`,
+    },
+    body: JSON.stringify({
+      from: 'Padel One <noreply@boostpadel.store>',
+      to: params.recipientEmails,
+      subject,
+      html,
+    }),
+  });
+
+  if (!emailResp.ok) {
+    const errPayload = await emailResp.text().catch(() => '');
+    throw new Error(`Failed sending manager booking email: ${emailResp.status} ${errPayload}`);
+  }
 }
 
 async function sendPushNotification(
@@ -56,7 +130,19 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: NotifyRequest = await req.json();
-    const { userId, type, bookingId, courtName, playerName, className, classDate, classTime } = body;
+    const {
+      userId,
+      type,
+      bookingId,
+      courtName,
+      playerName,
+      playerNames,
+      className,
+      classDate,
+      classTime,
+      scheduledAt,
+      endAt,
+    } = body;
 
     if (!userId || !type) {
       return new Response(
@@ -137,6 +223,63 @@ Deno.serve(async (req: Request) => {
       pushPayload
     );
 
+    let bookingEmailSent = false;
+    let bookingEmailError: string | null = null;
+    let bookingEmailRecipients = 0;
+    if (type === 'booking_created' || type === 'booking_cancelled') {
+      try {
+        const resendApiKey = Deno.env.get('RESEND_API_KEY');
+        if (!resendApiKey) throw new Error('RESEND_API_KEY not configured');
+
+        const { data: managerUser, error: managerUserErr } = await supabase.auth.admin.getUserById(userId);
+        if (managerUserErr || !managerUser.user?.email) {
+          throw new Error('Manager email not found');
+        }
+
+        const managerEmail = managerUser.user.email.trim().toLowerCase();
+
+        const { data: club } = await supabase
+          .from('clubs')
+          .select('name, email')
+          .eq('owner_id', userId)
+          .maybeSingle();
+
+        const { data: staffRows } = await supabase
+          .from('club_staff')
+          .select('email, is_active')
+          .eq('club_owner_id', userId)
+          .eq('is_active', true);
+
+        const recipientSet = new Set<string>();
+        recipientSet.add(managerEmail);
+        if (club?.email) recipientSet.add(String(club.email).trim().toLowerCase());
+        for (const s of staffRows || []) {
+          const mail = (s as { email?: string | null }).email;
+          if (mail) recipientSet.add(String(mail).trim().toLowerCase());
+        }
+        const recipientEmails = Array.from(recipientSet).filter((e) => e.includes('@'));
+        if (!recipientEmails.length) throw new Error('No valid email recipients found');
+
+        await sendBookingEmailToManager({
+          resendApiKey,
+          recipientEmails,
+          managerName: managerUser.user.user_metadata?.name,
+          clubName: club?.name || undefined,
+          type,
+          bookingId,
+          courtName,
+          playerNames: playerNames && playerNames.length > 0 ? playerNames : [playerName || 'Cliente'],
+          scheduledAt,
+          endAt,
+        });
+        bookingEmailSent = true;
+        bookingEmailRecipients = recipientEmails.length;
+      } catch (mailErr) {
+        bookingEmailError = mailErr instanceof Error ? mailErr.message : String(mailErr);
+        console.error('Error sending booking email:', bookingEmailError);
+      }
+    }
+
     // For QR orders, also notify bar_staff and kitchen staff
     if (type === 'qr_order') {
       try {
@@ -173,6 +316,9 @@ Deno.serve(async (req: Request) => {
         success: true, 
         message: 'Manager notified',
         pushSent: pushResult?.success || false,
+        bookingEmailSent,
+        bookingEmailError,
+        bookingEmailRecipients,
       }),
       { 
         status: 200, 

@@ -878,6 +878,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 bookingId: newBooking.id,
                 courtName: court.name,
                 playerName: players[0].name || players[0].phone || 'Cliente',
+                playerNames: players.map((p) => p.name || p.phone).filter(Boolean),
+                scheduledAt: newBooking.start_time,
+                endAt: newBooking.end_time,
               }),
             }
           );
@@ -1975,7 +1978,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     // First, get the booking to check if it's an open_game
     const { data: booking } = await supabase
       .from('court_bookings')
-      .select('id, event_type, notes, player1_name, booked_by_name, court_id')
+      .select('id, event_type, notes, player1_name, player2_name, player3_name, player4_name, booked_by_name, court_id, start_time, end_time')
       .eq('id', bookingId)
       .single();
 
@@ -2012,6 +2015,14 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               bookingId: booking.id,
               courtName: courtName,
               playerName: booking.player1_name || booking.booked_by_name || 'Cliente',
+              playerNames: [
+                booking.player1_name,
+                booking.player2_name,
+                booking.player3_name,
+                booking.player4_name,
+              ].filter(Boolean),
+              scheduledAt: booking.start_time,
+              endAt: booking.end_time,
             }),
           }
         );
