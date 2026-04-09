@@ -6,9 +6,11 @@ import { useCustomLogo } from '../lib/useCustomLogo';
 
 interface AuthFormProps {
   onSuccess?: () => void;
+  /** Entrada direta pelo URL ?super-admin ou #super-admin — login dedicado ao HQ, sem aparência da app Manager */
+  hqEntry?: boolean;
 }
 
-export default function AuthForm({ onSuccess }: AuthFormProps) {
+export default function AuthForm({ onSuccess, hqEntry = false }: AuthFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -199,42 +201,74 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
     }
   };
 
+  const hq = hqEntry;
+  const shellBg = hq ? 'bg-[#111111]' : 'bg-gradient-to-br from-slate-50 to-slate-100';
+  const cardClass = hq
+    ? 'bg-[#1a1a1a] border border-[#2a2a2a] rounded-2xl shadow-xl p-8'
+    : 'bg-white rounded-2xl shadow-xl p-8';
+  const titleClass = hq ? 'text-3xl font-black text-gray-100 mb-1' : 'text-3xl font-black text-[#111111] mb-2';
+  const subtitleClass = hq ? 'text-sm text-gray-500' : 'text-slate-600';
+  const labelClass = hq ? 'block text-sm font-medium text-gray-400 mb-2' : 'block text-sm font-medium text-slate-700 mb-2';
+  const inputClass = hq
+    ? 'w-full px-4 py-3 bg-[#111111] border border-[#2a2a2a] rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-[#D32F2F]/50 focus:border-transparent transition'
+    : 'w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition';
+  const inputClassPr = `${inputClass} pr-12`;
+  const btnPrimary = hq
+    ? 'w-full bg-[#D32F2F] hover:bg-[#B71C1C] text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md'
+    : 'w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md';
+  const linkClass = hq ? 'text-[#D32F2F] hover:text-red-400 font-medium transition' : 'text-[#007BFF] hover:text-[#0069d9] font-medium transition';
+  const errBox = hq ? 'mb-6 p-4 bg-red-900/20 border border-red-800/50 rounded-lg' : 'mb-6 p-4 bg-red-50 border border-red-200 rounded-lg';
+  const errText = hq ? 'text-sm text-red-300' : 'text-sm text-red-800';
+  const okBox = hq ? 'mb-6 p-4 bg-green-900/20 border border-green-800/40 rounded-lg' : 'mb-6 p-4 bg-green-50 border border-green-200 rounded-lg';
+  const okText = hq ? 'text-sm text-green-300' : 'text-sm text-green-800';
+  const eyeClass = hq ? 'text-gray-500 hover:text-gray-300 transition' : 'text-slate-500 hover:text-slate-700 transition';
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
+    <div className={`min-h-screen flex items-center justify-center px-4 ${shellBg}`}>
       <div className="max-w-md w-full">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
+        <div className={cardClass}>
           <div className="text-center mb-8">
             <div className="flex justify-center mb-6">
               <img
                 src={logoUrl}
                 alt="Logo"
-                className="h-32 w-auto"
+                className={hq ? 'h-24 w-auto opacity-95' : 'h-32 w-auto'}
               />
             </div>
-            <h1 className="text-3xl font-black text-[#111111] mb-2">
-              {t.app.title}
-            </h1>
-            <p className="text-slate-600">
-              Gestão completa do seu clube de padel
-            </p>
+            {hq ? (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#D32F2F] mb-2">Padel One HQ</p>
+                <h1 className={titleClass}>Super Admin</h1>
+                <p className={subtitleClass}>
+                  Inicie sessão para aceder à consola global. Não é o login de gestor de clube.
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className={titleClass}>{t.app.title}</h1>
+                <p className={subtitleClass}>
+                  Gestão completa do seu clube de padel
+                </p>
+              </>
+            )}
           </div>
 
           {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-800">{error}</p>
+            <div className={errBox}>
+              <p className={errText}>{error}</p>
             </div>
           )}
 
           {success && (
-            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <p className="text-sm text-green-800">{success}</p>
+            <div className={okBox}>
+              <p className={okText}>{success}</p>
             </div>
           )}
 
           {isPasswordRecovery ? (
             <form onSubmit={handleUpdatePassword} className="space-y-5">
               <div>
-                <label htmlFor="newPassword" className="block text-sm font-medium text-slate-700 mb-2">
+                <label htmlFor="newPassword" className={labelClass}>
                   {t.auth.newPassword}
                 </label>
                 <div className="relative">
@@ -243,14 +277,14 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                    className={inputClassPr}
                     placeholder={t.auth.passwordPlaceholder}
                     disabled={loading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition"
+                    className={`absolute right-3 top-1/2 -translate-y-1/2 ${eyeClass}`}
                   >
                     {showPassword ? (
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -267,7 +301,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               </div>
 
               <div>
-                <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-2">
+                <label htmlFor="confirmPassword" className={labelClass}>
                   {t.auth.confirmPassword}
                 </label>
                 <div className="relative">
@@ -276,14 +310,14 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                    className={inputClassPr}
                     placeholder={t.auth.confirmPasswordPlaceholder}
                     disabled={loading}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition"
+                    className={`absolute right-3 top-1/2 -translate-y-1/2 ${eyeClass}`}
                   >
                     {showConfirmPassword ? (
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -302,7 +336,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className={btnPrimary}
               >
                 {loading ? t.auth.pleaseWait : t.auth.updatePassword}
               </button>
@@ -310,7 +344,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
           ) : showResetPassword ? (
             <form onSubmit={handleResetPassword} className="space-y-5">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                <label htmlFor="email" className={labelClass}>
                   {t.auth.email}
                 </label>
                 <input
@@ -318,7 +352,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition"
+                  className={inputClass}
                   placeholder={t.auth.emailPlaceholder}
                   disabled={loading}
                 />
@@ -327,7 +361,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className={btnPrimary}
               >
                 {loading ? t.auth.pleaseWait : t.auth.resetPassword}
               </button>
@@ -339,7 +373,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   setError('');
                   setSuccess('');
                 }}
-                className="w-full text-[#007BFF] hover:text-[#0069d9] font-medium py-2 transition"
+                className={`w-full ${linkClass} py-2 transition text-sm`}
               >
                 {t.auth.backToSignIn}
               </button>
@@ -347,7 +381,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+              <label htmlFor="email" className={labelClass}>
                 {t.auth.email}
               </label>
               <input
@@ -355,14 +389,14 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition"
+                className={inputClass}
                 placeholder={t.auth.emailPlaceholder}
                 disabled={loading}
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">
+              <label htmlFor="password" className={labelClass}>
                 {t.auth.password}
               </label>
               <div className="relative">
@@ -371,14 +405,14 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                  className={inputClassPr}
                   placeholder={t.auth.passwordPlaceholder}
                   disabled={loading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition"
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 ${eyeClass}`}
                 >
                   {showPassword ? (
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -397,7 +431,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className={btnPrimary}
               >
                 {loading ? t.auth.pleaseWait : t.auth.signIn}
               </button>
@@ -409,7 +443,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     setShowResetPassword(true);
                     setError('');
                   }}
-                  className="text-sm text-[#007BFF] hover:text-[#0069d9] font-medium transition"
+                  className={`text-sm ${linkClass} transition`}
                 >
                   {t.auth.forgotPassword}
                 </button>
@@ -417,6 +451,13 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
             </form>
           )}
 
+          {hq && (
+            <p className="mt-6 text-center text-xs text-gray-500">
+              <a href={typeof window !== 'undefined' ? window.location.pathname : '/'} className={linkClass}>
+                Entrar na app Manager (gestores de clube)
+              </a>
+            </p>
+          )}
         </div>
       </div>
     </div>

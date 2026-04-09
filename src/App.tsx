@@ -42,6 +42,12 @@ const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="
 
 type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
 
+function isSuperAdminEntryUrl(): boolean {
+  if (typeof window === 'undefined') return false;
+  const q = new URLSearchParams(window.location.search);
+  return window.location.hash === '#super-admin' || q.get('super-admin') !== null;
+}
+
 interface StaffPermissions {
   isStaff: boolean;
   isOwner: boolean;
@@ -62,7 +68,7 @@ function App() {
   const [view, setView] = useState<View>('dashboard');
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [staffInviteToken, setStaffInviteToken] = useState<string | null>(null);
-  const [showSuperAdmin, setShowSuperAdmin] = useState(false);
+  const [showSuperAdmin, setShowSuperAdmin] = useState(isSuperAdminEntryUrl);
   // Refresh key: incrementing this forces child components to re-mount and reload data
   const [refreshKey, setRefreshKey] = useState(0);
   const lastForegroundRefresh = useRef(Date.now());
@@ -116,9 +122,7 @@ function App() {
       setStaffInviteToken(inviteToken);
     }
     
-    if (window.location.hash === '#super-admin' || urlParams.get('super-admin') !== null) {
-      setShowSuperAdmin(true);
-    }
+    setShowSuperAdmin(isSuperAdminEntryUrl());
   }, []);
 
   const handleInviteComplete = () => {
@@ -215,6 +219,16 @@ function App() {
   }
 
   if (authLoading || checkingPermissions) {
+    if (showSuperAdmin) {
+      return (
+        <div className="min-h-screen bg-[#111111] flex items-center justify-center">
+          <div className="text-center">
+            <div className="mb-4 h-12 w-12 border-2 border-[#D32F2F] border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-gray-400 text-sm">Padel One HQ</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -246,7 +260,7 @@ function App() {
   }
 
   if (!user) {
-    return <AuthForm />;
+    return <AuthForm hqEntry={showSuperAdmin} />;
   }
 
   const allNavItems = [
