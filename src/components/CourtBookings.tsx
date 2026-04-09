@@ -72,6 +72,39 @@ const timeToMinutes = (time: string, isEndTime = false): number => {
   return isEndTime && mins === 0 ? 1440 : mins;
 };
 
+/** Inícios de slot de 30 min entre abertura e fecho */
+const generateOperatingSlotStarts = (start: string, end: string): string[] => {
+  const slots: string[] = [];
+  const startMinutes = timeToMinutes(start);
+  const endMinutes = timeToMinutes(end, true);
+  for (let m = startMinutes; m < endMinutes; m += 30) {
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    slots.push(`${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`);
+  }
+  return slots;
+};
+
+/** Horários com reserva ativa: mescla JSON guardado com grelha gerada a partir de abertura/fecho */
+const getActiveSlotTimesForSchedule = (schedule: ScheduleConfig): string[] => {
+  const starts = generateOperatingSlotStarts(schedule.operating_start, schedule.operating_end);
+  const byTime = new Map(schedule.slots.map(s => [s.time, s]));
+  return starts.filter(t => {
+    const s = byTime.get(t);
+    if (s) return s.durations.length > 0;
+    return true;
+  });
+};
+
+const getSlotConfigForTime = (schedule: ScheduleConfig, time: string): CourtSlotConfig | null => {
+  const found = schedule.slots.find(s => s.time === time);
+  if (found) return found;
+  if (generateOperatingSlotStarts(schedule.operating_start, schedule.operating_end).includes(time)) {
+    return { time, durations: [60, 90, 120] };
+  }
+  return null;
+};
+
 interface Court {
   id: string;
   name: string;
@@ -1910,18 +1943,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     setFocusedPlayerInput(null);
   };
 
-  const generateTimeSlots = () => {
-    const slots: string[] = [];
-    const startMinutes = timeToMinutes(operatingHours.start);
-    const endMinutes = timeToMinutes(operatingHours.end, true);
-
-    for (let m = startMinutes; m < endMinutes; m += 30) {
-      const h = Math.floor(m / 60);
-      const min = m % 60;
-      slots.push(`${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`);
-    }
-    return slots;
-  };
+  const generateTimeSlots = () =>
+    generateOperatingSlotStarts(operatingHours.start, operatingHours.end);
 
   const timeSlots = generateTimeSlots();
 
@@ -2073,19 +2096,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     return date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   };
 
-  const generateCalendarSlots = () => {
-    const slots: { time: string; label: string }[] = [];
-    const startMin = timeToMinutes(operatingHours.start);
-    const endMin = timeToMinutes(operatingHours.end, true);
-
-    for (let m = startMin; m < endMin; m += 30) {
-      const h = Math.floor(m / 60);
-      const min = m % 60;
-      const time = `${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-      slots.push({ time, label: time });
-    }
-    return slots;
-  };
+  const generateCalendarSlots = () =>
+    generateOperatingSlotStarts(operatingHours.start, operatingHours.end).map(time => ({
+      time,
+      label: time
+    }));
 
   const calendarSlots = generateCalendarSlots();
 
@@ -2608,12 +2623,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     {(() => {
                       const selectedCourt = courts.find(c => c.id === newBooking.court_id);
                       const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
-                      if (schedule?.slots) {
-                        return schedule.slots
-                          .filter(s => s.durations.length > 0)
-                          .map(s => (
-                            <option key={s.time} value={s.time}>{s.time}</option>
-                          ));
+                      if (schedule?.operating_start && schedule?.operating_end && schedule.slots) {
+                        return getActiveSlotTimesForSchedule(schedule).map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ));
                       }
                       return timeSlots.map(slot => (
                         <option key={slot} value={slot}>{slot}</option>
@@ -2631,8 +2644,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     {(() => {
                       const selectedCourt = courts.find(c => c.id === newBooking.court_id);
                       const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
-                      const selectedSlot = schedule?.slots?.find(s => s.time === newBooking.startTime);
-                      if (selectedSlot) {
+                      const selectedSlot =
+                        schedule && schedule.slots
+                          ? getSlotConfigForTime(schedule, newBooking.startTime)
+                          : null;
+                      if (selectedSlot && selectedSlot.durations.length > 0) {
                         return selectedSlot.durations.map(d => (
                           <option key={d} value={d / 60}>
                             {d === 60 ? '1h' : d === 90 ? '1h30' : '2h'}

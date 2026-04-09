@@ -68,21 +68,75 @@ const timeToMinutes = (time: string, isEndTime = false): number => {
   return isEndTime && mins === 0 ? 1440 : mins;
 };
 
+/** "9:00" / "09:00" → "09:00" (merge com a grelha e dados da BD) */
+const normalizeTimeLabel = (t: string): string => {
+  if (!t || typeof t !== 'string') return '00:00';
+  const parts = t.trim().split(':');
+  if (parts.length < 2) return t.trim();
+  const h = Math.max(0, Math.min(47, parseInt(parts[0], 10) || 0));
+  const m = Math.max(0, Math.min(59, parseInt(parts[1], 10) || 0));
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+};
+
+/** JSON pode devolver durações como string */
+const normalizeSlotDurations = (durations: unknown): number[] => {
+  if (!Array.isArray(durations)) return [];
+  return durations
+    .map(d => (typeof d === 'number' ? d : Number(d)))
+    .filter(d => Number.isFinite(d) && [60, 90, 120].includes(d));
+};
+
+const mapScheduleSlots = (slots: CourtSlotConfig[]): CourtSlotConfig[] =>
+  slots.map(s => ({
+    time: normalizeTimeLabel(s.time),
+    durations: normalizeSlotDurations(s.durations)
+  }));
+
 // Extract the active schedule from court_slots (handles legacy format)
 const getScheduleFromCourt = (courtSlots: CourtSlotsData | null, schedule: ScheduleTab): ScheduleConfig | null => {
   if (!courtSlots) return null;
   if (courtSlots.schedules) {
-    return courtSlots.schedules[schedule];
+    const raw = courtSlots.schedules[schedule];
+    if (!raw) return null;
+    return {
+      operating_start: normalizeTimeLabel(raw.operating_start),
+      operating_end: raw.operating_end === '00:00' ? '00:00' : normalizeTimeLabel(raw.operating_end),
+      slots: mapScheduleSlots(raw.slots)
+    };
   }
   // Legacy format: use as both schedules
   if (courtSlots.operating_start && courtSlots.slots) {
     return {
-      operating_start: courtSlots.operating_start,
-      operating_end: courtSlots.operating_end || '22:00',
-      slots: courtSlots.slots,
+      operating_start: normalizeTimeLabel(courtSlots.operating_start),
+      operating_end: courtSlots.operating_end === '00:00' ? '00:00' : normalizeTimeLabel(courtSlots.operating_end || '22:00'),
+      slots: mapScheduleSlots(courtSlots.slots)
     };
   }
   return null;
+};
+
+const cloneSchedule = (sc: ScheduleConfig): ScheduleConfig => ({
+  ...sc,
+  slots: sc.slots.map(s => ({ ...s, durations: [...s.durations] }))
+});
+
+/** Lê verão/inverno/legado a partir de `court_slots` (para não substituir por defaults ao guardar um só separador) */
+const readSchedulesFromPersisted = (
+  courtSlots: CourtSlotsData | null | undefined
+): { summer: ScheduleConfig | null; winter: ScheduleConfig | null; legacy: ScheduleConfig | null } => {
+  if (!courtSlots) return { summer: null, winter: null, legacy: null };
+  if (courtSlots.schedules) {
+    return {
+      summer: courtSlots.schedules.summer ? getScheduleFromCourt(courtSlots, 'summer') : null,
+      winter: courtSlots.schedules.winter ? getScheduleFromCourt(courtSlots, 'winter') : null,
+      legacy: null
+    };
+  }
+  if (courtSlots.operating_start && courtSlots.slots) {
+    const legacy = getScheduleFromCourt(courtSlots, 'summer');
+    return { summer: null, winter: null, legacy };
+  }
+  return { summer: null, winter: null, legacy: null };
 };
 
 export default function CourtManagement() {
@@ -216,9 +270,28 @@ export default function CourtManagement() {
   // Load a schedule into the editing state
   const loadScheduleIntoEditor = (schedule: ScheduleConfig | null) => {
     if (schedule) {
-      setSlotsOperatingStart(schedule.operating_start);
-      setSlotsOperatingEnd(schedule.operating_end);
-      setSlotsConfig(schedule.slots.map(s => ({ ...s })));
+      const start = normalizeTimeLabel(schedule.operating_start);
+      const end =
+        schedule.operating_end === '00:00' ? '00:00' : normalizeTimeLabel(schedule.operating_end);
+      setSlotsOperatingStart(start);
+      setSlotsOperatingEnd(end);
+      const generated = generateSlotsForRange(start, end);
+      const byTime = new Map(
+        schedule.slots.map(s => [
+          normalizeTimeLabel(s.time),
+          { durations: normalizeSlotDurations(s.durations) }
+        ])
+      );
+      setSlotsConfig(
+        generated.map(g => {
+          const key = normalizeTimeLabel(g.time);
+          const saved = byTime.get(key);
+          if (saved) {
+            return { time: key, durations: [...saved.durations] };
+          }
+          return { ...g, time: key };
+        })
+      );
     } else {
       setSlotsOperatingStart('08:00');
       setSlotsOperatingEnd('22:00');
@@ -232,7 +305,6 @@ export default function CourtManagement() {
     const winter = getScheduleFromCourt(court.court_slots, 'winter');
     setSummerSchedule(summer);
     setWinterSchedule(winter);
-    // Start on the active schedule tab
     const startTab = (activeSchedule === 'winter' ? 'winter' : 'summer') as ScheduleTab;
     setScheduleTab(startTab);
     loadScheduleIntoEditor(startTab === 'summer' ? summer : winter);
@@ -241,15 +313,26 @@ export default function CourtManagement() {
 
   // Switch between summer/winter tabs
   const handleScheduleTabChange = (newTab: ScheduleTab) => {
-    // Save current tab's state
     saveCurrentScheduleToMemory();
-    // Switch tab
     setScheduleTab(newTab);
-    // Load the other tab's state
+
+    const courtRow = showSlotsConfig ? courts.find(c => c.id === showSlotsConfig) : undefined;
+    const p = readSchedulesFromPersisted(courtRow?.court_slots);
+
     if (newTab === 'summer') {
-      loadScheduleIntoEditor(summerSchedule);
+      loadScheduleIntoEditor(
+        summerSchedule ??
+          p.summer ??
+          p.legacy ??
+          (p.winter != null ? cloneSchedule(p.winter) : null)
+      );
     } else {
-      loadScheduleIntoEditor(winterSchedule);
+      loadScheduleIntoEditor(
+        winterSchedule ??
+          p.winter ??
+          p.legacy ??
+          (p.summer != null ? cloneSchedule(p.summer) : null)
+      );
     }
   };
 
@@ -257,7 +340,7 @@ export default function CourtManagement() {
     setSlotsOperatingStart(newStart);
     const newSlots = generateSlotsForRange(newStart, slotsOperatingEnd);
     const merged = newSlots.map(ns => {
-      const existing = slotsConfig.find(s => s.time === ns.time);
+      const existing = slotsConfig.find(s => normalizeTimeLabel(s.time) === normalizeTimeLabel(ns.time));
       return existing || ns;
     });
     setSlotsConfig(merged);
@@ -267,7 +350,7 @@ export default function CourtManagement() {
     setSlotsOperatingEnd(newEnd);
     const newSlots = generateSlotsForRange(slotsOperatingStart, newEnd);
     const merged = newSlots.map(ns => {
-      const existing = slotsConfig.find(s => s.time === ns.time);
+      const existing = slotsConfig.find(s => normalizeTimeLabel(s.time) === normalizeTimeLabel(ns.time));
       return existing || ns;
     });
     setSlotsConfig(merged);
@@ -311,48 +394,60 @@ export default function CourtManagement() {
   };
 
   const handleSaveSlotsConfig = async (courtId: string) => {
-    // Save current editing tab
+    // 1) Guardar o separador ativo (UI) em memória
     const currentSchedule: ScheduleConfig = {
       operating_start: slotsOperatingStart,
       operating_end: slotsOperatingEnd,
-      slots: slotsConfig.filter(s => s.durations.length > 0)
+      slots: slotsConfig
+    };
+    if (scheduleTab === 'summer') setSummerSchedule(currentSchedule);
+    else setWinterSchedule(currentSchedule);
+
+    // 2) Ler o que existe na BD para não perder o outro período
+    const courtRow = courts.find(c => c.id === courtId);
+    const persisted = readSchedulesFromPersisted(courtRow?.court_slots);
+
+    const fallbackSummer: ScheduleConfig = {
+      operating_start: '08:00', operating_end: '22:00',
+      slots: generateSlotsForRange('08:00', '22:00')
+    };
+    const fallbackWinter: ScheduleConfig = {
+      operating_start: '09:00', operating_end: '21:00',
+      slots: generateSlotsForRange('09:00', '21:00')
     };
 
-    const finalSummer = scheduleTab === 'summer' ? currentSchedule : (summerSchedule || {
-      operating_start: '08:00',
-      operating_end: '22:00',
-      slots: generateSlotsForRange('08:00', '22:00')
-    });
-    const finalWinter = scheduleTab === 'winter' ? currentSchedule : (winterSchedule || {
-      operating_start: '09:00',
-      operating_end: '21:00',
-      slots: generateSlotsForRange('09:00', '21:00')
-    });
+    // Para cada período: o que o user editou (memória) > o que veio da BD > defaults
+    const finalSummer = scheduleTab === 'summer'
+      ? currentSchedule
+      : (summerSchedule ?? persisted.summer ?? persisted.legacy ?? fallbackSummer);
+    const finalWinter = scheduleTab === 'winter'
+      ? currentSchedule
+      : (winterSchedule ?? persisted.winter ?? persisted.legacy ?? fallbackWinter);
 
     const courtSlotsData: CourtSlotsData = {
       schedules: {
-        summer: {
-          ...finalSummer,
-          slots: finalSummer.slots.filter(s => s.durations.length > 0)
-        },
-        winter: {
-          ...finalWinter,
-          slots: finalWinter.slots.filter(s => s.durations.length > 0)
-        }
+        summer: finalSummer,
+        winter: finalWinter
       }
     };
 
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from('club_courts')
       .update({ court_slots: courtSlotsData })
-      .eq('id', courtId);
+      .eq('id', courtId)
+      .select('id, court_slots');
 
-    if (!error) {
-      setShowSlotsConfig(null);
-      loadCourts();
-    } else {
+    if (error) {
       alert('Erro ao guardar slots: ' + error.message);
+      return;
     }
+    if (!updated || updated.length === 0) {
+      alert('Nenhuma linha atualizada. O campo pode não existir ou não tens permissão.');
+      return;
+    }
+
+    setShowSlotsConfig(null);
+    await loadCourts();
   };
 
   const handleCopySlotsToOthers = async () => {
@@ -361,20 +456,30 @@ export default function CourtManagement() {
     const currentSchedule: ScheduleConfig = {
       operating_start: slotsOperatingStart,
       operating_end: slotsOperatingEnd,
-      slots: slotsConfig.filter(s => s.durations.length > 0)
+      slots: slotsConfig
     };
-    const finalSummer = scheduleTab === 'summer' ? currentSchedule : (summerSchedule || {
-      operating_start: '08:00', operating_end: '22:00', slots: generateSlotsForRange('08:00', '22:00')
-    });
-    const finalWinter = scheduleTab === 'winter' ? currentSchedule : (winterSchedule || {
-      operating_start: '09:00', operating_end: '21:00', slots: generateSlotsForRange('09:00', '21:00')
-    });
+
+    const courtRow = courts.find(c => c.id === showSlotsConfig);
+    const persisted = readSchedulesFromPersisted(courtRow?.court_slots);
+
+    const fallbackSummer: ScheduleConfig = {
+      operating_start: '08:00', operating_end: '22:00',
+      slots: generateSlotsForRange('08:00', '22:00')
+    };
+    const fallbackWinter: ScheduleConfig = {
+      operating_start: '09:00', operating_end: '21:00',
+      slots: generateSlotsForRange('09:00', '21:00')
+    };
+
+    const finalSummer = scheduleTab === 'summer'
+      ? currentSchedule
+      : (summerSchedule ?? persisted.summer ?? persisted.legacy ?? fallbackSummer);
+    const finalWinter = scheduleTab === 'winter'
+      ? currentSchedule
+      : (winterSchedule ?? persisted.winter ?? persisted.legacy ?? fallbackWinter);
 
     const courtSlotsData: CourtSlotsData = {
-      schedules: {
-        summer: { ...finalSummer, slots: finalSummer.slots.filter(s => s.durations.length > 0) },
-        winter: { ...finalWinter, slots: finalWinter.slots.filter(s => s.durations.length > 0) }
-      }
+      schedules: { summer: finalSummer, winter: finalWinter }
     };
 
     let errors = 0;
@@ -390,7 +495,7 @@ export default function CourtManagement() {
       setShowCopySlots(false);
       setCopySlotsTargets(new Set());
       setShowSlotsConfig(null);
-      loadCourts();
+      await loadCourts();
       alert(`Slots copiados para ${copySlotsTargets.size} campo(s)!`);
     } else {
       alert(`Erro ao copiar para ${errors} campo(s)`);

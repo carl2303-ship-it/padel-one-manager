@@ -54,6 +54,31 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
       } else {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
+          // Super admins bypass all checks
+          const { data: saRecord } = await supabase
+            .from('super_admins')
+            .select('id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          if (saRecord) {
+            onSuccess?.();
+            return;
+          }
+
+          // Check if user's club is suspended
+          const { data: suspendedClub } = await supabase
+            .from('clubs')
+            .select('id')
+            .eq('owner_id', user.id)
+            .eq('status', 'suspended')
+            .maybeSingle();
+          if (suspendedClub) {
+            await supabase.auth.signOut();
+            setError('O acesso do seu clube foi suspenso. Contacte o suporte Padel One.');
+            setLoading(false);
+            return;
+          }
+
           const { data: staffRecord } = await supabase
             .from('club_staff')
             .select('id')

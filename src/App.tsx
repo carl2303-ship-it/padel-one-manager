@@ -11,7 +11,7 @@ import ClubMetrics from './components/ClubMetrics';
 import StaffManagement from './components/StaffManagement';
 import StaffInviteAccept from './components/StaffInviteAccept';
 import Settings from './components/Settings';
-import SuperAdminDashboard from './components/SuperAdminDashboard';
+import HQLayout from './components/hq/HQLayout';
 import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
 import PublicMenu from './components/PublicMenu';
@@ -242,7 +242,7 @@ function App() {
   }
 
   if (showSuperAdmin && user) {
-    return <SuperAdminDashboard />;
+    return <HQLayout />;
   }
 
   if (!user) {
