@@ -236,8 +236,6 @@ Deno.serve(async (req: Request) => {
           throw new Error('Manager email not found');
         }
 
-        const managerEmail = managerUser.user.email.trim().toLowerCase();
-
         const { data: club } = await supabase
           .from('clubs')
           .select('name, email')
@@ -246,17 +244,27 @@ Deno.serve(async (req: Request) => {
 
         const { data: staffRows } = await supabase
           .from('club_staff')
-          .select('email, is_active')
+          .select('email, is_active, perm_bookings, role')
           .eq('club_owner_id', userId)
           .eq('is_active', true);
 
         const recipientSet = new Set<string>();
-        recipientSet.add(managerEmail);
-        if (club?.email) recipientSet.add(String(club.email).trim().toLowerCase());
         for (const s of staffRows || []) {
-          const mail = (s as { email?: string | null }).email;
-          if (mail) recipientSet.add(String(mail).trim().toLowerCase());
+          const row = s as {
+            email?: string | null;
+            perm_bookings?: boolean | null;
+            role?: string | null;
+          };
+          const canManageBookings = row.perm_bookings === true || row.role === 'admin';
+          if (!canManageBookings) continue;
+          if (row.email) recipientSet.add(String(row.email).trim().toLowerCase());
         }
+
+        // Fallback de segurança: se não existir nenhum staff elegível, envia ao owner.
+        if (!recipientSet.size && managerUser.user?.email) {
+          recipientSet.add(managerUser.user.email.trim().toLowerCase());
+        }
+
         const recipientEmails = Array.from(recipientSet).filter((e) => e.includes('@'));
         if (!recipientEmails.length) throw new Error('No valid email recipients found');
 
