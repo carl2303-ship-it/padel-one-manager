@@ -409,6 +409,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     payment_status: 'pending',
     event_type: 'match'
   });
+  const [useEndTime, setUseEndTime] = useState(false);
+  const [customEndTime, setCustomEndTime] = useState('10:30');
 
   const [operatingHours, setOperatingHours] = useState({ start: '08:00', end: '22:00' });
   const [clubActiveSchedule, setClubActiveSchedule] = useState<string>('summer');
@@ -780,13 +782,25 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   };
 
+  const getEffectiveDurationHours = (): number => {
+    if (useEndTime) {
+      const [sh, sm] = newBooking.startTime.split(':').map(Number);
+      const [eh, em] = customEndTime.split(':').map(Number);
+      let diff = (eh * 60 + em) - (sh * 60 + sm);
+      if (diff <= 0) diff += 1440;
+      return diff / 60;
+    }
+    return newBooking.duration;
+  };
+
   const getBasePrice = () => {
     const court = courts.find(c => c.id === newBooking.court_id);
     if (!court) return 0;
-    const durationMin = Math.round(newBooking.duration * 60);
+    const durationHrs = getEffectiveDurationHours();
+    const durationMin = Math.round(durationHrs * 60);
     if (durationMin === 90) return court.price_90min ?? court.hourly_rate * 1.5;
     if (durationMin === 120) return court.price_120min ?? court.hourly_rate * 2;
-    return newBooking.duration * court.hourly_rate;
+    return durationHrs * court.hourly_rate;
   };
 
   const getPriceBreakdown = () => {
@@ -837,9 +851,17 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const [hours, minutes] = newBooking.startTime.split(':').map(Number);
     const startTime = new Date(newBooking.date);
     startTime.setHours(hours, minutes, 0, 0);
-    const endTime = new Date(startTime);
-    const durationMinutes = newBooking.duration * 60;
-    endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+    let endTime: Date;
+    if (useEndTime) {
+      const [eh, em] = customEndTime.split(':').map(Number);
+      endTime = new Date(newBooking.date);
+      endTime.setHours(eh, em, 0, 0);
+      if (endTime <= startTime) endTime.setDate(endTime.getDate() + 1);
+    } else {
+      endTime = new Date(startTime);
+      const durationMinutes = newBooking.duration * 60;
+      endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+    }
 
     const pricing = getPriceBreakdown();
 
@@ -1836,13 +1858,19 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const endDate = new Date(booking.end_time);
     const duration = (endDate.getTime() - startDate.getTime()) / 3600000;
     const startTimeStr = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`;
+    const endTimeStr = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`;
+
+    const durationMin = Math.round(duration * 60);
+    const isStandardDuration = [60, 90, 120].includes(durationMin);
+    setUseEndTime(!isStandardDuration);
+    setCustomEndTime(endTimeStr);
 
     setEditingBooking(booking);
     setNewBooking({
       court_id: booking.court_id,
       date: startDate.toISOString().split('T')[0],
       startTime: startTimeStr,
-      duration,
+      duration: isStandardDuration ? duration : 1.5,
       notes: booking.notes || '',
       payment_status: booking.payment_status,
       event_type: booking.event_type || 'match'
@@ -1933,6 +1961,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       payment_status: 'pending',
       event_type: 'match'
     });
+    setUseEndTime(false);
+    setCustomEndTime('10:30');
     setPlayers([
       { ...emptyPlayer },
       { ...emptyPlayer },
@@ -2635,35 +2665,73 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t.bookings.duration}</label>
-                  <select
-                    value={newBooking.duration}
-                    onChange={(e) => setNewBooking({ ...newBooking, duration: parseFloat(e.target.value) })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {(() => {
-                      const selectedCourt = courts.find(c => c.id === newBooking.court_id);
-                      const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
-                      const selectedSlot =
-                        schedule && schedule.slots
-                          ? getSlotConfigForTime(schedule, newBooking.startTime)
-                          : null;
-                      if (selectedSlot && selectedSlot.durations.length > 0) {
-                        return selectedSlot.durations.map(d => (
-                          <option key={d} value={d / 60}>
-                            {d === 60 ? '1h' : d === 90 ? '1h30' : '2h'}
-                          </option>
-                        ));
-                      }
-                      return (
-                        <>
-                          <option value={1}>1h</option>
-                          <option value={1.5}>1h30</option>
-                          <option value={2}>2h</option>
-                        </>
-                      );
-                    })()}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-sm font-medium text-gray-700">{useEndTime ? (t.bookings?.endTime || 'Hora Fim') : t.bookings.duration}</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!useEndTime) {
+                          const [sh, sm] = newBooking.startTime.split(':').map(Number);
+                          const endMins = sh * 60 + sm + newBooking.duration * 60;
+                          const eh = Math.floor(endMins / 60) % 24;
+                          const em = endMins % 60;
+                          setCustomEndTime(`${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`);
+                        }
+                        setUseEndTime(!useEndTime);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      {useEndTime ? (t.bookings.duration || 'Duração') : (t.bookings?.endTime || 'Hora Fim')}
+                    </button>
+                  </div>
+                  {useEndTime ? (
+                    <select
+                      value={customEndTime}
+                      onChange={(e) => setCustomEndTime(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {(() => {
+                        const [sh, sm] = newBooking.startTime.split(':').map(Number);
+                        const startMins = sh * 60 + sm;
+                        const opts: JSX.Element[] = [];
+                        for (let m = startMins + 30; m <= startMins + 480; m += 30) {
+                          const hh = Math.floor(m / 60) % 24;
+                          const mm = m % 60;
+                          const val = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+                          const diffH = (m - startMins) / 60;
+                          const label = `${val} (${diffH % 1 === 0 ? diffH + 'h' : Math.floor(diffH) + 'h30'})`;
+                          opts.push(<option key={val} value={val}>{label}</option>);
+                        }
+                        return opts;
+                      })()}
+                    </select>
+                  ) : (
+                    <select
+                      value={newBooking.duration}
+                      onChange={(e) => setNewBooking({ ...newBooking, duration: parseFloat(e.target.value) })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {(() => {
+                        const baseDurations = new Set([60, 90, 120]);
+                        const selectedCourt = courts.find(c => c.id === newBooking.court_id);
+                        const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
+                        const selectedSlot =
+                          schedule && schedule.slots
+                            ? getSlotConfigForTime(schedule, newBooking.startTime)
+                            : null;
+                        if (selectedSlot) {
+                          selectedSlot.durations.forEach(d => baseDurations.add(d));
+                        }
+                        const sorted = Array.from(baseDurations).sort((a, b) => a - b);
+                        return sorted.map(d => {
+                          const h = Math.floor(d / 60);
+                          const m = d % 60;
+                          const label = m === 0 ? `${h}h` : `${h}h${String(m).padStart(2, '0')}`;
+                          return <option key={d} value={d / 60}>{label}</option>;
+                        });
+                      })()}
+                    </select>
+                  )}
                 </div>
               </div>
               {newBooking.event_type === 'match' && (
