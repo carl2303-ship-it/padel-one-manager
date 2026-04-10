@@ -2523,9 +2523,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       </div>
                       <div className="text-sm text-gray-500 flex items-center gap-2">
                         <Clock className="w-3 h-3" />
-                        {new Date(booking.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(booking.start_time).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', hour12: false })}
                         {' - '}
-                        {new Date(booking.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(booking.end_time).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', hour12: false })}
                       </div>
                       {booking.booked_by_name && booking.event_type === 'match' && (
                         <div className="text-sm text-gray-500 flex items-center gap-1">
