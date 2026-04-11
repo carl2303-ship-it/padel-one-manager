@@ -25,6 +25,7 @@ function isTeamTournament(format: string | null, roundRobinType: string | null):
 async function fetchAllCandidateAccounts(
   admin: SupabaseClient,
   requesterId: string,
+  requesterUserId: string,
   followingIds: string[] | null,
 ): Promise<any[]> {
   const pageSize = 1000;
@@ -37,6 +38,7 @@ async function fetchAllCandidateAccounts(
       .select("id, user_id, name, court_position, player_category, level")
       .not("user_id", "is", null)
       .neq("id", requesterId)
+      .neq("user_id", requesterUserId)
       .range(from, from + pageSize - 1);
     if (followingIds) q = q.in("user_id", followingIds);
 
@@ -183,7 +185,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const candidates = await fetchAllCandidateAccounts(admin, requester.id, followingIds);
+    const candidates = await fetchAllCandidateAccounts(admin, requester.id, requester.user_id, followingIds);
 
     // `sidePreference` represents the desired partner position (right, left, or both).
     const compatible = (candidates || []).filter((c: any) => {
@@ -299,6 +301,8 @@ Deno.serve(async (req: Request) => {
     let pushByUserId = 0;
     let pushByPlayerAccount = 0;
     for (const inv of invites || []) {
+      if (inv.invitee_user_id === requester.user_id) continue;
+      if (inv.invitee_player_account_id === requester.id) continue;
       const pushResult = await sendPartnerInvitePush(admin, {
         inviteId: inv.id,
         tournamentId,
