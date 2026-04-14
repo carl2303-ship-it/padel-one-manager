@@ -2,7 +2,7 @@
 -- Auto-update player_category when level changes
 --
 -- Scale:
---   M1/F1 = 6.5 - 7.0
+--   M1/F1 = 6.5+  (sem limite maximo)
 --   M2/F2 = 5.5 - 6.4
 --   M3/F3 = 4.5 - 5.4
 --   M4/F4 = 3.5 - 4.4
