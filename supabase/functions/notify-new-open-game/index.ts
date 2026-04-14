@@ -13,6 +13,7 @@ interface RequestBody {
   gameId: string;
   creatorUserId: string;
   creatorPlayerAccountId: string | null;
+  creatorName: string | null;
   levelMin: number;
   levelMax: number;
   gender: "all" | "male" | "female" | "mixed";
@@ -45,6 +46,7 @@ Deno.serve(async (req: Request) => {
       gameId,
       creatorUserId,
       creatorPlayerAccountId,
+      creatorName,
       levelMin,
       levelMax,
       gender,
@@ -113,13 +115,12 @@ Deno.serve(async (req: Request) => {
     const timeStr = `${gameDate.getHours().toString().padStart(2, "0")}:${gameDate.getMinutes().toString().padStart(2, "0")}`;
     const dateStr = `${gameDate.getDate().toString().padStart(2, "0")}/${(gameDate.getMonth() + 1).toString().padStart(2, "0")}`;
 
-    const genderEmoji =
-      gender === "male" ? "♂️" : gender === "female" ? "♀️" : "🎾";
     const typeLabel = gameType === "competitive" ? "Competitivo" : "Amigável";
+    const displayName = creatorName || "Um jogador";
 
     const payload = {
-      title: `Novo Jogo ${genderEmoji} - Nível ${levelMin.toFixed(1)}-${levelMax.toFixed(1)}`,
-      body: `${clubName} ${dateStr} às ${timeStr} (${typeLabel}). Junta-te!`,
+      title: `${displayName} abriu um jogo! Queres juntar-te?`,
+      body: `${clubName} · ${dateStr} às ${timeStr} · ${typeLabel} · Nível ${levelMin.toFixed(1)}-${levelMax.toFixed(1)}`,
       url: "/?screen=findGame",
       tag: `new-game-${gameId}`,
     };
@@ -136,6 +137,7 @@ Deno.serve(async (req: Request) => {
           vapidPrivateKey,
           playerAccountId: p.id,
           payload,
+          appSource: "player",
         });
         return r.sentCount;
       }),

@@ -215,18 +215,20 @@ async function sendWebPush(
 /** Merge subscriptions by user_id and all player_accounts for that user (dedupe by endpoint). */
 export async function loadSubscriptionsForTarget(
   supabase: SupabaseClient,
-  opts: { userId?: string; playerAccountId?: string },
+  opts: { userId?: string; playerAccountId?: string; appSource?: string },
 ): Promise<SubscriptionRow[]> {
-  const { userId, playerAccountId } = opts;
+  const { userId, playerAccountId, appSource } = opts;
+
+  const applyAppFilter = (q: any) => appSource ? q.eq("app_source", appSource) : q;
 
   if (userId) {
     const { data: accounts } = await supabase.from("player_accounts").select("id").eq("user_id", userId);
     const paIds = (accounts || []).map((a: { id: string }) => a.id);
 
     const [byUser, byPa] = await Promise.all([
-      supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", userId),
+      applyAppFilter(supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", userId)),
       paIds.length
-        ? supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds)
+        ? applyAppFilter(supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds))
         : Promise.resolve({ data: [] as SubscriptionRow[] }),
     ]);
 
@@ -251,8 +253,8 @@ export async function loadSubscriptionsForTarget(
       const { data: accounts } = await supabase.from("player_accounts").select("id").eq("user_id", uid);
       const paIds = [...new Set([...(accounts || []).map((a: { id: string }) => a.id), playerAccountId])];
       const [byUser, byPa] = await Promise.all([
-        supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", uid),
-        supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds),
+        applyAppFilter(supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", uid)),
+        applyAppFilter(supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds)),
       ]);
       const merged = [...(byUser.data || []), ...(byPa.data || [])];
       const seen = new Set<string>();
@@ -263,10 +265,9 @@ export async function loadSubscriptionsForTarget(
       });
     }
 
-    const { data } = await supabase
-      .from("push_subscriptions")
-      .select("endpoint, p256dh, auth")
-      .eq("player_account_id", playerAccountId);
+    const { data } = await applyAppFilter(
+      supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("player_account_id", playerAccountId),
+    );
     return data || [];
   }
 
@@ -281,11 +282,12 @@ export async function deliverWebPushNotifications(
     userId?: string;
     playerAccountId?: string;
     payload: PushPayload;
+    appSource?: string;
   },
 ): Promise<{ sentCount: number; totalSubscriptions: number }> {
-  const { vapidPublicKey, vapidPrivateKey, userId, playerAccountId, payload } = opts;
+  const { vapidPublicKey, vapidPrivateKey, userId, playerAccountId, payload, appSource } = opts;
 
-  const subscriptions = await loadSubscriptionsForTarget(supabase, { userId, playerAccountId });
+  const subscriptions = await loadSubscriptionsForTarget(supabase, { userId, playerAccountId, appSource });
   if (subscriptions.length === 0) {
     return { sentCount: 0, totalSubscriptions: 0 };
   }
