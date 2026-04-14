@@ -116,6 +116,7 @@ function getStatusLabel(status: string): string {
     case 'full': return 'Completo';
     case 'cancelled': return 'Cancelado';
     case 'completed': return 'Concluído';
+    case 'expired': return 'Expirado';
     default: return status;
   }
 }
@@ -126,6 +127,7 @@ function getStatusColor(status: string): string {
     case 'full': return 'bg-blue-100 text-blue-800';
     case 'cancelled': return 'bg-red-100 text-red-800';
     case 'completed': return 'bg-gray-100 text-gray-800';
+    case 'expired': return 'bg-orange-100 text-orange-800';
     default: return 'bg-gray-100 text-gray-800';
   }
 }
@@ -155,7 +157,7 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
 
   const [games, setGames] = useState<OpenGame[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'open' | 'full' | 'completed' | 'cancelled'>('all');
+  const [filter, setFilter] = useState<'all' | 'open' | 'full' | 'completed' | 'cancelled' | 'expired'>('all');
   const [expandedGame, setExpandedGame] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -707,7 +709,7 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
             <span className="text-sm font-medium text-gray-600">Filtrar:</span>
           </div>
           <div className="flex flex-wrap gap-2">
-            {(['all', 'open', 'full', 'completed', 'cancelled'] as const).map(f => (
+            {(['all', 'open', 'full', 'completed', 'cancelled', 'expired'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -735,6 +737,62 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
           </div>
         </div>
       </div>
+
+      {/* Alert: Incomplete games starting within 3 hours */}
+      {(() => {
+        const now = Date.now();
+        const threeH = 3 * 60 * 60 * 1000;
+        const incompleteGames = games.filter(g => {
+          if (g.status !== 'open') return false;
+          const start = new Date(g.scheduled_at).getTime();
+          const confirmed = g.players.filter(p => p.status === 'confirmed').length;
+          return start > now && start - now <= threeH && confirmed < 3;
+        });
+        if (incompleteGames.length === 0) return null;
+        return (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h4 className="font-semibold text-amber-800 mb-1">Jogos incompletos nas próximas 3 horas</h4>
+                <p className="text-sm text-amber-700 mb-3">
+                  Estes jogos têm menos de 3 jogadores confirmados. Considere cancelar para libertar os campos.
+                </p>
+                <div className="space-y-2">
+                  {incompleteGames.map(g => {
+                    const confirmed = g.players.filter(p => p.status === 'confirmed').length;
+                    return (
+                      <div key={g.id} className="flex items-center justify-between bg-white rounded-lg px-3 py-2 border border-amber-200">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-gray-900">{g.court_name || 'Campo'}</span>
+                          <span className="text-sm text-gray-500">{formatTime(g.scheduled_at)}</span>
+                          <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-medium">
+                            {confirmed}/4 jogadores
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleCancelGame(g.id)}
+                            className="px-3 py-1 text-xs font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => handleDeleteGame(g.id)}
+                            className="px-3 py-1 text-xs font-medium text-red-800 bg-red-100 rounded-lg hover:bg-red-200"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Games List */}
       {filteredGames.length === 0 ? (
