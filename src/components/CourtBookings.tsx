@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -63,6 +63,38 @@ const getActiveSchedule = (courtSlots: CourtSlotsData | null, activeSchedule: st
     };
   }
   return null;
+};
+
+const DEFAULT_TZ = 'Europe/Lisbon';
+
+const toClubHM = (d: Date, tz: string): { h: number; m: number } => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const h = Number(parts.find(p => p.type === 'hour')!.value);
+  const m = Number(parts.find(p => p.type === 'minute')!.value);
+  return { h, m };
+};
+
+const toClubDateStr = (d: Date, tz: string): string => {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: tz }).format(d);
+};
+
+const clubLocalToUTC = (dateStr: string, time: string, tz: string): Date => {
+  const guess = new Date(`${dateStr}T${time}:00Z`);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(guess);
+  const gH = Number(parts.find(p => p.type === 'hour')!.value);
+  const gM = Number(parts.find(p => p.type === 'minute')!.value);
+  const gD = Number(parts.find(p => p.type === 'day')!.value);
+  const [tH, tM] = time.split(':').map(Number);
+  const tD = parseInt(dateStr.substring(8, 10));
+  const rawDayDiff = tD - gD;
+  const dayDiff = rawDayDiff > 1 ? -1 : rawDayDiff < -1 ? 1 : rawDayDiff;
+  const diffMs = ((dayDiff * 1440) + (tH * 60 + tM) - (gH * 60 + gM)) * 60000;
+  return new Date(guess.getTime() + diffMs);
 };
 
 // Helper: time to minutes, treating 00:00 as 1440 for end times
@@ -240,9 +272,10 @@ const normalizePhone = (phone: string): string => {
 };
 
 // Helper functions for Open Games
-function formatDateTime(dateStr: string): string {
+function formatDateTime(dateStr: string, tz: string = DEFAULT_TZ): string {
   const date = new Date(dateStr);
   return date.toLocaleString('pt-PT', {
+    timeZone: tz,
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
@@ -253,9 +286,10 @@ function formatDateTime(dateStr: string): string {
   });
 }
 
-function formatGameTime(dateStr: string): string {
+function formatGameTime(dateStr: string, tz: string = DEFAULT_TZ): string {
   const date = new Date(dateStr);
   return date.toLocaleTimeString('pt-PT', {
+    timeZone: tz,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
@@ -414,6 +448,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
   const [operatingHours, setOperatingHours] = useState({ start: '08:00', end: '22:00' });
   const [clubActiveSchedule, setClubActiveSchedule] = useState<string>('summer');
+  const [clubTimezone, setClubTimezone] = useState<string>(DEFAULT_TZ);
 
   useEffect(() => {
     if (effectiveUserId) {
@@ -421,13 +456,42 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     }
   }, [effectiveUserId, selectedDate]);
 
+  // Realtime: auto-refresh on booking / open-game changes
+  useEffect(() => {
+    if (!effectiveUserId) return;
+    const channel = supabase
+      .channel('court-bookings-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'court_bookings' }, () => { loadData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'open_games' }, () => { loadData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'open_game_players' }, () => { loadData(); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [effectiveUserId, selectedDate]);
+
+  // Auto-refresh when tab regains focus (fallback for missed events)
+  const lastForegroundRefresh = useRef(Date.now());
+  useEffect(() => {
+    const onVisChange = () => {
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastForegroundRefresh.current;
+        if (elapsed > 10_000 && effectiveUserId) {
+          lastForegroundRefresh.current = Date.now();
+          loadData();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisChange);
+    return () => document.removeEventListener('visibilitychange', onVisChange);
+  }, [effectiveUserId, selectedDate]);
+
   const loadData = async () => {
     if (!effectiveUserId) return;
 
-    const startOfDay = new Date(selectedDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(selectedDate);
-    endOfDay.setHours(23, 59, 59, 999);
+    const tz = clubTimezone;
+
+    const dayStr = toClubDateStr(selectedDate, tz);
+    const startOfDay = clubLocalToUTC(dayStr, '00:00', tz);
+    const endOfDay = new Date(clubLocalToUTC(dayStr, '23:59', tz).getTime() + 59999);
 
     const [courtsResult, bookingsResult, settingsResult, clubResult] = await Promise.all([
       supabase
@@ -454,10 +518,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         .maybeSingle(),
       supabase
         .from('clubs')
-        .select('id, active_schedule')
+        .select('id, active_schedule, timezone')
         .eq('owner_id', effectiveUserId)
         .maybeSingle()
     ]);
+
+    // Update timezone from club data if available
+    if (clubResult.data?.timezone) {
+      setClubTimezone(clubResult.data.timezone);
+    }
 
     if (courtsResult.data) {
       setCourts(courtsResult.data);
@@ -848,19 +917,13 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const court = courts.find(c => c.id === newBooking.court_id);
     if (!court) return;
 
-    const [hours, minutes] = newBooking.startTime.split(':').map(Number);
-    const startTime = new Date(newBooking.date);
-    startTime.setHours(hours, minutes, 0, 0);
+    const startTime = clubLocalToUTC(newBooking.date, newBooking.startTime, clubTimezone);
     let endTime: Date;
     if (useEndTime) {
-      const [eh, em] = customEndTime.split(':').map(Number);
-      endTime = new Date(newBooking.date);
-      endTime.setHours(eh, em, 0, 0);
-      if (endTime <= startTime) endTime.setDate(endTime.getDate() + 1);
+      endTime = clubLocalToUTC(newBooking.date, customEndTime, clubTimezone);
+      if (endTime <= startTime) endTime = new Date(endTime.getTime() + 86400000);
     } else {
-      endTime = new Date(startTime);
-      const durationMinutes = newBooking.duration * 60;
-      endTime.setMinutes(startTime.getMinutes() + durationMinutes);
+      endTime = new Date(startTime.getTime() + newBooking.duration * 3600000);
     }
 
     const pricing = getPriceBreakdown();
@@ -1107,8 +1170,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
       // Format date/time
       const gameDate = new Date(game.scheduled_at);
-      const dateStr = gameDate.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' });
-      const timeStr = gameDate.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+      const dateStr = gameDate.toLocaleDateString('pt-PT', { timeZone: clubTimezone, day: '2-digit', month: '2-digit' });
+      const timeStr = gameDate.toLocaleTimeString('pt-PT', { timeZone: clubTimezone, hour: '2-digit', minute: '2-digit' });
 
       // Get all players in the game
       const { data: gamePlayers } = await supabase
@@ -1454,8 +1517,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         setSelectedTournament({
           id: tournamentId,
           name: matchingBooking.booked_by_name || 'Torneio',
-          start_date: new Date(matchingBooking.start_time).toISOString().split('T')[0],
-          end_date: new Date(matchingBooking.end_time).toISOString().split('T')[0],
+          start_date: toClubDateStr(new Date(matchingBooking.start_time), clubTimezone),
+          end_date: toClubDateStr(new Date(matchingBooking.end_time), clubTimezone),
           status: 'active',
           format: '',
           registration_fee: 0,
@@ -1857,8 +1920,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const startDate = new Date(booking.start_time);
     const endDate = new Date(booking.end_time);
     const duration = (endDate.getTime() - startDate.getTime()) / 3600000;
-    const startTimeStr = `${startDate.getHours().toString().padStart(2, '0')}:${startDate.getMinutes().toString().padStart(2, '0')}`;
-    const endTimeStr = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`;
+    const startHM = toClubHM(startDate, clubTimezone);
+    const endHM = toClubHM(endDate, clubTimezone);
+    const startTimeStr = `${startHM.h.toString().padStart(2, '0')}:${startHM.m.toString().padStart(2, '0')}`;
+    const endTimeStr = `${endHM.h.toString().padStart(2, '0')}:${endHM.m.toString().padStart(2, '0')}`;
 
     const durationMin = Math.round(duration * 60);
     const isStandardDuration = [60, 90, 120].includes(durationMin);
@@ -1868,7 +1933,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     setEditingBooking(booking);
     setNewBooking({
       court_id: booking.court_id,
-      date: startDate.toISOString().split('T')[0],
+      date: toClubDateStr(startDate, clubTimezone),
       startTime: startTimeStr,
       duration: isStandardDuration ? duration : 1.5,
       notes: booking.notes || '',
@@ -2000,16 +2065,14 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const isBooked = isSlotBooked(courtId, time);
     if (isBooked && draggingBooking.court_id !== courtId) return;
 
-    const [hours, minutes] = time.split(':').map(Number);
-    const startTime = new Date(selectedDate);
-    startTime.setHours(hours, minutes, 0, 0);
+    const dateStr = toClubDateStr(selectedDate, clubTimezone);
+    const startTime = clubLocalToUTC(dateStr, time, clubTimezone);
 
     const oldStart = new Date(draggingBooking.start_time);
     const oldEnd = new Date(draggingBooking.end_time);
-    const duration = (oldEnd.getTime() - oldStart.getTime()) / 60000;
+    const duration = oldEnd.getTime() - oldStart.getTime();
 
-    const endTime = new Date(startTime);
-    endTime.setMinutes(startTime.getMinutes() + duration);
+    const endTime = new Date(startTime.getTime() + duration);
 
     const { error } = await supabase
       .from('court_bookings')
@@ -2105,7 +2168,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
     if (!isBooked) {
       setSelectedSlot({ courtId, hour: 0 });
-      const dateStr = selectedDate.toISOString().split('T')[0];
+      const dateStr = toClubDateStr(selectedDate, clubTimezone);
       setNewBooking({
         ...newBooking,
         court_id: courtId,
@@ -2123,7 +2186,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
   };
 
   const formatDate = (date: Date) => {
-    return date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    return date.toLocaleDateString('pt-PT', { timeZone: clubTimezone, weekday: 'long', day: 'numeric', month: 'long' });
   };
 
   const generateCalendarSlots = () =>
@@ -2141,8 +2204,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     return bookings.find(b => {
       if (b.court_id !== courtId) return false;
 
-      const bookingStart = new Date(b.start_time);
-      const startMinutes = bookingStart.getHours() * 60 + bookingStart.getMinutes();
+      const { h, m } = toClubHM(new Date(b.start_time), clubTimezone);
+      const startMinutes = h * 60 + m;
 
       return startMinutes >= slotMinutes && startMinutes < slotMinutes + 30;
     }) || null;
@@ -2153,10 +2216,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     const slotMinutes = slotH * 60 + slotM;
 
     return bookings.some(b => {
-      const bookingStart = new Date(b.start_time);
-      const bookingEnd = new Date(b.end_time);
-      const startMinutes = bookingStart.getHours() * 60 + bookingStart.getMinutes();
-      const endMinutes = bookingEnd.getHours() * 60 + bookingEnd.getMinutes();
+      const startHM = toClubHM(new Date(b.start_time), clubTimezone);
+      const endHM = toClubHM(new Date(b.end_time), clubTimezone);
+      const startMinutes = startHM.h * 60 + startHM.m;
+      const endMinutes = endHM.h * 60 + endHM.m;
       return b.court_id === courtId && slotMinutes >= startMinutes && slotMinutes < endMinutes;
     });
   };
@@ -2200,7 +2263,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               resetBookingForm();
               setNewBooking({
                 ...newBooking,
-                date: selectedDate.toISOString().split('T')[0]
+                date: toClubDateStr(selectedDate, clubTimezone)
               });
               setShowNewBooking(true);
             }}
@@ -2233,7 +2296,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               <div className="flex items-center gap-2">
                 <input
                   type="date"
-                  value={selectedDate.toISOString().split('T')[0]}
+                  value={toClubDateStr(selectedDate, clubTimezone)}
                   onChange={(e) => {
                     if (e.target.value) {
                       const [y, m, d] = e.target.value.split('-').map(Number);
@@ -2262,12 +2325,12 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           <div className="overflow-x-auto">
             <div className="min-w-[600px]">
               {/* Court Headers */}
-              <div className="grid" style={{ gridTemplateColumns: `80px repeat(${courts.length}, 1fr)` }}>
+              <div className="grid" style={{ gridTemplateColumns: `80px repeat(${courts.length}, minmax(0, 1fr))` }}>
                 <div className="p-3 bg-gray-50 border-b border-r border-gray-100"></div>
                 {courts.map(court => (
-                  <div key={court.id} className="p-3 bg-gray-50 border-b border-r border-gray-100 text-center">
-                    <div className="font-medium text-gray-900">{court.name}</div>
-                    <div className="text-xs text-gray-500 capitalize">{t.courts[court.type as keyof typeof t.courts] || court.type}</div>
+                  <div key={court.id} className="p-3 bg-gray-50 border-b border-r border-gray-100 text-center overflow-hidden">
+                    <div className="font-medium text-gray-900 truncate">{court.name}</div>
+                    <div className="text-xs text-gray-500 capitalize truncate">{t.courts[court.type as keyof typeof t.courts] || court.type}</div>
                   </div>
                 ))}
               </div>
@@ -2276,7 +2339,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               <div
                 className="grid"
                 style={{
-                  gridTemplateColumns: `80px repeat(${courts.length}, 1fr)`,
+                  gridTemplateColumns: `80px repeat(${courts.length}, minmax(0, 1fr))`,
                   gridTemplateRows: `repeat(${calendarSlots.length}, minmax(60px, auto))`
                 }}
               >
@@ -2302,7 +2365,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                         return (
                           <div
                             key={`${court.id}-${slot.time}`}
-                            className="border-b border-r border-gray-100 p-1"
+                            className="border-b border-r border-gray-100 p-1 overflow-hidden"
                             style={{
                               gridRow: `${slotIndex + 1} / span ${durationSlots}`,
                               gridColumn: courtIndex + 2
@@ -2313,7 +2376,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                               onDragStart={() => handleDragStart(booking)}
                               onDragEnd={() => setDraggingBooking(null)}
                               onClick={() => handleEditBooking(booking)}
-                              className={`h-full w-full rounded-lg p-2 text-xs text-left transition group cursor-move ${
+                              className={`h-full w-full rounded-lg p-2 text-xs text-left transition group cursor-move overflow-hidden ${
                                 isDragging ? `opacity-50 ${colors.bgDragging}` : `${colors.bg} ${colors.bgHover}`
                               }`}
                             >
@@ -2553,9 +2616,9 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       </div>
                       <div className="text-sm text-gray-500 flex items-center gap-2">
                         <Clock className="w-3 h-3" />
-                        {new Date(booking.start_time).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                        {new Date(booking.start_time).toLocaleTimeString('pt-PT', { timeZone: clubTimezone, hour: '2-digit', minute: '2-digit', hour12: false })}
                         {' - '}
-                        {new Date(booking.end_time).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                        {new Date(booking.end_time).toLocaleTimeString('pt-PT', { timeZone: clubTimezone, hour: '2-digit', minute: '2-digit', hour12: false })}
                       </div>
                       {booking.booked_by_name && booking.event_type === 'match' && (
                         <div className="text-sm text-gray-500 flex items-center gap-1">
