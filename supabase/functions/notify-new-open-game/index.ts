@@ -18,6 +18,7 @@ interface RequestBody {
   levelMax: number;
   gender: "all" | "male" | "female" | "mixed";
   scheduledAt: string;
+  clubId: string;
   clubName: string;
   gameType: "competitive" | "friendly";
 }
@@ -51,6 +52,7 @@ Deno.serve(async (req: Request) => {
       levelMax,
       gender,
       scheduledAt,
+      clubId,
       clubName,
       gameType,
     } = body;
@@ -62,10 +64,21 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 1. Find matching player_accounts by level
+    // 1. Find player_account_ids that play at this club (via player_clubs table)
+    let clubPlayerIds: Set<string> | null = null;
+    if (clubId) {
+      const { data: clubPlayers } = await admin
+        .from("player_clubs")
+        .select("player_account_id")
+        .eq("club_id", clubId);
+      clubPlayerIds = new Set((clubPlayers || []).map((r: any) => r.player_account_id));
+      console.log(`[notify-new-open-game] Found ${clubPlayerIds.size} players at club ${clubId}`);
+    }
+
+    // 2. Find matching player_accounts by level
     const { data: candidates, error: queryErr } = await admin
       .from("player_accounts")
-      .select("id, user_id, name, gender, level, player_category")
+      .select("id, user_id, name, gender, level, player_category, preferred_time")
       .not("user_id", "is", null)
       .gte("level", levelMin)
       .lte("level", levelMax);
@@ -83,22 +96,35 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 2. Filter by gender
-    const genderFiltered = candidates.filter((p) => {
-      if (gender === "all" || gender === "mixed") return true;
+    // 3. Filter by club membership (player_clubs)
+    const clubFiltered = clubPlayerIds
+      ? candidates.filter((p) => clubPlayerIds!.has(p.id))
+      : candidates;
 
+    // 4. Filter by gender
+    const genderFiltered = clubFiltered.filter((p) => {
+      if (gender === "all" || gender === "mixed") return true;
       const playerGender =
         p.gender ||
         (p.player_category?.startsWith("M") ? "male" : null) ||
         (p.player_category?.startsWith("F") ? "female" : null);
-
       if (gender === "male") return playerGender === "male";
       if (gender === "female") return playerGender === "female";
       return true;
     });
 
-    // 3. Exclude creator (by user_id AND player_account_id)
-    const filtered = genderFiltered.filter(
+    // 5. Filter by preferred_time (if player has a preference set)
+    const gameHour = new Date(scheduledAt).getUTCHours();
+    const timeFiltered = genderFiltered.filter((p) => {
+      if (!p.preferred_time || p.preferred_time === "all_day") return true;
+      if (p.preferred_time === "morning" && gameHour >= 6 && gameHour < 13) return true;
+      if (p.preferred_time === "afternoon" && gameHour >= 13 && gameHour < 19) return true;
+      if (p.preferred_time === "evening" && gameHour >= 19) return true;
+      return false;
+    });
+
+    // 6. Exclude creator
+    const filtered = timeFiltered.filter(
       (p) => p.user_id !== creatorUserId && p.id !== creatorPlayerAccountId,
     );
 
@@ -110,7 +136,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 4. Format notification
+    // 7. Format notification
     const gameDate = new Date(scheduledAt);
     const timeStr = `${gameDate.getHours().toString().padStart(2, "0")}:${gameDate.getMinutes().toString().padStart(2, "0")}`;
     const dateStr = `${gameDate.getDate().toString().padStart(2, "0")}/${(gameDate.getMonth() + 1).toString().padStart(2, "0")}`;
@@ -125,7 +151,7 @@ Deno.serve(async (req: Request) => {
       tag: `new-game-${gameId}`,
     };
 
-    // 5. Send to all matching players (cap at 100)
+    // 8. Send to all matching players (cap at 100)
     const targets = filtered.slice(0, 100);
     console.log(`[notify-new-open-game] Sending to ${targets.length} players`);
 
