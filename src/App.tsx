@@ -173,18 +173,29 @@ function App() {
       .maybeSingle();
 
     if (staffData && staffData.club_owner_id !== user.id) {
+      const permBar = staffData.perm_bar || staffData.role === 'admin' || staffData.role === 'kitchen' || staffData.role === 'bar_staff';
+      const permBookings = staffData.perm_bookings || staffData.role === 'admin';
+      const permMembers = staffData.perm_members || staffData.role === 'admin';
+      const permAcademy = staffData.perm_academy || staffData.role === 'admin';
+      const permReports = staffData.perm_reports || staffData.role === 'admin';
+
       setStaffPermissions({
         isStaff: true,
         isOwner: false,
         clubOwnerId: staffData.club_owner_id,
         staffName: staffData.name,
-        perm_bookings: staffData.perm_bookings || staffData.role === 'admin',
-        perm_members: staffData.perm_members || staffData.role === 'admin',
-        perm_bar: staffData.perm_bar || staffData.role === 'admin',
-        perm_academy: staffData.perm_academy || staffData.role === 'admin',
-        perm_reports: staffData.perm_reports || staffData.role === 'admin',
+        perm_bookings: permBookings,
+        perm_members: permMembers,
+        perm_bar: permBar,
+        perm_academy: permAcademy,
+        perm_reports: permReports,
         role: staffData.role
       });
+
+      // If staff only has bar access, go straight to bar view
+      if (permBar && !permBookings && !permMembers && !permAcademy && !permReports) {
+        setView('bar');
+      }
     } else {
       setStaffPermissions({
         isStaff: false,
@@ -263,6 +274,14 @@ function App() {
     return <AuthForm hqEntry={showSuperAdmin} />;
   }
 
+  // Staff with only bar access doesn't need the dashboard
+  const staffBarOnly = staffPermissions.isStaff &&
+    staffPermissions.perm_bar &&
+    !staffPermissions.perm_bookings &&
+    !staffPermissions.perm_members &&
+    !staffPermissions.perm_academy &&
+    !staffPermissions.perm_reports;
+
   const allNavItems = [
     { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always' },
     { id: 'bookings' as View, label: t.nav.bookings, icon: BookingsIcon, permission: 'perm_bookings' },
@@ -276,7 +295,7 @@ function App() {
   ];
 
   const navItems = allNavItems.filter(item => {
-    if (item.permission === 'always') return true;
+    if (item.permission === 'always') return !staffBarOnly;
     if (item.permission === 'owner_only') return staffPermissions.isOwner;
     return staffPermissions[item.permission as keyof StaffPermissions];
   });
@@ -315,17 +334,19 @@ function App() {
         </nav>
 
         <div className="px-4 py-4 border-t border-gray-200 space-y-2">
-          <button
-            onClick={() => setView('settings')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
-              view === 'settings'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
-            {t.nav.settings}
-          </button>
+          {staffPermissions.isOwner && (
+            <button
+              onClick={() => setView('settings')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                view === 'settings'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
+              {t.nav.settings}
+            </button>
+          )}
 
           <div className="px-4 py-2">
             <LanguageSelector />
@@ -396,20 +417,22 @@ function App() {
                 );
               })}
               <hr className="my-2" />
-              <button
-                onClick={() => {
-                  setView('settings');
-                  setShowMobileMenu(false);
-                }}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
-                  view === 'settings'
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
-                {t.nav.settings}
-              </button>
+              {staffPermissions.isOwner && (
+                <button
+                  onClick={() => {
+                    setView('settings');
+                    setShowMobileMenu(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                    view === 'settings'
+                      ? 'bg-blue-50 text-blue-700'
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <SettingsEmojiIcon className={`w-5 h-5 ${view === 'settings' ? 'text-blue-600' : 'text-gray-500'}`} />
+                  {t.nav.settings}
+                </button>
+              )}
               <div className="px-4 py-2">
                 <LanguageSelector />
               </div>

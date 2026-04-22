@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -176,24 +176,128 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     }
   }, [effectiveUserId]);
 
+  // ---- Audio notification for new orders ----
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioUnlockedRef = useRef(false);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+
+  const ensureAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    return audioCtxRef.current;
+  }, []);
+
+  const activateSound = useCallback(async () => {
+    try {
+      const ctx = ensureAudioCtx();
+      if (ctx.state === 'suspended') await ctx.resume();
+      // Play a real (short) tone so the user confirms they hear it
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 660;
+      gain.gain.setValueAtTime(0.4, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+      audioUnlockedRef.current = true;
+      setSoundEnabled(true);
+    } catch { /* ignore */ }
+
+    // Also request Notification permission (for background tab alerts)
+    try {
+      if ('Notification' in window && Notification.permission === 'default') {
+        await Notification.requestPermission();
+      }
+    } catch { /* ignore */ }
+  }, [ensureAudioCtx]);
+
+  const playOrderBeep = useCallback(() => {
+    try {
+      const ctx = ensureAudioCtx();
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const tones = [
+        { freq: 880, start: 0, end: 0.15 },
+        { freq: 1100, start: 0.18, end: 0.33 },
+        { freq: 1320, start: 0.36, end: 0.55 },
+      ];
+      for (const tone of tones) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = tone.freq;
+        gain.gain.setValueAtTime(0.7, ctx.currentTime + tone.start);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + tone.end);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(ctx.currentTime + tone.start);
+        osc.stop(ctx.currentTime + tone.end);
+      }
+
+      // Repeat after 2s
+      setTimeout(() => {
+        try {
+          const ctx2 = audioCtxRef.current;
+          if (!ctx2) return;
+          for (const tone of tones) {
+            const osc = ctx2.createOscillator();
+            const gain = ctx2.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = tone.freq;
+            gain.gain.setValueAtTime(0.7, ctx2.currentTime + tone.start);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx2.currentTime + tone.end);
+            osc.connect(gain).connect(ctx2.destination);
+            osc.start(ctx2.currentTime + tone.start);
+            osc.stop(ctx2.currentTime + tone.end);
+          }
+        } catch { /* ignore */ }
+      }, 2000);
+
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+
+      // Also fire a browser Notification if permission granted (works in background)
+      try {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('Novo Pedido!', { body: 'Chegou um novo pedido na cozinha', icon: '/favicon.ico', tag: 'new-order', requireInteraction: true });
+        }
+      } catch { /* ignore */ }
+    } catch {
+      // Audio API unavailable — silent fallback
+    }
+  }, [ensureAudioCtx]);
+
   // Real-time subscription for new/updated orders (QR + manual)
   useEffect(() => {
     if (!clubId && !effectiveUserId) return;
-
-    const channelFilter = clubId
-      ? `club_id=eq.${clubId}`
-      : `club_owner_id=eq.${effectiveUserId}`;
 
     const channel = supabase
       .channel('bar-orders-realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'club_orders', filter: channelFilter },
-        async (payload) => {
-          console.log('[Bar] Realtime order event:', payload.eventType, payload.new);
-          // Reload all orders on any change
-          await reloadOrders();
+        { event: 'INSERT', schema: 'public', table: 'club_orders' },
+        async (payload: any) => {
+          const row = payload.new;
+          if (row?.club_id === clubId || row?.club_owner_id === effectiveUserId) {
+            console.log('[Bar] New order received:', row.id);
+            playOrderBeep();
+            await reloadOrders();
+          }
         }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'club_orders' },
+        async (payload: any) => {
+          const row = payload.new;
+          if (row?.club_id === clubId || row?.club_owner_id === effectiveUserId) {
+            await reloadOrders();
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'club_orders' },
+        async () => { await reloadOrders(); }
       )
       .subscribe();
 
@@ -1181,6 +1285,22 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
   return (
     <div className="p-6 lg:p-8 space-y-6">
+      {/* Sound activation banner — must be tapped once to unlock audio on tablets */}
+      {!soundEnabled && (
+        <button
+          onClick={activateSound}
+          className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-xl shadow-lg text-lg font-bold transition-all animate-pulse"
+        >
+          <span className="text-2xl">🔔</span>
+          Toque aqui para ativar alertas sonoros
+        </button>
+      )}
+      {soundEnabled && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+          <span>🔊</span> Alertas sonoros ativos — será notificado a cada novo pedido
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900">{t.bar.title}</h1>
         <div className="flex items-center gap-3">
