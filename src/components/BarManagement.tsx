@@ -32,6 +32,54 @@ import {
 import BarMetricsDashboard from './BarMetricsDashboard';
 import { compressImage } from '../lib/imageCompressor';
 
+/** PostgREST quando a coluna ainda não existe na base (migração não aplicada). */
+function isPostgrestMissingColumnError(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  if (err.code === 'PGRST204') return true;
+  const m = (err.message || '').toLowerCase();
+  return m.includes('column') && (m.includes('schema') || m.includes('could not find'));
+}
+
+type ItemFormState = {
+  category_id: string;
+  name: string;
+  description: string;
+  price: number;
+  is_available: boolean;
+  is_food: boolean;
+  image_url: string;
+  is_highlighted: boolean;
+  kitchen_slot1_start: string;
+  kitchen_slot1_end: string;
+  kitchen_slot2_start: string;
+  kitchen_slot2_end: string;
+};
+
+/** Cozinha: cada slot precisa início e fim; se estiver incompleto, o slot fica vazio. */
+function buildKitchenScheduleFromForm(itemForm: ItemFormState): {
+  kitchen_slot1_start: string | null;
+  kitchen_slot1_end: string | null;
+  kitchen_slot2_start: string | null;
+  kitchen_slot2_end: string | null;
+} {
+  if (!itemForm.is_food) {
+    return { kitchen_slot1_start: null, kitchen_slot1_end: null, kitchen_slot2_start: null, kitchen_slot2_end: null };
+  }
+  const t = (s: string) => s.trim();
+  const s1s = t(itemForm.kitchen_slot1_start);
+  const s1e = t(itemForm.kitchen_slot1_end);
+  const s2s = t(itemForm.kitchen_slot2_start);
+  const s2e = t(itemForm.kitchen_slot2_end);
+  const slot1 = s1s && s1e ? { start: s1s, end: s1e } : null;
+  const slot2 = s2s && s2e ? { start: s2s, end: s2e } : null;
+  return {
+    kitchen_slot1_start: slot1 ? slot1.start : null,
+    kitchen_slot1_end: slot1 ? slot1.end : null,
+    kitchen_slot2_start: slot2 ? slot2.start : null,
+    kitchen_slot2_end: slot2 ? slot2.end : null,
+  };
+}
+
 interface MenuCategory {
   id: string;
   name: string;
@@ -146,11 +194,9 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
   const isKitchenRole = staffRole === 'kitchen';
-  /** Quando a conta é "cozinha" e não está em "ver tudo": só pedidos com comida, só alertas de comida. */
-  const [kitchenViewAllOrders, setKitchenViewAllOrders] = useState(false);
-  const isKitchenSoloView = isKitchenRole && !kitchenViewAllOrders;
-  /** Bar, dono, bar_staff, ou cozinha em "ver tudo" — interface e pedidos completos. */
-  const showFullBarUi = !isKitchenRole || kitchenViewAllOrders;
+  const [kitchenViewFilter, setKitchenViewFilter] = useState<'all' | 'kitchen_only'>(isKitchenRole ? 'kitchen_only' : 'all');
+  const isKitchenSoloView = kitchenViewFilter === 'kitchen_only';
+  const showFullBarUi = kitchenViewFilter === 'all';
   const kitchenBeepedOrderIdsRef = useRef<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'tabs' | 'orders' | 'menu' | 'qr-orders' | 'qr-codes' | 'analytics'>('tabs');
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -211,7 +257,6 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     if (isKitchenRole) setActiveTab('orders');
   }, [isKitchenRole]);
 
-  // Cozinha em modo "só comida" só mostra o separador Pedidos — força vista correcta
   useEffect(() => {
     if (isKitchenSoloView && activeTab !== 'orders') {
       setActiveTab('orders');
@@ -1112,8 +1157,6 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
 
   const canMarkItemReady = (item: QrOrderItem): boolean => {
     if (isKitchenSoloView) return item.is_food;
-    if (isKitchenRole && kitchenViewAllOrders) return true;
-    if (isKitchenRole) return item.is_food;
     if (staffRole === 'bar_staff') return !item.is_food;
     return true;
   };
@@ -1169,48 +1212,59 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
 
     setSaving(true);
 
-    const scheduleFields = itemForm.is_food ? {
-      kitchen_slot1_start: itemForm.kitchen_slot1_start || null,
-      kitchen_slot1_end: itemForm.kitchen_slot1_end || null,
-      kitchen_slot2_start: itemForm.kitchen_slot2_start || null,
-      kitchen_slot2_end: itemForm.kitchen_slot2_end || null,
-    } : {
-      kitchen_slot1_start: null,
-      kitchen_slot1_end: null,
-      kitchen_slot2_start: null,
-      kitchen_slot2_end: null,
+    const scheduleFields = buildKitchenScheduleFromForm(itemForm);
+    const baseItemFields = {
+      category_id: itemForm.category_id,
+      name: itemForm.name,
+      description: itemForm.description || null,
+      price: itemForm.price,
+      is_available: itemForm.is_available,
+      is_food: itemForm.is_food,
+      image_url: itemForm.image_url.trim() || null,
+      is_highlighted: itemForm.is_highlighted,
     };
 
+    let lastError: { code?: string; message?: string } | null = null;
+
     if (editingItem) {
-      await supabase
-        .from('menu_items')
-        .update({
-          category_id: itemForm.category_id,
-          name: itemForm.name,
-          description: itemForm.description || null,
-          price: itemForm.price,
-          is_available: itemForm.is_available,
-          is_food: itemForm.is_food,
-          image_url: itemForm.image_url.trim() || null,
-          is_highlighted: itemForm.is_highlighted,
-          ...scheduleFields,
-        })
-        .eq('id', editingItem.id);
+      const full = { ...baseItemFields, ...scheduleFields };
+      let { error } = await supabase.from('menu_items').update(full).eq('id', editingItem.id);
+      if (error && isPostgrestMissingColumnError(error)) {
+        ({ error } = await supabase.from('menu_items').update(baseItemFields).eq('id', editingItem.id));
+        if (!error) {
+          alert('Menu guardado. Aplique a migração "kitchen_slot" no Supabase para os horários da cozinha fazerem efeito.');
+        }
+      }
+      lastError = error;
     } else {
       const catItems = menuItems.filter(i => i.category_id === itemForm.category_id);
-      await supabase.from('menu_items').insert({
+      const fullInsert = {
         club_owner_id: effectiveUserId,
-        category_id: itemForm.category_id,
-        name: itemForm.name,
-        description: itemForm.description || null,
-        price: itemForm.price,
-        is_available: itemForm.is_available,
-        is_food: itemForm.is_food,
-        image_url: itemForm.image_url.trim() || null,
-        is_highlighted: itemForm.is_highlighted,
+        ...baseItemFields,
         sort_order: catItems.length,
         ...scheduleFields,
-      });
+      };
+      let { error } = await supabase.from('menu_items').insert(fullInsert);
+      if (error && isPostgrestMissingColumnError(error)) {
+        const { error: e2 } = await supabase.from('menu_items').insert({
+          club_owner_id: effectiveUserId,
+          ...baseItemFields,
+          sort_order: catItems.length,
+        });
+        if (!e2) {
+          alert('Menu guardado. Aplique a migração "kitchen_slot" no Supabase para os horários da cozinha fazerem efeito.');
+        }
+        lastError = e2;
+      } else {
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      console.error('menu_items save:', lastError);
+      alert(`Não foi possível guardar: ${lastError.message || 'Erro desconhecido'}`);
+      setSaving(false);
+      return;
     }
 
     setShowItemForm(false);
@@ -1444,36 +1498,34 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
               Modo cozinha: vê e ouve apenas pedidos com artigos de comida (itens com &quot;Cozinha&quot; no menu)
             </p>
           )}
-          {isKitchenRole && kitchenViewAllOrders && (
+          {!isKitchenSoloView && kitchenViewFilter === 'all' && isKitchenRole && (
             <p className="text-sm text-blue-800 mt-1 font-medium">
               A ver todos os pedidos (bebidas e comida) — no mesmo posto, como no balcão
             </p>
           )}
-          {isKitchenRole && (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs text-gray-500">Vista do ecrã:</span>
-              <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
-                <button
-                  type="button"
-                  onClick={() => setKitchenViewAllOrders(false)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-                    !kitchenViewAllOrders ? 'bg-white shadow text-orange-800' : 'text-gray-500 hover:text-gray-800'
-                  }`}
-                >
-                  Só cozinha
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setKitchenViewAllOrders(true)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-                    kitchenViewAllOrders ? 'bg-white shadow text-blue-800' : 'text-gray-500 hover:text-gray-800'
-                  }`}
-                >
-                  Bar (todos os pedidos)
-                </button>
-              </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-500">Vista:</span>
+            <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+              <button
+                type="button"
+                onClick={() => setKitchenViewFilter('all')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                  kitchenViewFilter === 'all' ? 'bg-white shadow text-blue-800' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Bar (todos)
+              </button>
+              <button
+                type="button"
+                onClick={() => setKitchenViewFilter('kitchen_only')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                  kitchenViewFilter === 'kitchen_only' ? 'bg-white shadow text-orange-800' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                Só cozinha
+              </button>
             </div>
-          )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex bg-gray-100 rounded-lg p-1 flex-wrap">
