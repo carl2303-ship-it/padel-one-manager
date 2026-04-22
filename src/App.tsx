@@ -467,7 +467,13 @@ function App() {
           {view === 'bookings' && staffPermissions.perm_bookings && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'members' && staffPermissions.perm_members && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'academy' && staffPermissions.perm_academy && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'bar' && staffPermissions.perm_bar && <BarManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'bar' && staffPermissions.perm_bar && (
+            <BarManagement
+              key={refreshKey}
+              staffClubOwnerId={staffPermissions.clubOwnerId}
+              staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
+            />
+          )}
           {view === 'metrics' && staffPermissions.perm_reports && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'open-games' && staffPermissions.perm_bookings && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'rewards' && staffPermissions.perm_bookings && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}

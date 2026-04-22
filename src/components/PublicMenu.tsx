@@ -37,6 +37,10 @@ interface MenuItem {
   is_food: boolean;
   is_highlighted?: boolean;
   sort_order?: number;
+  kitchen_slot1_start?: string | null;
+  kitchen_slot1_end?: string | null;
+  kitchen_slot2_start?: string | null;
+  kitchen_slot2_end?: string | null;
 }
 
 interface CartItem {
@@ -58,6 +62,22 @@ interface PublicMenuProps {
   clubId: string;
   tableNumber: string | null;
 }
+
+const isItemInKitchenSchedule = (item: MenuItem): boolean => {
+  if (!item.is_food) return true;
+  if (!item.kitchen_slot1_start || !item.kitchen_slot1_end) return true;
+
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const inSlot = (start: string, end: string) => hhmm >= start.slice(0, 5) && hhmm <= end.slice(0, 5);
+
+  if (inSlot(item.kitchen_slot1_start, item.kitchen_slot1_end)) return true;
+  if (item.kitchen_slot2_start && item.kitchen_slot2_end) {
+    if (inSlot(item.kitchen_slot2_start, item.kitchen_slot2_end)) return true;
+  }
+  return false;
+};
 
 export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   const [club, setClub] = useState<Club | null>(null);
@@ -529,14 +549,16 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
     );
   }
 
+  const availableItems = menuItems.filter(isItemInKitchenSchedule);
+
   const filteredItems = selectedCategory
-    ? menuItems.filter(i => i.category_id === selectedCategory)
-    : menuItems;
+    ? availableItems.filter(i => i.category_id === selectedCategory)
+    : availableItems;
 
   const selectedCategoryName = categories.find(c => c.id === selectedCategory)?.name || '';
 
-  const getCategoryItemCount = (catId: string) => menuItems.filter(i => i.category_id === catId).length;
-  const getCategoryHighlights = (catId: string) => menuItems.filter(i => i.category_id === catId && i.is_highlighted);
+  const getCategoryItemCount = (catId: string) => availableItems.filter(i => i.category_id === catId).length;
+  const getCategoryHighlights = (catId: string) => availableItems.filter(i => i.category_id === catId && i.is_highlighted);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -701,6 +723,15 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
                             </h3>
                             {item.description && (
                               <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{item.description}</p>
+                            )}
+                            {item.is_food && item.kitchen_slot1_start && item.kitchen_slot1_end && (
+                              <p className="text-[10px] text-blue-600 mt-1 flex items-center gap-0.5">
+                                <Clock className="w-3 h-3" />
+                                {item.kitchen_slot1_start.slice(0, 5)}–{item.kitchen_slot1_end.slice(0, 5)}
+                                {item.kitchen_slot2_start && item.kitchen_slot2_end && (
+                                  <> · {item.kitchen_slot2_start.slice(0, 5)}–{item.kitchen_slot2_end.slice(0, 5)}</>
+                                )}
+                              </p>
                             )}
                           </div>
                           <span className="font-bold text-emerald-700 text-lg whitespace-nowrap">

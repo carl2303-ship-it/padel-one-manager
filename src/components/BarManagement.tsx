@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -50,6 +50,10 @@ interface MenuItem {
   image_url: string | null;
   is_highlighted: boolean;
   sort_order: number;
+  kitchen_slot1_start: string | null;
+  kitchen_slot1_end: string | null;
+  kitchen_slot2_start: string | null;
+  kitchen_slot2_end: string | null;
 }
 
 // Orders are now unified in club_orders (QrOrder interface used for all)
@@ -120,12 +124,34 @@ interface QrOrderItem {
 
 interface BarManagementProps {
   staffClubOwnerId?: string | null;
+  /** 'kitchen' = filtro e alertas só de comida por omissão; o utilizador pode ativar "Bar (todos)" no ecrã. */
+  staffRole?: string | null;
 }
 
-export default function BarManagement({ staffClubOwnerId }: BarManagementProps) {
+const orderHasFoodItems = (order: QrOrder): boolean =>
+  (order.items ?? []).some((i) => i.is_food);
+
+const itemIsReady = (i: QrOrderItem) => i.status === 'ready';
+
+const orderItemsProgress = (order: QrOrder) => {
+  const list = order.items || [];
+  const nTotal = list.length;
+  if (nTotal === 0) return { nReady: 0, nTotal: 0 };
+  const nReady = list.filter(itemIsReady).length;
+  return { nReady, nTotal };
+};
+
+export default function BarManagement({ staffClubOwnerId, staffRole }: BarManagementProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
+  const isKitchenRole = staffRole === 'kitchen';
+  /** Quando a conta é "cozinha" e não está em "ver tudo": só pedidos com comida, só alertas de comida. */
+  const [kitchenViewAllOrders, setKitchenViewAllOrders] = useState(false);
+  const isKitchenSoloView = isKitchenRole && !kitchenViewAllOrders;
+  /** Bar, dono, bar_staff, ou cozinha em "ver tudo" — interface e pedidos completos. */
+  const showFullBarUi = !isKitchenRole || kitchenViewAllOrders;
+  const kitchenBeepedOrderIdsRef = useRef<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<'tabs' | 'orders' | 'menu' | 'qr-orders' | 'qr-codes' | 'analytics'>('tabs');
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -166,7 +192,11 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     is_available: true,
     is_food: false,
     image_url: '',
-    is_highlighted: false
+    is_highlighted: false,
+    kitchen_slot1_start: '',
+    kitchen_slot1_end: '',
+    kitchen_slot2_start: '',
+    kitchen_slot2_end: '',
   });
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -175,6 +205,18 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       loadData();
     }
   }, [effectiveUserId]);
+
+  // Cozinha: abre directamente no separador de pedidos (QR)
+  useEffect(() => {
+    if (isKitchenRole) setActiveTab('orders');
+  }, [isKitchenRole]);
+
+  // Cozinha em modo "só comida" só mostra o separador Pedidos — força vista correcta
+  useEffect(() => {
+    if (isKitchenSoloView && activeTab !== 'orders') {
+      setActiveTab('orders');
+    }
+  }, [isKitchenSoloView, activeTab]);
 
   // ---- Audio notification for new orders ----
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -212,7 +254,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     } catch { /* ignore */ }
   }, [ensureAudioCtx]);
 
-  const playOrderBeep = useCallback(() => {
+  const playOrderBeep = useCallback((context: 'kitchen' | 'bar' = 'bar') => {
     try {
       const ctx = ensureAudioCtx();
       if (ctx.state === 'suspended') ctx.resume();
@@ -255,10 +297,17 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
 
-      // Also fire a browser Notification if permission granted (works in background)
       try {
         if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('Novo Pedido!', { body: 'Chegou um novo pedido na cozinha', icon: '/favicon.ico', tag: 'new-order', requireInteraction: true });
+          const isKitchen = context === 'kitchen';
+          new Notification(isKitchen ? 'Cozinha — novo pedido' : 'Bar — novo pedido', {
+            body: isKitchen
+              ? 'Há artigos de cozinha num novo pedido'
+              : 'Chegou um novo pedido',
+            icon: '/favicon.ico',
+            tag: 'new-order',
+            requireInteraction: true
+          });
         }
       } catch { /* ignore */ }
     } catch {
@@ -266,66 +315,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     }
   }, [ensureAudioCtx]);
 
-  // Real-time subscription for new/updated orders (QR + manual)
-  useEffect(() => {
-    if (!clubId && !effectiveUserId) return;
-
-    const channel = supabase
-      .channel('bar-orders-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'club_orders' },
-        async (payload: any) => {
-          const row = payload.new;
-          if (row?.club_id === clubId || row?.club_owner_id === effectiveUserId) {
-            console.log('[Bar] New order received:', row.id);
-            playOrderBeep();
-            await reloadOrders();
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'club_orders' },
-        async (payload: any) => {
-          const row = payload.new;
-          if (row?.club_id === clubId || row?.club_owner_id === effectiveUserId) {
-            await reloadOrders();
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'club_orders' },
-        async () => { await reloadOrders(); }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [clubId, effectiveUserId]);
-
-  // Auto-refresh when the tab/window regains focus
-  const lastForegroundRefresh = useRef(Date.now());
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        const elapsed = Date.now() - lastForegroundRefresh.current;
-        if (elapsed > 15_000 && effectiveUserId) {
-          lastForegroundRefresh.current = Date.now();
-          console.log('[Bar] Foreground refresh triggered');
-          reloadOrders();
-          reloadTabs();
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [effectiveUserId, clubId]);
-
-  // Lightweight reload functions (don't reload menu/categories)
-  const reloadOrders = async () => {
+  const reloadOrders = useCallback(async () => {
     if (!effectiveUserId) return;
     const { data: allOrdersData } = await supabase
       .from('club_orders')
@@ -347,9 +337,9 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       );
       setQrOrders(ordersWithItems);
     }
-  };
+  }, [effectiveUserId, clubId]);
 
-  const reloadTabs = async () => {
+  const reloadTabs = useCallback(async () => {
     if (!effectiveUserId) return;
     const { data: tabsData } = await supabase
       .from('bar_tabs')
@@ -376,7 +366,92 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         }
       }
     }
-  };
+  }, [effectiveUserId]);
+
+  // Real-time subscription for new/updated orders (QR + manual)
+  // Kitchen: beep on food line items (order is created before lines); bar/owner: beep on new order.
+  useEffect(() => {
+    if (!clubId && !effectiveUserId) return;
+
+    const isOurs = (row: { club_id?: string; club_owner_id?: string | null }) =>
+      (clubId && row?.club_id === clubId) || row?.club_owner_id === effectiveUserId;
+
+    const channel = supabase
+      .channel('bar-orders-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'club_orders' },
+        async (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as { id?: string; club_id?: string; club_owner_id?: string | null };
+          if (!isOurs(row)) return;
+          await reloadOrders();
+          if (!isKitchenSoloView) {
+            playOrderBeep('bar');
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'club_order_items' },
+        async (payload: { new: Record<string, unknown> }) => {
+          if (!isKitchenSoloView) return;
+          const row = payload.new as { order_id?: string; is_food?: boolean };
+          if (!row?.is_food || !row.order_id) return;
+          const { data: order } = await supabase
+            .from('club_orders')
+            .select('id, club_id, club_owner_id')
+            .eq('id', row.order_id)
+            .maybeSingle();
+          if (!order || !isOurs(order)) return;
+          if (kitchenBeepedOrderIdsRef.current.has(row.order_id)) return;
+          kitchenBeepedOrderIdsRef.current.add(row.order_id);
+          setTimeout(() => kitchenBeepedOrderIdsRef.current.delete(row.order_id), 8000);
+          playOrderBeep('kitchen');
+          await reloadOrders();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'club_orders' },
+        async (payload: { new: Record<string, unknown> }) => {
+          const row = payload.new as { club_id?: string; club_owner_id?: string | null };
+          if (isOurs(row)) await reloadOrders();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'club_order_items' },
+        async () => { await reloadOrders(); }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'club_orders' },
+        async () => { await reloadOrders(); }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [clubId, effectiveUserId, isKitchenSoloView, playOrderBeep, reloadOrders]);
+
+  // Auto-refresh when the tab/window regains focus
+  const lastForegroundRefresh = useRef(Date.now());
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - lastForegroundRefresh.current;
+        if (elapsed > 15_000 && effectiveUserId) {
+          lastForegroundRefresh.current = Date.now();
+          console.log('[Bar] Foreground refresh triggered');
+          void reloadOrders();
+          void reloadTabs();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [effectiveUserId, clubId, reloadOrders, reloadTabs]);
 
   const loadData = async () => {
     if (!effectiveUserId) return;
@@ -865,19 +940,38 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     loadData();
   };
 
+  const syncOrderStatusFromItems = async (orderId: string) => {
+    const { data: orderRow } = await supabase
+      .from('club_orders')
+      .select('status')
+      .eq('id', orderId)
+      .single();
+    if (!orderRow) return;
+    if (['delivered', 'cancelled', 'pending'].includes(orderRow.status)) return;
+
+    const { data: itemRows } = await supabase
+      .from('club_order_items')
+      .select('status')
+      .eq('order_id', orderId);
+    if (!itemRows?.length) return;
+
+    const allReady = itemRows.every((row) => row.status === 'ready');
+    const next = allReady ? 'ready' : 'preparing';
+    if (orderRow.status !== next) {
+      await supabase
+        .from('club_orders')
+        .update({ status: next, updated_at: new Date().toISOString() })
+        .eq('id', orderId);
+    }
+  };
+
   const handleUpdateQrOrderStatus = async (orderId: string, status: string) => {
     const order = qrOrders.find(o => o.id === orderId);
-    
+
     await supabase
       .from('club_orders')
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', orderId);
-    
-    // Also update all items
-    await supabase
-      .from('club_order_items')
-      .update({ status })
-      .eq('order_id', orderId);
 
     // When accepting a QR order, auto-create or add to bar tab for that table
     if (status === 'preparing' && order && effectiveUserId) {
@@ -1003,12 +1097,25 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     loadData();
   };
 
-  const handleUpdateQrOrderItemStatus = async (itemId: string, status: string) => {
-    await supabase
+  const handleMarkQrOrderItemReady = async (orderId: string, itemId: string) => {
+    const { error } = await supabase
       .from('club_order_items')
-      .update({ status })
+      .update({ status: 'ready' })
       .eq('id', itemId);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    await syncOrderStatusFromItems(orderId);
     loadData();
+  };
+
+  const canMarkItemReady = (item: QrOrderItem): boolean => {
+    if (isKitchenSoloView) return item.is_food;
+    if (isKitchenRole && kitchenViewAllOrders) return true;
+    if (isKitchenRole) return item.is_food;
+    if (staffRole === 'bar_staff') return !item.is_food;
+    return true;
   };
 
   const getMenuPublicUrl = () => {
@@ -1021,7 +1128,12 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     return `${window.location.origin}/menu/${clubId}?mesa=${encodeURIComponent(tableNumber)}`;
   };
 
-  const pendingQrCount = qrOrders.filter(o => o.status === 'pending').length;
+  const ordersForView = useMemo(
+    () => (isKitchenSoloView ? qrOrders.filter(orderHasFoodItems) : qrOrders),
+    [qrOrders, isKitchenSoloView]
+  );
+
+  const pendingQrCount = ordersForView.filter(o => o.status === 'pending').length;
 
   // ---- Original Menu/Orders Functions ----
 
@@ -1057,6 +1169,18 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
     setSaving(true);
 
+    const scheduleFields = itemForm.is_food ? {
+      kitchen_slot1_start: itemForm.kitchen_slot1_start || null,
+      kitchen_slot1_end: itemForm.kitchen_slot1_end || null,
+      kitchen_slot2_start: itemForm.kitchen_slot2_start || null,
+      kitchen_slot2_end: itemForm.kitchen_slot2_end || null,
+    } : {
+      kitchen_slot1_start: null,
+      kitchen_slot1_end: null,
+      kitchen_slot2_start: null,
+      kitchen_slot2_end: null,
+    };
+
     if (editingItem) {
       await supabase
         .from('menu_items')
@@ -1068,7 +1192,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           is_available: itemForm.is_available,
           is_food: itemForm.is_food,
           image_url: itemForm.image_url.trim() || null,
-          is_highlighted: itemForm.is_highlighted
+          is_highlighted: itemForm.is_highlighted,
+          ...scheduleFields,
         })
         .eq('id', editingItem.id);
     } else {
@@ -1083,7 +1208,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
         is_food: itemForm.is_food,
         image_url: itemForm.image_url.trim() || null,
         is_highlighted: itemForm.is_highlighted,
-        sort_order: catItems.length
+        sort_order: catItems.length,
+        ...scheduleFields,
       });
     }
 
@@ -1110,13 +1236,17 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
       is_available: item.is_available,
       is_food: item.is_food || false,
       image_url: item.image_url || '',
-      is_highlighted: item.is_highlighted || false
+      is_highlighted: item.is_highlighted || false,
+      kitchen_slot1_start: item.kitchen_slot1_start?.slice(0, 5) || '',
+      kitchen_slot1_end: item.kitchen_slot1_end?.slice(0, 5) || '',
+      kitchen_slot2_start: item.kitchen_slot2_start?.slice(0, 5) || '',
+      kitchen_slot2_end: item.kitchen_slot2_end?.slice(0, 5) || '',
     });
     setShowItemForm(true);
   };
 
   const resetItemForm = () => {
-    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false, image_url: '', is_highlighted: false });
+    setItemForm({ category_id: '', name: '', description: '', price: 0, is_available: true, is_food: false, image_url: '', is_highlighted: false, kitchen_slot1_start: '', kitchen_slot1_end: '', kitchen_slot2_start: '', kitchen_slot2_end: '' });
   };
 
   const handleMenuImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1239,7 +1369,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
     loadData();
   };
 
-  // All orders now use handleUpdateQrOrderStatus via unified club_orders table
+  // club_orders: fluxo; linhas têm "Pronto" e syncOrderStatusFromItems actualiza o estado global
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -1292,74 +1422,132 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
           className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-orange-500 hover:bg-orange-600 text-white rounded-xl shadow-lg text-lg font-bold transition-all animate-pulse"
         >
           <span className="text-2xl">🔔</span>
-          Toque aqui para ativar alertas sonoros
+          {isKitchenSoloView
+            ? 'Toque para ativar alertas da cozinha (só comida)'
+            : 'Toque aqui para ativar alertas sonoros'}
         </button>
       )}
       {soundEnabled && (
         <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-          <span>🔊</span> Alertas sonoros ativos — será notificado a cada novo pedido
+          <span>🔊</span>{' '}
+          {isKitchenSoloView
+            ? 'Alertas activos — notificação quando houver artigos de cozinha no pedido'
+            : 'Alertas sonoros ativos — será notificado a cada novo pedido'}
         </div>
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">{t.bar.title}</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{t.bar.title}</h1>
+          {isKitchenSoloView && (
+            <p className="text-sm text-orange-700 mt-1 font-medium">
+              Modo cozinha: vê e ouve apenas pedidos com artigos de comida (itens com &quot;Cozinha&quot; no menu)
+            </p>
+          )}
+          {isKitchenRole && kitchenViewAllOrders && (
+            <p className="text-sm text-blue-800 mt-1 font-medium">
+              A ver todos os pedidos (bebidas e comida) — no mesmo posto, como no balcão
+            </p>
+          )}
+          {isKitchenRole && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500">Vista do ecrã:</span>
+              <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+                <button
+                  type="button"
+                  onClick={() => setKitchenViewAllOrders(false)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                    !kitchenViewAllOrders ? 'bg-white shadow text-orange-800' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  Só cozinha
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKitchenViewAllOrders(true)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                    kitchenViewAllOrders ? 'bg-white shadow text-blue-800' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  Bar (todos os pedidos)
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <div className="flex bg-gray-100 rounded-lg p-1 flex-wrap">
-            <button
-              onClick={() => setActiveTab('tabs')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'tabs' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              <CreditCard className="w-4 h-4" />
-              {t.bar.tabs}
-              {openTabsCount > 0 && (
-                <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1">
-                  {openTabsCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('orders')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'orders' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              {t.bar.orders}
-              {pendingQrCount > 0 && (
-                <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
-                  {pendingQrCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('menu')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
-                activeTab === 'menu' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              {t.bar.menu}
-            </button>
-            <button
-              onClick={() => setActiveTab('qr-codes')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'qr-codes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              <QrCode className="w-4 h-4" />
-              QR Codes
-            </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
-                activeTab === 'analytics' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" />
-              Metricas
-            </button>
+            {!showFullBarUi ? (
+              <button
+                onClick={() => setActiveTab('orders')}
+                className="px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 bg-white shadow text-gray-900"
+              >
+                {t.bar.orders} — cozinha
+                {pendingQrCount > 0 && (
+                  <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
+                    {pendingQrCount}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setActiveTab('tabs')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                    activeTab === 'tabs' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  {t.bar.tabs}
+                  {openTabsCount > 0 && (
+                    <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1">
+                      {openTabsCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('orders')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                    activeTab === 'orders' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                  }`}
+                >
+                  {t.bar.orders}
+                  {pendingQrCount > 0 && (
+                    <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full ml-1 animate-pulse">
+                      {pendingQrCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('menu')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
+                    activeTab === 'menu' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                  }`}
+                >
+                  {t.bar.menu}
+                </button>
+                <button
+                  onClick={() => setActiveTab('qr-codes')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                    activeTab === 'qr-codes' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                  }`}
+                >
+                  <QrCode className="w-4 h-4" />
+                  QR Codes
+                </button>
+                <button
+                  onClick={() => setActiveTab('analytics')}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition flex items-center gap-1.5 ${
+                    activeTab === 'analytics' ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                  }`}
+                >
+                  <BarChart3 className="w-4 h-4" />
+                  Metricas
+                </button>
+              </>
+            )}
           </div>
-          {activeTab === 'tabs' && (
+          {activeTab === 'tabs' && showFullBarUi && (
             <button
               onClick={() => { setNewTabForm({ player_name: '', player_phone: '', notes: '' }); setShowNewTabForm(true); }}
               className="bg-orange-600 text-white px-3 py-2 rounded-lg font-medium hover:bg-orange-700 transition flex items-center gap-2"
@@ -1368,7 +1556,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
               {t.bar.openTab}
             </button>
           )}
-          {activeTab === 'menu' && (
+          {activeTab === 'menu' && showFullBarUi && (
             <div className="flex gap-2">
               <button
                 onClick={() => { setEditingCategory(null); setCategoryForm({ name: '' }); setShowCategoryForm(true); }}
@@ -1667,10 +1855,9 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
       {/* ============ ORDERS (unified club_orders) ============ */}
       {activeTab === 'orders' && (() => {
-        // Active = all orders not yet delivered/cancelled
-        const activeOrders = qrOrders.filter(o => !['delivered', 'cancelled'].includes(o.status));
-        // Finished = delivered orders
-        const finishedOrders = qrOrders.filter(o => o.status === 'delivered');
+        // Active = all orders not yet delivered/cancelled (cozinha: só pedidos com artigos is_food)
+        const activeOrders = ordersForView.filter(o => !['delivered', 'cancelled'].includes(o.status));
+        const finishedOrders = ordersForView.filter(o => o.status === 'delivered');
         const showingActive = qrOrderFilter !== 'all';
 
         const displayedOrders = showingActive ? activeOrders : finishedOrders;
@@ -1724,14 +1911,22 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   {showingActive ? 'Sem pedidos ativos' : 'Sem pedidos terminados'}
                 </h3>
                 <p className="text-sm text-gray-500">
-                  {showingActive 
-                    ? 'Os novos pedidos aparecerão aqui automaticamente.' 
+                  {showingActive
+                    ? (isKitchenSoloView && qrOrders.some(o => !['delivered', 'cancelled'].includes(o.status)) && ordersForView.length === 0
+                        ? 'Neste momento só há pedidos de bar (bebidas). A cozinha não recebe estes pedidos.'
+                        : 'Os novos pedidos aparecerão aqui automaticamente.')
                     : 'Os pedidos entregues aparecerão aqui.'}
                 </p>
               </div>
             ) : (
               <div className="grid gap-4">
                 {displayedOrders.map(order => {
+                  const lineItems = isKitchenSoloView
+                    ? (order.items || []).filter((i) => i.is_food)
+                    : (order.items || []);
+                  const foodSubtotal = (order.items || [])
+                    .filter((i) => i.is_food)
+                    .reduce((s, i) => s + i.quantity * i.unit_price, 0);
                   // Card background color based on status
                   const cardBg = order.status === 'pending' ? 'bg-red-50 border-red-300 ring-2 ring-red-200' :
                                  order.status === 'preparing' ? 'bg-orange-50 border-orange-300' :
@@ -1742,9 +1937,14 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                                      order.status === 'preparing' ? '🟠' :
                                      order.status === 'ready' ? '🟢' : '✅';
 
-                  const statusLabel = order.status === 'pending' ? 'Novo pedido!' :
+                  const { nReady, nTotal } = orderItemsProgress(order);
+                  const baseStatusLabel = order.status === 'pending' ? 'Novo pedido!' :
                                       order.status === 'preparing' ? 'Em preparação' :
                                       order.status === 'ready' ? 'Pronto para entrega' : 'Entregue';
+                  const statusLabel =
+                    order.status === 'preparing' && nTotal > 0
+                      ? `${baseStatusLabel} — ${nReady}/${nTotal} prontos`
+                      : baseStatusLabel;
 
                   return (
                     <div key={order.id} className={`rounded-xl shadow-sm border overflow-hidden transition-all duration-300 ${cardBg}`}>
@@ -1781,7 +1981,12 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="font-bold text-xl text-gray-900">{order.total.toFixed(2)} €</div>
+                            <div className="font-bold text-xl text-gray-900">
+                              {isKitchenSoloView ? foodSubtotal.toFixed(2) : order.total.toFixed(2)} €
+                            </div>
+                            {isKitchenSoloView && (
+                              <div className="text-xs text-gray-500">Subtotal cozinha</div>
+                            )}
                             <div className="text-xs font-semibold mt-1">
                               {statusIcon} {statusLabel}
                             </div>
@@ -1789,23 +1994,62 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                         </div>
 
                         {/* Order items */}
-                        {order.items && order.items.length > 0 && (
-                          <div className="border-t border-gray-200/50 pt-3 space-y-1.5">
-                            {order.items.map(item => (
-                              <div key={item.id} className="flex items-center justify-between text-sm">
-                                <div className="flex items-center gap-2">
-                                  {item.is_food ? (
-                                    <ChefHat className="w-4 h-4 text-orange-500" />
-                                  ) : (
-                                    <Coffee className="w-4 h-4 text-blue-500" />
-                                  )}
-                                  <span className="font-medium text-gray-800">{item.quantity}x {item.item_name}</span>
-                                  {item.notes && <span className="text-xs text-gray-400">({item.notes})</span>}
+                        {lineItems.length > 0 && (
+                          <div className="border-t border-gray-200/50 pt-3 space-y-2.5">
+                            {lineItems.map((item) => {
+                              const showPronto =
+                                order.status === 'preparing' && canMarkItemReady(item) && !itemIsReady(item);
+                              const isDone = itemIsReady(item);
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                                >
+                                  <div className="flex min-w-0 items-center gap-2 flex-1">
+                                    {item.is_food ? (
+                                      <ChefHat className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                                    ) : (
+                                      <Coffee className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                                    )}
+                                    <span className="font-medium text-gray-800">
+                                      {item.quantity}× {item.item_name}
+                                    </span>
+                                    {item.notes && (
+                                      <span className="text-xs text-gray-400">({item.notes})</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    {showPronto && (
+                                      <button
+                                        type="button"
+                                        onClick={() => { void handleMarkQrOrderItemReady(order.id, item.id); }}
+                                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-green-600 text-white hover:bg-green-700 shadow-sm"
+                                      >
+                                        ✓ Pronto
+                                      </button>
+                                    )}
+                                    {isDone && (
+                                      <span className="text-xs font-semibold text-green-600 whitespace-nowrap">
+                                        ✓ Pronto
+                                      </span>
+                                    )}
+                                    <span className="text-gray-600 tabular-nums min-w-[3.25rem] text-right">
+                                      {(item.quantity * item.unit_price).toFixed(2)} €
+                                    </span>
+                                  </div>
                                 </div>
-                                <span className="text-gray-600">{(item.quantity * item.unit_price).toFixed(2)} €</span>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
+                        )}
+
+                        {order.status === 'preparing' && nTotal > 0 && nReady < nTotal && (
+                          <p className="text-xs text-gray-600 mt-2 pt-2 border-t border-dashed border-gray-200">
+                            Toque em <span className="font-semibold">Pronto</span> em cada bebida e em cada
+                            comida. O bar marca bebidas; a cozinha, comida. Só fica
+                            <span className="font-medium"> &quot;Pronto para entrega&quot; </span>
+                            quando tudo estiver com ✓.
+                          </p>
                         )}
 
                         {/* Member discount badge + notes */}
@@ -1830,10 +2074,8 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                           );
                         })()}
 
-                        {/* 3 Action buttons */}
                         {order.status !== 'delivered' && order.status !== 'cancelled' && (
                           <div className="flex gap-2 pt-3 mt-3 border-t border-gray-200/50">
-                            {/* Button 1: Recebido */}
                             <button
                               onClick={() => order.status === 'pending' ? handleUpdateQrOrderStatus(order.id, 'preparing') : null}
                               disabled={order.status !== 'pending'}
@@ -1847,23 +2089,6 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                               Recebido
                             </button>
 
-                            {/* Button 2: Pronto para entrega */}
-                            <button
-                              onClick={() => order.status === 'preparing' ? handleUpdateQrOrderStatus(order.id, 'ready') : null}
-                              disabled={order.status !== 'preparing'}
-                              className={`flex-1 px-3 py-2.5 text-sm font-semibold rounded-xl transition flex items-center justify-center gap-1.5 ${
-                                order.status === 'preparing'
-                                  ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm cursor-pointer'
-                                  : order.status === 'ready'
-                                    ? 'bg-green-200 text-green-800 cursor-default opacity-60'
-                                    : 'bg-gray-100 text-gray-400 cursor-default'
-                              }`}
-                            >
-                              {order.status === 'preparing' ? '🔔' : order.status === 'ready' ? '✓' : '🔔'}
-                              Pronto
-                            </button>
-
-                            {/* Button 3: Retirado */}
                             <button
                               onClick={() => order.status === 'ready' ? handleUpdateQrOrderStatus(order.id, 'delivered') : null}
                               disabled={order.status !== 'ready'}
@@ -1889,7 +2114,7 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
 
       {/* ============ MENU ============ */}
       {activeTab === 'menu' && (
-        <div className="space-y-6">
+        <div className="space-y-6 w-full max-w-4xl xl:max-w-5xl mx-auto min-w-0">
           {categories.length === 0 ? (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
               <Coffee className="w-12 h-12 text-gray-300 mx-auto mb-4" />
@@ -1946,8 +2171,13 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   ) : (
                     <div className="divide-y divide-gray-100">
                       {categoryItems.map((item, itemIdx) => (
-                        <div key={item.id} className={`p-4 flex items-center justify-between ${item.is_highlighted ? 'bg-amber-50 border-l-4 border-l-amber-400' : ''}`}>
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div
+                          key={item.id}
+                          className={`p-3 sm:p-4 grid grid-cols-1 gap-3 min-w-0 sm:grid-cols-[1fr_minmax(0,auto)] sm:items-start ${
+                            item.is_highlighted ? 'bg-amber-50 border-l-4 border-l-amber-400' : ''
+                          }`}
+                        >
+                          <div className="flex items-start gap-2 min-w-0">
                             <div className="flex flex-col flex-shrink-0">
                               <button
                                 onClick={() => moveItem(category.id, itemIdx, 'up')}
@@ -1971,24 +2201,35 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                                 {item.is_food ? <ChefHat className="w-5 h-5 text-gray-400" /> : <Coffee className="w-5 h-5 text-gray-400" />}
                               </div>
                             )}
-                            <div className="min-w-0">
-                              <div className="font-medium text-gray-900 flex items-center gap-1.5">
-                                {item.name}
-                                {item.is_highlighted && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                <span className="font-medium text-gray-900 break-words">{item.name}</span>
+                                {item.is_highlighted && <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 flex-shrink-0" />}
+                                <span className="font-bold text-gray-900 tabular-nums whitespace-nowrap">
+                                  {item.price.toFixed(2)} €
+                                </span>
+                                {item.is_food && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 inline-flex items-center gap-0.5">
+                                    <ChefHat className="w-3 h-3" />
+                                    Cozinha
+                                  </span>
+                                )}
+                                {item.is_food && item.kitchen_slot1_start && item.kitchen_slot1_end && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-700 inline-flex items-center gap-0.5 whitespace-nowrap">
+                                    <Clock className="w-3 h-3" />
+                                    {item.kitchen_slot1_start.slice(0, 5)}–{item.kitchen_slot1_end.slice(0, 5)}
+                                    {item.kitchen_slot2_start && item.kitchen_slot2_end && (
+                                      <> · {item.kitchen_slot2_start.slice(0, 5)}–{item.kitchen_slot2_end.slice(0, 5)}</>
+                                    )}
+                                  </span>
+                                )}
                               </div>
                               {item.description && (
-                                <div className="text-sm text-gray-500 truncate">{item.description}</div>
+                                <div className="text-sm text-gray-500 mt-0.5 line-clamp-2 sm:line-clamp-3 break-words">{item.description}</div>
                               )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="font-bold text-gray-900">{item.price.toFixed(2)} EUR</span>
-                            {item.is_food && (
-                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 flex items-center gap-1">
-                                <ChefHat className="w-3 h-3" />
-                                Cozinha
-                              </span>
-                            )}
+                          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 sm:justify-end sm:pt-0.5 w-full sm:w-auto sm:shrink-0">
                             <button
                               onClick={() => toggleItemHighlight(item)}
                               className={`p-2 rounded-lg transition ${item.is_highlighted ? 'text-amber-500 hover:bg-amber-50' : 'text-gray-400 hover:bg-gray-50'}`}
@@ -2464,6 +2705,59 @@ export default function BarManagement({ staffClubOwnerId }: BarManagementProps) 
                   </label>
                 </div>
               </div>
+
+              {/* Kitchen schedule — only for food items */}
+              {itemForm.is_food && (
+                <div className="border border-orange-200 bg-orange-50/50 rounded-lg p-3 space-y-3">
+                  <p className="text-xs font-semibold text-orange-800 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    Horário da cozinha (opcional)
+                  </p>
+                  <p className="text-[11px] text-orange-600 -mt-1.5">
+                    Deixe em branco se o item estiver disponível durante todo o horário de funcionamento.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-gray-600 mb-0.5">Slot 1 — Início</label>
+                      <input
+                        type="time"
+                        value={itemForm.kitchen_slot1_start}
+                        onChange={(e) => setItemForm({ ...itemForm, kitchen_slot1_start: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-gray-600 mb-0.5">Slot 1 — Fim</label>
+                      <input
+                        type="time"
+                        value={itemForm.kitchen_slot1_end}
+                        onChange={(e) => setItemForm({ ...itemForm, kitchen_slot1_end: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-medium text-gray-600 mb-0.5">Slot 2 — Início</label>
+                      <input
+                        type="time"
+                        value={itemForm.kitchen_slot2_start}
+                        onChange={(e) => setItemForm({ ...itemForm, kitchen_slot2_start: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-gray-600 mb-0.5">Slot 2 — Fim</label>
+                      <input
+                        type="time"
+                        value={itemForm.kitchen_slot2_end}
+                        onChange={(e) => setItemForm({ ...itemForm, kitchen_slot2_end: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 focus:border-orange-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => { setShowItemForm(false); setEditingItem(null); resetItemForm(); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
                   {t.common.cancel}
