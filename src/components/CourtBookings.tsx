@@ -443,6 +443,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     payment_status: 'pending',
     event_type: 'match'
   });
+  const [selectedCourtIds, setSelectedCourtIds] = useState<string[]>([]);
   const [useEndTime, setUseEndTime] = useState(false);
   const [customEndTime, setCustomEndTime] = useState('10:30');
 
@@ -862,14 +863,18 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     return newBooking.duration;
   };
 
-  const getBasePrice = () => {
-    const court = courts.find(c => c.id === newBooking.court_id);
-    if (!court) return 0;
+  const getBasePriceForCourt = (court: Court) => {
     const durationHrs = getEffectiveDurationHours();
     const durationMin = Math.round(durationHrs * 60);
     if (durationMin === 90) return court.price_90min ?? court.hourly_rate * 1.5;
     if (durationMin === 120) return court.price_120min ?? court.hourly_rate * 2;
     return durationHrs * court.hourly_rate;
+  };
+
+  const getBasePrice = () => {
+    const court = courts.find(c => c.id === newBooking.court_id);
+    if (!court) return 0;
+    return getBasePriceForCourt(court);
   };
 
   const getPriceBreakdown = () => {
@@ -912,10 +917,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
   const handleCreateBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!effectiveUserId || !newBooking.court_id) return;
+    if (!effectiveUserId) return;
 
-    const court = courts.find(c => c.id === newBooking.court_id);
-    if (!court) return;
+    const courtIds = editingBooking
+      ? [newBooking.court_id]
+      : selectedCourtIds.length > 0
+        ? selectedCourtIds
+        : newBooking.court_id ? [newBooking.court_id] : [];
+
+    if (courtIds.length === 0) return;
 
     const startTime = clubLocalToUTC(newBooking.date, newBooking.startTime, clubTimezone);
     let endTime: Date;
@@ -926,40 +936,54 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       endTime = new Date(startTime.getTime() + newBooking.duration * 3600000);
     }
 
-    const pricing = getPriceBreakdown();
+    const getPriceForCourt = (court: Court) => {
+      const basePrice = getBasePriceForCourt(court);
+      const pricePerPlayer = basePrice / 4;
+      let totalDiscount = 0;
+      for (const player of players) {
+        if (player.isMember && player.discount > 0) {
+          totalDiscount += pricePerPlayer * (player.discount / 100);
+        }
+      }
+      return basePrice - totalDiscount;
+    };
 
-    const bookingData = {
-      court_id: newBooking.court_id,
-      start_time: startTime.toISOString(),
-      end_time: endTime.toISOString(),
-      booked_by_name: players[0].name || null,
-      booked_by_phone: players[0].phone || null,
-      player1_name: players[0].name || null,
-      player1_phone: players[0].phone || null,
-      player1_is_member: players[0].isMember,
-      player1_discount: players[0].discount,
-      player2_name: players[1].name || null,
-      player2_phone: players[1].phone || null,
-      player2_is_member: players[1].isMember,
-      player2_discount: players[1].discount,
-      player3_name: players[2].name || null,
-      player3_phone: players[2].phone || null,
-      player3_is_member: players[2].isMember,
-      player3_discount: players[2].discount,
-      player4_name: players[3].name || null,
-      player4_phone: players[3].phone || null,
-      player4_is_member: players[3].isMember,
-      player4_discount: players[3].discount,
-      notes: newBooking.notes || null,
-      price: pricing.finalPrice,
-      payment_status: newBooking.payment_status,
-      event_type: newBooking.event_type
+    const buildBookingData = (courtId: string) => {
+      const court = courts.find((c) => c.id === courtId);
+      const price = court ? getPriceForCourt(court) : getPriceBreakdown().finalPrice;
+      return {
+        court_id: courtId,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+        booked_by_name: players[0].name || null,
+        booked_by_phone: players[0].phone || null,
+        player1_name: players[0].name || null,
+        player1_phone: players[0].phone || null,
+        player1_is_member: players[0].isMember,
+        player1_discount: players[0].discount,
+        player2_name: players[1].name || null,
+        player2_phone: players[1].phone || null,
+        player2_is_member: players[1].isMember,
+        player2_discount: players[1].discount,
+        player3_name: players[2].name || null,
+        player3_phone: players[2].phone || null,
+        player3_is_member: players[2].isMember,
+        player3_discount: players[2].discount,
+        player4_name: players[3].name || null,
+        player4_phone: players[3].phone || null,
+        player4_is_member: players[3].isMember,
+        player4_discount: players[3].discount,
+        notes: newBooking.notes || null,
+        price,
+        payment_status: newBooking.payment_status,
+        event_type: newBooking.event_type
+      };
     };
 
     if (editingBooking) {
       const { error } = await supabase
         .from('court_bookings')
-        .update(bookingData)
+        .update(buildBookingData(courtIds[0]))
         .eq('id', editingBooking.id);
 
       if (!error) {
@@ -969,41 +993,44 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         loadData();
       }
     } else {
-      const { error, data: newBooking } = await supabase
-        .from('court_bookings')
-        .insert({
-          ...bookingData,
-          user_id: effectiveUserId,
-          status: 'confirmed'
-        })
-        .select()
-        .single();
+      const rows = courtIds.map((cid) => ({
+        ...buildBookingData(cid),
+        user_id: effectiveUserId,
+        status: 'confirmed'
+      }));
 
-      if (!error && newBooking && effectiveUserId) {
-        // Notify manager about new booking
-        try {
-          await fetch(
-            `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-              },
-              body: JSON.stringify({
-                userId: effectiveUserId,
-                type: 'booking_created',
-                bookingId: newBooking.id,
-                courtName: court.name,
-                playerName: players[0].name || players[0].phone || 'Cliente',
-                playerNames: players.map((p) => p.name || p.phone).filter(Boolean),
-                scheduledAt: newBooking.start_time,
-                endAt: newBooking.end_time,
-              }),
-            }
-          );
-        } catch (notifyError) {
-          console.error('Error notifying manager:', notifyError);
+      const { error, data: insertedRows } = await supabase
+        .from('court_bookings')
+        .insert(rows)
+        .select();
+
+      if (!error && insertedRows?.length) {
+        for (const row of insertedRows) {
+          const court = courts.find((c) => c.id === row.court_id);
+          try {
+            await fetch(
+              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-manager`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                },
+                body: JSON.stringify({
+                  userId: effectiveUserId,
+                  type: 'booking_created',
+                  bookingId: row.id,
+                  courtName: court?.name || '?',
+                  playerName: players[0].name || players[0].phone || 'Cliente',
+                  playerNames: players.map((p) => p.name || p.phone).filter(Boolean),
+                  scheduledAt: row.start_time,
+                  endAt: row.end_time,
+                }),
+              }
+            );
+          } catch (notifyError) {
+            console.error('Error notifying manager:', notifyError);
+          }
         }
 
         setShowNewBooking(false);
@@ -2026,6 +2053,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       payment_status: 'pending',
       event_type: 'match'
     });
+    setSelectedCourtIds([]);
     setUseEndTime(false);
     setCustomEndTime('10:30');
     setPlayers([
@@ -2175,6 +2203,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         date: dateStr,
         startTime: slotTime
       });
+      setSelectedCourtIds([courtId]);
       setShowNewBooking(true);
     }
   };
@@ -2669,17 +2698,71 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
             <form onSubmit={handleCreateBooking} className="p-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bookings.selectCourt}</label>
-                <select
-                  value={newBooking.court_id}
-                  onChange={(e) => setNewBooking({ ...newBooking, court_id: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                >
-                  <option value="">{t.bookings.selectCourt}</option>
-                  {courts.map(court => (
-                    <option key={court.id} value={court.id}>{court.name} - {court.hourly_rate} EUR/h</option>
-                  ))}
-                </select>
+                {editingBooking ? (
+                  <select
+                    value={newBooking.court_id}
+                    onChange={(e) => setNewBooking({ ...newBooking, court_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  >
+                    <option value="">{t.bookings.selectCourt}</option>
+                    {courts.map(court => (
+                      <option key={court.id} value={court.id}>{court.name} - {court.hourly_rate} EUR/h</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {courts.length === 0 && (
+                      <p className="text-sm text-gray-400 text-center py-2">Sem campos</p>
+                    )}
+                    {courts.map(court => {
+                      const checked = selectedCourtIds.includes(court.id);
+                      return (
+                        <label
+                          key={court.id}
+                          className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition ${
+                            checked ? 'bg-blue-50 border border-blue-300' : 'bg-white border border-gray-100 hover:bg-gray-50'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedCourtIds((prev) =>
+                                prev.includes(court.id)
+                                  ? prev.filter((id) => id !== court.id)
+                                  : [...prev, court.id]
+                              );
+                            }}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-medium text-gray-900 flex-1">{court.name}</span>
+                          <span className="text-xs text-gray-500">{court.hourly_rate} EUR/h</span>
+                        </label>
+                      );
+                    })}
+                    {courts.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedCourtIds.length === courts.length) {
+                            setSelectedCourtIds([]);
+                          } else {
+                            setSelectedCourtIds(courts.map((c) => c.id));
+                          }
+                        }}
+                        className="w-full text-xs text-blue-600 hover:text-blue-800 font-medium py-1.5 transition"
+                      >
+                        {selectedCourtIds.length === courts.length ? 'Desmarcar todos' : 'Selecionar todos'}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {!editingBooking && selectedCourtIds.length > 1 && (
+                  <p className="text-xs text-blue-600 mt-1 font-medium">
+                    {selectedCourtIds.length} campos selecionados — será criada uma reserva para cada campo
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bookings.selectDate}</label>
@@ -2708,24 +2791,13 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t.bookings.selectTime}</label>
-                  <select
+                  <input
+                    type="time"
                     value={newBooking.startTime}
                     onChange={(e) => setNewBooking({ ...newBooking, startTime: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {(() => {
-                      const selectedCourt = courts.find(c => c.id === newBooking.court_id);
-                      const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
-                      if (schedule?.operating_start && schedule?.operating_end && schedule.slots) {
-                        return getActiveSlotTimesForSchedule(schedule).map(t => (
-                          <option key={t} value={t}>{t}</option>
-                        ));
-                      }
-                      return timeSlots.map(slot => (
-                        <option key={slot} value={slot}>{slot}</option>
-                      ));
-                    })()}
-                  </select>
+                    required
+                  />
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
@@ -2748,26 +2820,13 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     </button>
                   </div>
                   {useEndTime ? (
-                    <select
+                    <input
+                      type="time"
                       value={customEndTime}
                       onChange={(e) => setCustomEndTime(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      {(() => {
-                        const [sh, sm] = newBooking.startTime.split(':').map(Number);
-                        const startMins = sh * 60 + sm;
-                        const opts: JSX.Element[] = [];
-                        for (let m = startMins + 30; m <= startMins + 480; m += 30) {
-                          const hh = Math.floor(m / 60) % 24;
-                          const mm = m % 60;
-                          const val = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-                          const diffH = (m - startMins) / 60;
-                          const label = `${val} (${diffH % 1 === 0 ? diffH + 'h' : Math.floor(diffH) + 'h30'})`;
-                          opts.push(<option key={val} value={val}>{label}</option>);
-                        }
-                        return opts;
-                      })()}
-                    </select>
+                      required
+                    />
                   ) : (
                     <select
                       value={newBooking.duration}
@@ -2776,7 +2835,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                     >
                       {(() => {
                         const baseDurations = new Set([60, 90, 120]);
-                        const selectedCourt = courts.find(c => c.id === newBooking.court_id);
+                        const selectedCourt = courts.find(c => c.id === (selectedCourtIds[0] || newBooking.court_id));
                         const schedule = selectedCourt ? getActiveSchedule(selectedCourt.court_slots, clubActiveSchedule) : null;
                         const selectedSlot =
                           schedule && schedule.slots
@@ -2912,12 +2971,29 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 />
               </div>
 
-              {newBooking.court_id && (() => {
-                const pricing = getPriceBreakdown();
+              {(newBooking.court_id || selectedCourtIds.length > 0) && (() => {
+                const previewCourtId = newBooking.court_id || selectedCourtIds[0];
+                const previewCourt = courts.find((c) => c.id === previewCourtId);
+                if (!previewCourt) return null;
+                const basePrice = getBasePriceForCourt(previewCourt);
+                const pricePerPlayer = basePrice / 4;
+                let totalDiscount = 0;
+                const breakdown = players.map((player, idx) => {
+                  if (player.isMember && player.discount > 0) {
+                    const d = pricePerPlayer * (player.discount / 100);
+                    totalDiscount += d;
+                    return { playerNum: idx + 1, name: player.name || `Player ${idx + 1}`, originalPrice: pricePerPlayer, discount: d, finalPrice: pricePerPlayer - d, isMember: true, discountPercent: player.discount };
+                  }
+                  return { playerNum: idx + 1, name: player.name || `Player ${idx + 1}`, originalPrice: pricePerPlayer, discount: 0, finalPrice: pricePerPlayer, isMember: false, discountPercent: 0 };
+                });
+                const pricing = { basePrice, totalDiscount, finalPrice: basePrice - totalDiscount, breakdown };
                 const hasMemberDiscount = pricing.totalDiscount > 0;
+                const multiCount = !editingBooking && selectedCourtIds.length > 1 ? selectedCourtIds.length : 0;
                 return (
                   <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                    <div className="text-sm text-gray-600">{t.bookings.price}:</div>
+                    <div className="text-sm text-gray-600">
+                      {t.bookings.price}{multiCount > 0 ? ` (por campo × ${multiCount})` : ''}:
+                    </div>
                     {hasMemberDiscount ? (
                       <>
                         <div className="space-y-1">
@@ -2943,6 +3019,11 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                       </>
                     ) : (
                       <div className="text-lg font-bold text-gray-900">{pricing.basePrice.toFixed(2)} EUR</div>
+                    )}
+                    {multiCount > 0 && (
+                      <div className="text-xs text-blue-600 font-medium border-t border-gray-200 pt-2">
+                        Total estimado: {(pricing.finalPrice * multiCount).toFixed(2)} EUR ({multiCount} campos)
+                      </div>
                     )}
                   </div>
                 );
@@ -2976,10 +3057,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2"
+                  disabled={!editingBooking && selectedCourtIds.length === 0}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Check className="w-4 h-4" />
-                  {editingBooking ? (t.common?.save || 'Save') : t.bookings.book}
+                  {editingBooking
+                    ? (t.common?.save || 'Save')
+                    : selectedCourtIds.length > 1
+                      ? `${t.bookings.book} (${selectedCourtIds.length} campos)`
+                      : t.bookings.book}
                 </button>
               </div>
             </form>

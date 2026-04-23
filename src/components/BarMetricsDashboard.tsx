@@ -12,7 +12,9 @@ import {
   Package,
   Calendar,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Banknote,
+  CreditCard
 } from 'lucide-react';
 
 interface BarMetricsDashboardProps {
@@ -21,6 +23,8 @@ interface BarMetricsDashboardProps {
 
 interface PeriodMetrics {
   totalRevenue: number;
+  cashRevenue: number;
+  cardRevenue: number;
   totalOrders: number;
   averageOrderValue: number;
   uniqueCustomers: number;
@@ -98,6 +102,8 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
     if (!effectiveUserId) {
       return {
         totalRevenue: 0,
+        cashRevenue: 0,
+        cardRevenue: 0,
         totalOrders: 0,
         averageOrderValue: 0,
         uniqueCustomers: 0,
@@ -107,16 +113,17 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
       };
     }
 
-    // Fetch paid bar tabs (all orders now go through bar_tabs)
     const { data: paidTabs } = await supabase
       .from('bar_tabs')
-      .select('id, total, player_name, created_at')
+      .select('id, total, player_name, created_at, payment_method')
       .eq('club_owner_id', effectiveUserId)
       .eq('payment_status', 'paid')
       .gte('created_at', startDate)
       .lte('created_at', endDate);
 
-    const orders = (paidTabs || []).map(t => ({ id: t.id, total: t.total, customer_name: t.player_name, created_at: t.created_at }));
+    const orders = (paidTabs || []).map(t => ({ id: t.id, total: t.total, customer_name: t.player_name, created_at: t.created_at, payment_method: t.payment_method as string | null }));
+    const cashRevenue = orders.filter(o => o.payment_method === 'cash').reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+    const cardRevenue = orders.filter(o => o.payment_method === 'card').reduce((sum, o) => sum + (Number(o.total) || 0), 0);
 
     // Fetch tab items from paid tabs for product/category metrics
     const paidTabIds = (paidTabs || []).map(t => t.id);
@@ -191,6 +198,8 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
 
     return {
       totalRevenue,
+      cashRevenue,
+      cardRevenue,
       totalOrders,
       averageOrderValue,
       uniqueCustomers,
@@ -304,7 +313,7 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
 
       {comparison && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
@@ -385,6 +394,42 @@ export default function BarMetricsDashboard({ staffClubOwnerId }: BarMetricsDash
               <div className="mt-2 pt-2 border-t border-gray-100">
                 <p className="text-xs text-gray-500">
                   {labels.previous}: <span className="font-medium text-gray-700">{comparison.previous.uniqueCustomers}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between">
+                <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                  <Banknote className="w-5 h-5 text-emerald-600" />
+                </div>
+                <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">💵 Cash</span>
+              </div>
+              <div className="mt-4">
+                <p className="text-2xl font-bold text-gray-900">{formatCurrency(comparison.current.cashRevenue)}</p>
+                <p className="text-sm text-gray-500">Receita Dinheiro</p>
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-100">
+                <p className="text-xs text-gray-500">
+                  {labels.previous}: <span className="font-medium text-gray-700">{formatCurrency(comparison.previous.cashRevenue)}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center justify-between">
+                <div className="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-sky-600" />
+                </div>
+                <span className="text-xs font-medium text-sky-700 bg-sky-50 px-2 py-1 rounded-full">💳 Cartão</span>
+              </div>
+              <div className="mt-4">
+                <p className="text-2xl font-bold text-gray-900">{formatCurrency(comparison.current.cardRevenue)}</p>
+                <p className="text-sm text-gray-500">Receita Cartão</p>
+              </div>
+              <div className="mt-2 pt-2 border-t border-gray-100">
+                <p className="text-xs text-gray-500">
+                  {labels.previous}: <span className="font-medium text-gray-700">{formatCurrency(comparison.previous.cardRevenue)}</span>
                 </p>
               </div>
             </div>

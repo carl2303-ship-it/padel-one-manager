@@ -27,10 +27,13 @@ import {
   Upload,
   Image,
   Loader2,
-  Star
+  Star,
+  Search,
+  Banknote
 } from 'lucide-react';
 import BarMetricsDashboard from './BarMetricsDashboard';
 import { compressImage } from '../lib/imageCompressor';
+import { compareMenuItemsInCategory, orderMenuItemsByCategoryList } from '../lib/menuItemSort';
 
 /** PostgREST quando a coluna ainda não existe na base (migração não aplicada). */
 function isPostgrestMissingColumnError(err: { code?: string; message?: string } | null): boolean {
@@ -117,6 +120,7 @@ interface BarTab {
   status: 'open' | 'closed';
   total: number;
   payment_status: 'pending' | 'paid';
+  payment_method: 'cash' | 'card' | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
@@ -220,6 +224,14 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
   const phoneLookupTimeout = useState<ReturnType<typeof setTimeout> | null>(null);
   const [addingItemToTab, setAddingItemToTab] = useState<string | null>(null);
   const [tabFilter, setTabFilter] = useState<'open' | 'closed' | 'all'>('open');
+  const [sendingToKitchen, setSendingToKitchen] = useState<string | null>(null);
+  const [paymentChoiceTab, setPaymentChoiceTab] = useState<BarTab | null>(null);
+
+  // Name lookup state (new tab form)
+  const [nameLookupResults, setNameLookupResults] = useState<{ name: string; phone: string | null; source: string; discount: number }[]>([]);
+  const [lookingUpName, setLookingUpName] = useState(false);
+  const [showNameSuggestions, setShowNameSuggestions] = useState(false);
+  const nameLookupTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // QR Orders & Tables state
   const [qrOrders, setQrOrders] = useState<QrOrder[]>([]);
@@ -565,7 +577,11 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     ]);
 
     if (categoriesResult.data) setCategories(categoriesResult.data);
-    if (itemsResult.data) setMenuItems(itemsResult.data);
+    if (itemsResult.data && categoriesResult.data) {
+      setMenuItems(orderMenuItemsByCategoryList(categoriesResult.data, itemsResult.data));
+    } else if (itemsResult.data) {
+      setMenuItems(itemsResult.data);
+    }
     if (tabsResult.data) {
       setBarTabs(tabsResult.data);
       // Load items for all open tabs
@@ -727,6 +743,169 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     }
   };
 
+  const handleNameLookup = async (name: string) => {
+    if (!effectiveUserId || name.length < 2) {
+      setNameLookupResults([]);
+      setShowNameSuggestions(false);
+      return;
+    }
+
+    setLookingUpName(true);
+    try {
+      const pattern = `%${name}%`;
+      const results: { name: string; phone: string | null; source: string; discount: number }[] = [];
+      const seen = new Set<string>();
+
+      const { data: members } = await supabase
+        .from('member_subscriptions')
+        .select('member_name, member_phone, status, plan:membership_plans(name, bar_discount_percent)')
+        .eq('club_owner_id', effectiveUserId)
+        .ilike('member_name', pattern)
+        .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0])
+        .limit(10);
+
+      if (members) {
+        for (const m of members) {
+          const key = `${m.member_name}|${m.member_phone || ''}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const discount = (m.plan as any)?.bar_discount_percent || 0;
+          const planName = (m.plan as any)?.name || '';
+          results.push({
+            name: m.member_name,
+            phone: m.member_phone || null,
+            source: `Membro — ${planName}`,
+            discount
+          });
+        }
+      }
+
+      const { data: players } = await supabase
+        .from('player_accounts')
+        .select('id, name, phone_number')
+        .ilike('name', pattern)
+        .limit(10);
+
+      if (players) {
+        for (const p of players) {
+          const key = `${p.name}|${p.phone_number || ''}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const discount = await getMemberBarDiscount(p.phone_number, p.id);
+          results.push({
+            name: p.name,
+            phone: p.phone_number || null,
+            source: discount > 0 ? 'Jogador (membro)' : 'Jogador registado',
+            discount
+          });
+        }
+      }
+
+      setNameLookupResults(results);
+      setShowNameSuggestions(results.length > 0);
+    } catch (err) {
+      console.error('Name lookup error:', err);
+      setNameLookupResults([]);
+    }
+    setLookingUpName(false);
+  };
+
+  const handleNameChange = (name: string) => {
+    setNewTabForm(prev => ({ ...prev, player_name: name }));
+    setShowNameSuggestions(false);
+    if (nameLookupTimeout.current) clearTimeout(nameLookupTimeout.current);
+    if (name.length >= 2) {
+      nameLookupTimeout.current = setTimeout(() => handleNameLookup(name), 500);
+    } else {
+      setNameLookupResults([]);
+    }
+  };
+
+  const handleSelectNameSuggestion = (suggestion: { name: string; phone: string | null; source: string; discount: number }) => {
+    setNewTabForm(prev => ({
+      ...prev,
+      player_name: suggestion.name,
+      player_phone: suggestion.phone || prev.player_phone
+    }));
+    setPhoneLookupResult({
+      found: true,
+      name: suggestion.name,
+      source: suggestion.source,
+      discount: suggestion.discount
+    });
+    setShowNameSuggestions(false);
+    setNameLookupResults([]);
+  };
+
+  const handleSendToKitchen = async (tab: BarTab) => {
+    if (!effectiveUserId || !clubId) return;
+    const items = tabItems[tab.id] || [];
+    const foodItems = items.filter(item => {
+      const mi = menuItems.find(m => m.id === item.menu_item_id);
+      return mi?.is_food;
+    });
+    if (foodItems.length === 0) return;
+
+    setSendingToKitchen(tab.id);
+    try {
+      const foodTotal = foodItems.reduce((sum, item) => sum + item.total_price, 0);
+
+      const { data: orderData, error: orderError } = await supabase
+        .from('club_orders')
+        .insert({
+          club_id: clubId,
+          club_owner_id: effectiveUserId,
+          table_number: 'Balcão',
+          customer_name: tab.player_name,
+          customer_phone: tab.player_phone || null,
+          total: foodTotal,
+          status: 'pending',
+          source: 'manual' as const,
+          payment_status: 'pending',
+          notes: `Conta: ${tab.player_name}`
+        })
+        .select('id')
+        .single();
+
+      if (orderError || !orderData) {
+        console.error('Error creating kitchen order:', orderError);
+        alert('Erro ao criar pedido para a cozinha.');
+        setSendingToKitchen(null);
+        return;
+      }
+
+      const orderItems = foodItems.map(item => ({
+        order_id: orderData.id,
+        menu_item_id: item.menu_item_id,
+        item_name: item.item_name,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        is_food: true,
+        notes: null as string | null,
+        status: 'pending'
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('club_order_items')
+        .insert(orderItems);
+
+      if (itemsError) {
+        console.error('Error creating order items:', itemsError);
+        alert('Erro ao criar items do pedido.');
+        setSendingToKitchen(null);
+        return;
+      }
+
+      await reloadOrders();
+      alert(`Pedido enviado para a cozinha! (${foodItems.length} item(s) de comida)`);
+    } catch (err) {
+      console.error('Send to kitchen error:', err);
+      alert('Erro ao enviar pedido para a cozinha.');
+    }
+    setSendingToKitchen(null);
+  };
+
   const handleCreateTab = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!effectiveUserId || !newTabForm.player_name.trim()) return;
@@ -805,22 +984,26 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     await loadData();
   };
 
-  const handleToggleTabPayment = async (tab: BarTab) => {
+  const handleToggleTabPayment = async (tab: BarTab, paymentMethod?: 'cash' | 'card') => {
     if (!effectiveUserId) return;
     const newStatus = tab.payment_status === 'paid' ? 'pending' : 'paid';
+
+    if (newStatus === 'paid' && !paymentMethod) {
+      setPaymentChoiceTab(tab);
+      return;
+    }
 
     await supabase
       .from('bar_tabs')
       .update({
         payment_status: newStatus,
+        payment_method: newStatus === 'paid' ? (paymentMethod || null) : null,
         status: newStatus === 'paid' ? 'closed' : tab.status,
         updated_at: new Date().toISOString()
       })
       .eq('id', tab.id);
 
-    // Handle player_transactions
     if (newStatus === 'paid' && tab.total > 0) {
-      // Find or create player_account
       let playerAccountId: string | null = null;
       if (tab.player_phone) {
         const normalizedPhone = tab.player_phone.replace(/\s+/g, '');
@@ -845,7 +1028,6 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
         }
       }
 
-      // Create player_transaction
       const txData: Record<string, unknown> = {
         club_owner_id: effectiveUserId,
         player_name: tab.player_name,
@@ -854,13 +1036,12 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
         amount: tab.total,
         reference_id: tab.id,
         reference_type: 'bar_tab',
-        notes: `Bar: Conta${tab.tournament_name ? ' - ' + tab.tournament_name : ''}`
+        notes: `Bar: Conta${tab.tournament_name ? ' - ' + tab.tournament_name : ''}${paymentMethod ? ` (${paymentMethod === 'cash' ? 'Dinheiro' : 'Cartão'})` : ''}`
       };
       if (playerAccountId) txData.player_account_id = playerAccountId;
 
       await supabase.from('player_transactions').insert(txData);
     } else if (newStatus === 'pending') {
-      // Remove the transaction
       await supabase
         .from('player_transactions')
         .delete()
@@ -868,6 +1049,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
         .eq('reference_type', 'bar_tab');
     }
 
+    setPaymentChoiceTab(null);
     await loadData();
   };
 
@@ -1376,7 +1558,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
   };
 
   const moveItem = async (categoryId: string, index: number, direction: 'up' | 'down') => {
-    const catItems = menuItems.filter(i => i.category_id === categoryId);
+    const catItems = [...menuItems.filter((i) => i.category_id === categoryId)].sort(compareMenuItemsInCategory);
     const swapIndex = direction === 'up' ? index - 1 : index + 1;
     if (swapIndex < 0 || swapIndex >= catItems.length) return;
     const current = catItems[index];
@@ -1737,6 +1919,13 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                                 {tab.payment_status === 'paid' ? t.bar.tabPaid :
                                  tab.status === 'open' ? t.bar.tabOpen : t.bar.tabClosed}
                               </span>
+                              {tab.payment_status === 'paid' && tab.payment_method && (
+                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                  tab.payment_method === 'cash' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {tab.payment_method === 'cash' ? '💵' : '💳'}
+                                </span>
+                              )}
                               <span className="text-xs text-gray-400">
                                 {items.length || '0'} items
                               </span>
@@ -1812,7 +2001,9 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                             </div>
                             <div className="space-y-2 max-h-64 overflow-y-auto">
                               {categories.map(cat => {
-                                const catItems = menuItems.filter(i => i.category_id === cat.id && i.is_available);
+                                const catItems = [...menuItems.filter((i) => i.category_id === cat.id && i.is_available)].sort(
+                                  compareMenuItemsInCategory
+                                );
                                 if (catItems.length === 0) return null;
                                 return (
                                   <div key={cat.id}>
@@ -1850,6 +2041,20 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                                 <Plus className="w-4 h-4" />
                                 {t.bar.addItemToTab}
                               </button>
+                              {(tabItems[tab.id] || []).some(item => menuItems.find(m => m.id === item.menu_item_id)?.is_food) && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleSendToKitchen(tab); }}
+                                  disabled={sendingToKitchen === tab.id}
+                                  className="px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-50 rounded-lg transition flex items-center gap-1 border border-amber-300 disabled:opacity-50"
+                                >
+                                  {sendingToKitchen === tab.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <ChefHat className="w-4 h-4" />
+                                  )}
+                                  Enviar para Cozinha
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
                                 className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-lg transition flex items-center gap-1 border border-gray-200"
@@ -2180,7 +2385,9 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
             </div>
           ) : (
             categories.map((category, catIdx) => {
-              const categoryItems = menuItems.filter(item => item.category_id === category.id);
+              const categoryItems = [...menuItems.filter((item) => item.category_id === category.id)].sort(
+                compareMenuItemsInCategory
+              );
               return (
                 <div key={category.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                   <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-100">
@@ -2473,7 +2680,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
               <h2 className="text-lg font-semibold text-gray-900">{t.bar.openTab}</h2>
-              <button onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); }} className="p-2 hover:bg-gray-100 rounded-lg">
+              <button onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); setNameLookupResults([]); setShowNameSuggestions(false); }} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2523,16 +2730,53 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
               </div>
 
               {/* Name */}
-              <div>
+              <div className="relative">
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t.bar.playerName} *</label>
-                <input
-                  type="text"
-                  value={newTabForm.player_name}
-                  onChange={(e) => setNewTabForm({ ...newTabForm, player_name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                  placeholder="Nome do cliente..."
-                  required
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={newTabForm.player_name}
+                    onChange={(e) => handleNameChange(e.target.value)}
+                    onFocus={() => { if (nameLookupResults.length > 0) setShowNameSuggestions(true); }}
+                    onBlur={() => { setTimeout(() => setShowNameSuggestions(false), 200); }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                    placeholder="Nome do cliente..."
+                    required
+                    autoComplete="off"
+                  />
+                  {lookingUpName && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Escreve o nome para procurar nos jogadores e membros do clube</p>
+                {showNameSuggestions && nameLookupResults.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {nameLookupResults.map((s, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleSelectNameSuggestion(s)}
+                        className="w-full text-left px-3 py-2 hover:bg-orange-50 transition flex items-center justify-between border-b border-gray-50 last:border-0"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-gray-400" />
+                            {s.name}
+                          </div>
+                          <div className="text-xs text-gray-500">{s.source}{s.phone ? ` — ${s.phone}` : ''}</div>
+                        </div>
+                        {s.discount > 0 && (
+                          <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                            -{s.discount}%
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {phoneLookupResult?.found && phoneLookupResult.name && newTabForm.player_name !== phoneLookupResult.name && (
                   <button
                     type="button"
@@ -2565,7 +2809,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
               )}
 
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+                <button type="button" onClick={() => { setShowNewTabForm(false); setPhoneLookupResult(null); setNameLookupResults([]); setShowNameSuggestions(false); }} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
                   {t.common.cancel}
                 </button>
                 <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition flex items-center justify-center gap-2 disabled:opacity-50">
@@ -2574,6 +2818,42 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============ PAYMENT METHOD CHOICE MODAL ============ */}
+      {paymentChoiceTab && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">Método de Pagamento</h2>
+              <button onClick={() => setPaymentChoiceTab(null)} className="p-2 hover:bg-gray-100 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="text-center mb-4">
+                <p className="text-sm text-gray-600">{paymentChoiceTab.player_name}</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">{paymentChoiceTab.total.toFixed(2)} EUR</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handleToggleTabPayment(paymentChoiceTab, 'cash')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-green-200 hover:border-green-400 hover:bg-green-50 transition"
+                >
+                  <Banknote className="w-8 h-8 text-green-600" />
+                  <span className="font-semibold text-green-700">Dinheiro</span>
+                </button>
+                <button
+                  onClick={() => handleToggleTabPayment(paymentChoiceTab, 'card')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-blue-200 hover:border-blue-400 hover:bg-blue-50 transition"
+                >
+                  <CreditCard className="w-8 h-8 text-blue-600" />
+                  <span className="font-semibold text-blue-700">Cartão</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
