@@ -64,31 +64,83 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 1. Find player_account_ids that play at this club (via player_clubs table)
-    let clubPlayerIds: Set<string> | null = null;
+    // 1. Build the set of player_account_ids associated with this club
+    //    Sources: favorite_club_id + player_clubs (manual) + open_game_players from past games
+    const clubPlayerIds = new Set<string>();
+
     if (clubId) {
+      // Source A: players who have this club as favorite_club_id
+      const { data: favPlayers } = await admin
+        .from("player_accounts")
+        .select("id")
+        .eq("favorite_club_id", clubId)
+        .not("user_id", "is", null);
+      for (const r of favPlayers || []) {
+        if (r.id) clubPlayerIds.add(r.id);
+      }
+      console.log(`[notify-new-open-game] favorite_club_id: ${favPlayers?.length || 0} players`);
+
+      // Source B: player_clubs (manually toggled by player)
       const { data: clubPlayers } = await admin
         .from("player_clubs")
         .select("player_account_id")
         .eq("club_id", clubId);
-      clubPlayerIds = new Set((clubPlayers || []).map((r: any) => r.player_account_id));
-      console.log(`[notify-new-open-game] Found ${clubPlayerIds.size} players at club ${clubId}`);
+      for (const r of clubPlayers || []) {
+        if (r.player_account_id) clubPlayerIds.add(r.player_account_id);
+      }
+      console.log(`[notify-new-open-game] + player_clubs: ${clubPlayerIds.size} total`);
+
+      // Source C: players who have previously played at this club
+      const { data: pastGames } = await admin
+        .from("open_games")
+        .select("id")
+        .eq("club_id", clubId)
+        .in("status", ["open", "full", "completed"])
+        .limit(200);
+
+      if (pastGames && pastGames.length > 0) {
+        const gameIds = pastGames.map((g: any) => g.id);
+        const { data: pastPlayers } = await admin
+          .from("open_game_players")
+          .select("player_account_id")
+          .in("game_id", gameIds)
+          .eq("status", "confirmed");
+        for (const r of pastPlayers || []) {
+          if (r.player_account_id) clubPlayerIds.add(r.player_account_id);
+        }
+      }
+      console.log(`[notify-new-open-game] Total club-associated players: ${clubPlayerIds.size}`);
     }
 
-    // 2. Find matching player_accounts by level
-    const { data: candidates, error: queryErr } = await admin
+    // 2. Find matching player_accounts by level (include null-level players too)
+    const { data: levelCandidates, error: queryErr } = await admin
       .from("player_accounts")
       .select("id, user_id, name, gender, level, player_category, preferred_time")
       .not("user_id", "is", null)
       .gte("level", levelMin)
       .lte("level", levelMax);
 
+    const { data: nullLevelCandidates } = await admin
+      .from("player_accounts")
+      .select("id, user_id, name, gender, level, player_category, preferred_time")
+      .not("user_id", "is", null)
+      .is("level", null);
+
     if (queryErr) {
       console.error("[notify-new-open-game] Query error:", queryErr);
       throw queryErr;
     }
 
-    if (!candidates || candidates.length === 0) {
+    const seenIds = new Set<string>();
+    const candidates = [...(levelCandidates || []), ...(nullLevelCandidates || [])].filter((p) => {
+      if (seenIds.has(p.id)) return false;
+      seenIds.add(p.id);
+      return true;
+    });
+
+    console.log(`[notify-new-open-game] Level candidates: ${levelCandidates?.length || 0}, null-level: ${nullLevelCandidates?.length || 0}, total unique: ${candidates.length}`);
+
+    if (candidates.length === 0) {
       console.log("[notify-new-open-game] No candidates found for level range", levelMin, "-", levelMax);
       return new Response(
         JSON.stringify({ ok: true, notified: 0, reason: "no_candidates" }),
@@ -96,37 +148,67 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 3. Filter by club membership (player_clubs)
-    const clubFiltered = clubPlayerIds
-      ? candidates.filter((p) => clubPlayerIds!.has(p.id))
+    // 3. Filter by club association (player_clubs + past games)
+    const clubFiltered = clubPlayerIds.size > 0
+      ? candidates.filter((p) => clubPlayerIds.has(p.id))
       : candidates;
 
-    // 4. Filter by gender
+    console.log(`[notify-new-open-game] After club filter: ${clubFiltered.length} players`);
+
+    // 4. Filter by gender (inclusive: players without gender data are included)
     const genderFiltered = clubFiltered.filter((p) => {
       if (gender === "all" || gender === "mixed") return true;
       const playerGender =
         p.gender ||
         (p.player_category?.startsWith("M") ? "male" : null) ||
         (p.player_category?.startsWith("F") ? "female" : null);
+      if (!playerGender) return true;
       if (gender === "male") return playerGender === "male";
       if (gender === "female") return playerGender === "female";
       return true;
     });
 
-    // 5. Filter by preferred_time (if player has a preference set)
-    const gameHour = new Date(scheduledAt).getUTCHours();
+    console.log(`[notify-new-open-game] After gender filter: ${genderFiltered.length} players`);
+
+    // 5. Filter by preferred_time using club timezone
+    let clubTimezone = "Europe/Lisbon";
+    if (clubId) {
+      const { data: clubRow } = await admin
+        .from("clubs")
+        .select("timezone")
+        .eq("id", clubId)
+        .maybeSingle();
+      if (clubRow?.timezone) clubTimezone = clubRow.timezone;
+    }
+
+    let gameLocalHour: number;
+    try {
+      const formatter = new Intl.DateTimeFormat("en-US", {
+        timeZone: clubTimezone,
+        hour: "numeric",
+        hour12: false,
+      });
+      gameLocalHour = parseInt(formatter.format(new Date(scheduledAt)), 10);
+    } catch {
+      gameLocalHour = new Date(scheduledAt).getUTCHours();
+    }
+
     const timeFiltered = genderFiltered.filter((p) => {
       if (!p.preferred_time || p.preferred_time === "all_day") return true;
-      if (p.preferred_time === "morning" && gameHour >= 6 && gameHour < 13) return true;
-      if (p.preferred_time === "afternoon" && gameHour >= 13 && gameHour < 19) return true;
-      if (p.preferred_time === "evening" && gameHour >= 19) return true;
+      if (p.preferred_time === "morning" && gameLocalHour >= 6 && gameLocalHour < 13) return true;
+      if (p.preferred_time === "afternoon" && gameLocalHour >= 13 && gameLocalHour < 19) return true;
+      if (p.preferred_time === "evening" && (gameLocalHour >= 19 || gameLocalHour < 6)) return true;
       return false;
     });
+
+    console.log(`[notify-new-open-game] After time filter: ${timeFiltered.length} players (gameLocalHour=${gameLocalHour}, tz=${clubTimezone})`);
 
     // 6. Exclude creator
     const filtered = timeFiltered.filter(
       (p) => p.user_id !== creatorUserId && p.id !== creatorPlayerAccountId,
     );
+
+    console.log(`[notify-new-open-game] After excluding creator: ${filtered.length} players`);
 
     if (filtered.length === 0) {
       console.log("[notify-new-open-game] No players after filtering");
@@ -136,10 +218,28 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 7. Format notification
-    const gameDate = new Date(scheduledAt);
-    const timeStr = `${gameDate.getHours().toString().padStart(2, "0")}:${gameDate.getMinutes().toString().padStart(2, "0")}`;
-    const dateStr = `${gameDate.getDate().toString().padStart(2, "0")}/${(gameDate.getMonth() + 1).toString().padStart(2, "0")}`;
+    // 7. Format notification using club local time
+    let timeStr: string;
+    let dateStr: string;
+    try {
+      const timeFmt = new Intl.DateTimeFormat("pt-PT", {
+        timeZone: clubTimezone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      const dateFmt = new Intl.DateTimeFormat("pt-PT", {
+        timeZone: clubTimezone,
+        day: "2-digit",
+        month: "2-digit",
+      });
+      timeStr = timeFmt.format(new Date(scheduledAt));
+      dateStr = dateFmt.format(new Date(scheduledAt));
+    } catch {
+      const gameDate = new Date(scheduledAt);
+      timeStr = `${gameDate.getUTCHours().toString().padStart(2, "0")}:${gameDate.getUTCMinutes().toString().padStart(2, "0")}`;
+      dateStr = `${gameDate.getUTCDate().toString().padStart(2, "0")}/${(gameDate.getUTCMonth() + 1).toString().padStart(2, "0")}`;
+    }
 
     const typeLabel = gameType === "competitive" ? "Competitivo" : "Amigável";
     const displayName = creatorName || "Um jogador";
@@ -153,9 +253,10 @@ Deno.serve(async (req: Request) => {
 
     // 8. Send to all matching players (cap at 100)
     const targets = filtered.slice(0, 100);
-    console.log(`[notify-new-open-game] Sending to ${targets.length} players`);
+    console.log(`[notify-new-open-game] Sending push to ${targets.length} players`);
 
     let totalSent = 0;
+    let totalSubs = 0;
     const results = await Promise.allSettled(
       targets.map(async (p) => {
         const r = await deliverWebPushNotifications(admin, {
@@ -165,18 +266,23 @@ Deno.serve(async (req: Request) => {
           payload,
           appSource: "player",
         });
-        return r.sentCount;
+        return r;
       }),
     );
 
     for (const r of results) {
-      if (r.status === "fulfilled") totalSent += r.value;
+      if (r.status === "fulfilled") {
+        totalSent += r.value.sentCount;
+        totalSubs += r.value.totalSubscriptions;
+      } else {
+        console.error("[notify-new-open-game] Push delivery error:", r.reason);
+      }
     }
 
-    console.log(`[notify-new-open-game] Done: ${totalSent} push notifications delivered`);
+    console.log(`[notify-new-open-game] Done: ${totalSent}/${totalSubs} push delivered to ${targets.length} targets`);
 
     return new Response(
-      JSON.stringify({ ok: true, notified: targets.length, delivered: totalSent }),
+      JSON.stringify({ ok: true, notified: targets.length, delivered: totalSent, totalSubscriptions: totalSubs }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
