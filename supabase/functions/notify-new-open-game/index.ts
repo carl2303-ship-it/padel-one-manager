@@ -64,61 +64,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 1. Build the set of player_account_ids associated with this club
-    //    Sources: favorite_club_id + player_clubs (manual) + open_game_players from past games
-    const clubPlayerIds = new Set<string>();
+    // 1. Find ALL matching player_accounts by level
+    //    No club filter — players see the club name in the notification and decide
+    //    Wider level range: ±1.0 instead of ±0.5 to include more candidates
+    const widerLevelMin = Math.max(0.5, levelMin - 0.5);
+    const widerLevelMax = levelMax + 0.5;
 
-    if (clubId) {
-      // Source A: players who have this club as favorite_club_id
-      const { data: favPlayers } = await admin
-        .from("player_accounts")
-        .select("id")
-        .eq("favorite_club_id", clubId)
-        .not("user_id", "is", null);
-      for (const r of favPlayers || []) {
-        if (r.id) clubPlayerIds.add(r.id);
-      }
-      console.log(`[notify-new-open-game] favorite_club_id: ${favPlayers?.length || 0} players`);
-
-      // Source B: player_clubs (manually toggled by player)
-      const { data: clubPlayers } = await admin
-        .from("player_clubs")
-        .select("player_account_id")
-        .eq("club_id", clubId);
-      for (const r of clubPlayers || []) {
-        if (r.player_account_id) clubPlayerIds.add(r.player_account_id);
-      }
-      console.log(`[notify-new-open-game] + player_clubs: ${clubPlayerIds.size} total`);
-
-      // Source C: players who have previously played at this club
-      const { data: pastGames } = await admin
-        .from("open_games")
-        .select("id")
-        .eq("club_id", clubId)
-        .in("status", ["open", "full", "completed"])
-        .limit(200);
-
-      if (pastGames && pastGames.length > 0) {
-        const gameIds = pastGames.map((g: any) => g.id);
-        const { data: pastPlayers } = await admin
-          .from("open_game_players")
-          .select("player_account_id")
-          .in("game_id", gameIds)
-          .eq("status", "confirmed");
-        for (const r of pastPlayers || []) {
-          if (r.player_account_id) clubPlayerIds.add(r.player_account_id);
-        }
-      }
-      console.log(`[notify-new-open-game] Total club-associated players: ${clubPlayerIds.size}`);
-    }
-
-    // 2. Find matching player_accounts by level (include null-level players too)
     const { data: levelCandidates, error: queryErr } = await admin
       .from("player_accounts")
       .select("id, user_id, name, gender, level, player_category, preferred_time")
       .not("user_id", "is", null)
-      .gte("level", levelMin)
-      .lte("level", levelMax);
+      .gte("level", widerLevelMin)
+      .lte("level", widerLevelMax);
 
     const { data: nullLevelCandidates } = await admin
       .from("player_accounts")
@@ -138,25 +95,18 @@ Deno.serve(async (req: Request) => {
       return true;
     });
 
-    console.log(`[notify-new-open-game] Level candidates: ${levelCandidates?.length || 0}, null-level: ${nullLevelCandidates?.length || 0}, total unique: ${candidates.length}`);
+    console.log(`[notify-new-open-game] Level ${widerLevelMin}-${widerLevelMax}: ${levelCandidates?.length || 0} candidates, null-level: ${nullLevelCandidates?.length || 0}, total: ${candidates.length}`);
 
     if (candidates.length === 0) {
-      console.log("[notify-new-open-game] No candidates found for level range", levelMin, "-", levelMax);
+      console.log("[notify-new-open-game] No candidates found");
       return new Response(
         JSON.stringify({ ok: true, notified: 0, reason: "no_candidates" }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // 3. Filter by club association (player_clubs + past games)
-    const clubFiltered = clubPlayerIds.size > 0
-      ? candidates.filter((p) => clubPlayerIds.has(p.id))
-      : candidates;
-
-    console.log(`[notify-new-open-game] After club filter: ${clubFiltered.length} players`);
-
-    // 4. Filter by gender (inclusive: players without gender data are included)
-    const genderFiltered = clubFiltered.filter((p) => {
+    // 2. Filter by gender (inclusive: players without gender data are included)
+    const genderFiltered = candidates.filter((p) => {
       if (gender === "all" || gender === "mixed") return true;
       const playerGender =
         p.gender ||
@@ -170,7 +120,7 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[notify-new-open-game] After gender filter: ${genderFiltered.length} players`);
 
-    // 5. Filter by preferred_time using club timezone
+    // 3. Filter by preferred_time using club timezone
     let clubTimezone = "Europe/Lisbon";
     if (clubId) {
       const { data: clubRow } = await admin
@@ -203,7 +153,7 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[notify-new-open-game] After time filter: ${timeFiltered.length} players (gameLocalHour=${gameLocalHour}, tz=${clubTimezone})`);
 
-    // 6. Exclude creator
+    // 4. Exclude creator
     const filtered = timeFiltered.filter(
       (p) => p.user_id !== creatorUserId && p.id !== creatorPlayerAccountId,
     );
@@ -218,7 +168,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 7. Format notification using club local time
+    // 5. Format notification using club local time
     let timeStr: string;
     let dateStr: string;
     try {
@@ -251,8 +201,8 @@ Deno.serve(async (req: Request) => {
       tag: `new-game-${gameId}`,
     };
 
-    // 8. Send to all matching players (cap at 100)
-    const targets = filtered.slice(0, 100);
+    // 6. Send to all matching players (cap at 200)
+    const targets = filtered.slice(0, 200);
     console.log(`[notify-new-open-game] Sending push to ${targets.length} players`);
 
     let totalSent = 0;
