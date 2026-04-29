@@ -224,6 +224,9 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
   const [lookingUpPhone, setLookingUpPhone] = useState(false);
   const phoneLookupTimeout = useState<ReturnType<typeof setTimeout> | null>(null);
   const [addingItemToTab, setAddingItemToTab] = useState<string | null>(null);
+  const [addItemCategoryFilter, setAddItemCategoryFilter] = useState<string>('popular');
+  const [addItemSearch, setAddItemSearch] = useState('');
+  const [popularItemIds, setPopularItemIds] = useState<string[]>([]);
   const [tabFilter, setTabFilter] = useState<'open' | 'closed' | 'all'>('open');
   const [sendingToKitchen, setSendingToKitchen] = useState<string | null>(null);
   const [paymentChoiceTab, setPaymentChoiceTab] = useState<BarTab | null>(null);
@@ -616,6 +619,26 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
       setTabItems(prev => ({ ...prev, [tabId]: data }));
     }
   };
+
+  const loadPopularItems = useCallback(async () => {
+    if (!effectiveUserId) return;
+    const menuItemIds = menuItems.map(m => m.id);
+    if (menuItemIds.length === 0) return;
+    const { data } = await supabase
+      .from('bar_tab_items')
+      .select('menu_item_id, quantity')
+      .in('menu_item_id', menuItemIds);
+    if (data && data.length > 0) {
+      const counts = new Map<string, number>();
+      data.forEach(row => {
+        counts.set(row.menu_item_id, (counts.get(row.menu_item_id) || 0) + row.quantity);
+      });
+      const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
+      setPopularItemIds(sorted);
+    }
+  }, [effectiveUserId, menuItems]);
+
+  useEffect(() => { loadPopularItems(); }, [loadPopularItems]);
 
   // ---- Tab Management Functions ----
 
@@ -2056,55 +2079,122 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                           <span className="font-bold text-lg text-gray-900">{tab.total.toFixed(2)} EUR</span>
                         </div>
 
-                        {/* Add item section (inline menu) */}
-                        {tab.status === 'open' && tab.payment_status !== 'paid' && isAddingItem && (
+                        {/* Add item section (inline menu with categories, search & popular) */}
+                        {tab.status === 'open' && tab.payment_status !== 'paid' && isAddingItem && (() => {
+                          const availableItems = menuItems.filter(i => i.is_available);
+                          const searchLower = addItemSearch.toLowerCase().trim();
+                          const filteredItems = searchLower
+                            ? availableItems.filter(i => i.name.toLowerCase().includes(searchLower))
+                            : addItemCategoryFilter === 'popular'
+                              ? availableItems.filter(i => popularItemIds.includes(i.id))
+                                  .sort((a, b) => popularItemIds.indexOf(a.id) - popularItemIds.indexOf(b.id))
+                              : addItemCategoryFilter === 'all'
+                                ? availableItems
+                                : availableItems.filter(i => i.category_id === addItemCategoryFilter);
+                          const showGrouped = addItemCategoryFilter === 'all' && !searchLower;
+                          return (
                           <div className="border-t border-gray-200 p-4 bg-orange-50/50">
                             <div className="flex items-center justify-between mb-3">
                               <h4 className="font-medium text-gray-900 text-sm">{t.bar.selectItem}</h4>
-                              <button
-                                onClick={() => setAddingItemToTab(null)}
-                                className="p-1 hover:bg-gray-200 rounded"
-                              >
+                              <button onClick={() => { setAddingItemToTab(null); setAddItemSearch(''); setAddItemCategoryFilter('popular'); }} className="p-1 hover:bg-gray-200 rounded">
                                 <X className="w-4 h-4" />
                               </button>
                             </div>
-                            <div className="space-y-2 max-h-64 overflow-y-auto">
-                              {categories.map(cat => {
-                                const catItems = [...menuItems.filter((i) => i.category_id === cat.id && i.is_available)].sort(
-                                  compareMenuItemsInCategory
-                                );
-                                if (catItems.length === 0) return null;
-                                return (
-                                  <div key={cat.id}>
-                                    <div className="text-xs font-semibold text-gray-500 uppercase mb-1">{cat.name}</div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                      {catItems.map(menuItem => (
-                                        <button
-                                          key={menuItem.id}
-                                          onClick={() => handleAddItemToTab(tab.id, menuItem)}
-                                          className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50 transition text-left"
-                                        >
-                                          <span className="text-sm font-medium text-gray-900">{menuItem.name}</span>
-                                          <span className="text-sm text-orange-600 font-semibold">{menuItem.price.toFixed(2)} EUR</span>
-                                        </button>
-                                      ))}
+
+                            {/* Search bar */}
+                            <div className="relative mb-3">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                              <input
+                                type="text"
+                                value={addItemSearch}
+                                onChange={e => setAddItemSearch(e.target.value)}
+                                placeholder="Procurar item..."
+                                className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-300 focus:border-orange-300"
+                              />
+                              {addItemSearch && (
+                                <button onClick={() => setAddItemSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-gray-200 rounded">
+                                  <X className="w-3.5 h-3.5 text-gray-400" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Category tabs */}
+                            {!searchLower && (
+                              <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-hide">
+                                <button
+                                  onClick={() => setAddItemCategoryFilter('popular')}
+                                  className={`flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition ${addItemCategoryFilter === 'popular' ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-orange-300'}`}
+                                >
+                                  <Star className="w-3 h-3" /> Top
+                                </button>
+                                <button
+                                  onClick={() => setAddItemCategoryFilter('all')}
+                                  className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition ${addItemCategoryFilter === 'all' ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-orange-300'}`}
+                                >
+                                  Todos
+                                </button>
+                                {categories.map(cat => {
+                                  const hasItems = availableItems.some(i => i.category_id === cat.id);
+                                  if (!hasItems) return null;
+                                  return (
+                                    <button
+                                      key={cat.id}
+                                      onClick={() => setAddItemCategoryFilter(cat.id)}
+                                      className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition ${addItemCategoryFilter === cat.id ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:border-orange-300'}`}
+                                    >
+                                      {cat.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* Items grid */}
+                            <div className="space-y-2 max-h-72 overflow-y-auto">
+                              {showGrouped ? (
+                                categories.map(cat => {
+                                  const catItems = [...availableItems.filter(i => i.category_id === cat.id)].sort(compareMenuItemsInCategory);
+                                  if (catItems.length === 0) return null;
+                                  return (
+                                    <div key={cat.id}>
+                                      <div className="text-xs font-semibold text-gray-500 uppercase mb-1 sticky top-0 bg-orange-50/90 py-1">{cat.name}</div>
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                        {catItems.map(menuItem => (
+                                          <button key={menuItem.id} onClick={() => handleAddItemToTab(tab.id, menuItem)} className="flex flex-col px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50 transition text-left">
+                                            <span className="text-sm font-medium text-gray-900 truncate w-full">{menuItem.name}</span>
+                                            <span className="text-xs text-orange-600 font-semibold mt-0.5">{menuItem.price.toFixed(2)} €</span>
+                                          </button>
+                                        ))}
+                                      </div>
                                     </div>
-                                  </div>
-                                );
-                              })}
-                              {menuItems.filter(i => i.is_available).length === 0 && (
-                                <p className="text-sm text-gray-500 text-center py-4">{t.bar.noItems}</p>
+                                  );
+                                })
+                              ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                                  {filteredItems.sort(compareMenuItemsInCategory).map(menuItem => (
+                                    <button key={menuItem.id} onClick={() => handleAddItemToTab(tab.id, menuItem)} className="flex flex-col px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50 transition text-left">
+                                      <span className="text-sm font-medium text-gray-900 truncate w-full">{menuItem.name}</span>
+                                      <span className="text-xs text-orange-600 font-semibold mt-0.5">{menuItem.price.toFixed(2)} €</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              {filteredItems.length === 0 && (
+                                <p className="text-sm text-gray-500 text-center py-4">
+                                  {searchLower ? 'Nenhum item encontrado' : addItemCategoryFilter === 'popular' && popularItemIds.length === 0 ? 'Sem histórico de vendas' : t.bar.noItems}
+                                </p>
                               )}
                             </div>
                           </div>
-                        )}
+                          );
+                        })()}
 
                         {/* Action buttons */}
                         <div className="px-4 py-3 flex flex-wrap gap-2 border-t border-gray-100">
                           {tab.status === 'open' && tab.payment_status !== 'paid' && (
                             <>
                               <button
-                                onClick={(e) => { e.stopPropagation(); setAddingItemToTab(isAddingItem ? null : tab.id); }}
+                                onClick={(e) => { e.stopPropagation(); if (isAddingItem) { setAddingItemToTab(null); setAddItemSearch(''); setAddItemCategoryFilter('popular'); } else { setAddingItemToTab(tab.id); setAddItemSearch(''); setAddItemCategoryFilter('popular'); } }}
                                 className="px-3 py-1.5 text-sm font-medium text-orange-600 hover:bg-orange-50 rounded-lg transition flex items-center gap-1 border border-orange-200"
                               >
                                 <Plus className="w-4 h-4" />
