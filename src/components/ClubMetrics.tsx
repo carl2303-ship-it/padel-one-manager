@@ -1568,6 +1568,16 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                     </div>
                   ) : (
                     <div className="space-y-4">
+                      <div className="bg-gray-50 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+                        <div className="text-sm font-semibold text-gray-700">
+                          Total: {tournamentMetrics.length} torneios
+                        </div>
+                        <div className="flex flex-wrap gap-4 text-sm font-medium">
+                          <span className="text-blue-600">{financialSummary.tournamentsRegistrations} inscrições</span>
+                          <span className="text-purple-600">{tournamentMetrics.reduce((s, t) => s + t.newPlayers, 0)} novos jogadores</span>
+                          <span className="text-emerald-600">{formatCurrency(financialSummary.tournamentsRevenue)}</span>
+                        </div>
+                      </div>
                       {tournamentMetrics.map(tournament => (
                         <div key={tournament.tournamentId} className="border border-gray-200 rounded-xl p-4">
                           <div className="flex items-center justify-between mb-3">
@@ -1594,16 +1604,6 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
                           </div>
                         </div>
                       ))}
-                      <div className="bg-gray-50 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-                        <div className="text-sm font-semibold text-gray-700">
-                          Total: {tournamentMetrics.length} torneios
-                        </div>
-                        <div className="flex flex-wrap gap-4 text-sm font-medium">
-                          <span className="text-blue-600">{financialSummary.tournamentsRegistrations} inscrições</span>
-                          <span className="text-purple-600">{tournamentMetrics.reduce((s, t) => s + t.newPlayers, 0)} novos jogadores</span>
-                          <span className="text-emerald-600">{formatCurrency(financialSummary.tournamentsRevenue)}</span>
-                        </div>
-                      </div>
                     </div>
                   )}
                 </div>
