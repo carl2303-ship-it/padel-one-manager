@@ -92,11 +92,13 @@ export default function HQDashboard() {
   const loadPlanData = async () => {
     const { data } = await supabase.from('clubs').select('plan_type');
     if (!data) return;
-    const basic = data.filter(c => c.plan_type === 'basic').length;
-    const pro = data.filter(c => c.plan_type === 'pro').length;
+    const bronze = data.filter(c => c.plan_type === 'bronze').length;
+    const silver = data.filter(c => c.plan_type === 'silver').length;
+    const gold = data.filter(c => c.plan_type === 'gold').length;
     setPlanData([
-      { name: 'Basic', value: basic || 0 },
-      { name: 'Pro', value: pro || 0 },
+      { name: 'Bronze', value: bronze || 0 },
+      { name: 'Silver', value: silver || 0 },
+      { name: 'Gold', value: gold || 0 },
     ]);
   };
 

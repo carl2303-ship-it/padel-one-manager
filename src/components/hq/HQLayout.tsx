@@ -4,9 +4,11 @@ import { useAuth } from '../../lib/authContext';
 import {
   LayoutDashboard,
   Building2,
+  Crown,
   ArrowLeftRight,
-  Shield,
+  BarChart3,
   Users,
+  Settings,
   LogOut,
   Menu,
   X,
@@ -15,10 +17,12 @@ import {
 import HQDashboard from './HQDashboard';
 import HQClubManagement from './HQClubManagement';
 import HQTransactions from './HQTransactions';
-import HQTourLicenses from './HQTourLicenses';
+import HQMetrics from './HQMetrics';
+import HQOrganizers from './HQOrganizers';
 import HQUsers from './HQUsers';
+import HQSettings from './HQSettings';
 
-type HQView = 'dashboard' | 'clubs' | 'transactions' | 'licenses' | 'users';
+type HQView = 'dashboard' | 'clubs' | 'organizers' | 'transactions' | 'metrics' | 'users' | 'settings';
 
 interface NavItem {
   id: HQView;
@@ -29,9 +33,11 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
   { id: 'clubs', label: 'Clubes', icon: <Building2 size={20} /> },
+  { id: 'organizers', label: 'Organizadores', icon: <Crown size={20} /> },
   { id: 'transactions', label: 'Transações', icon: <ArrowLeftRight size={20} /> },
-  { id: 'licenses', label: 'Licenças Tour', icon: <Shield size={20} /> },
+  { id: 'metrics', label: 'Métricas', icon: <BarChart3 size={20} /> },
   { id: 'users', label: 'Utilizadores', icon: <Users size={20} /> },
+  { id: 'settings', label: 'Configurações', icon: <Settings size={20} /> },
 ];
 
 export default function HQLayout() {
@@ -78,9 +84,11 @@ export default function HQLayout() {
     switch (currentView) {
       case 'dashboard': return <HQDashboard />;
       case 'clubs': return <HQClubManagement />;
+      case 'organizers': return <HQOrganizers />;
       case 'transactions': return <HQTransactions />;
-      case 'licenses': return <HQTourLicenses />;
+      case 'metrics': return <HQMetrics />;
       case 'users': return <HQUsers />;
+      case 'settings': return <HQSettings />;
     }
   };
 

@@ -1759,7 +1759,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         p_club_owner_id: effectiveUserId,
         p_player_name: player.name,
         p_player_phone: normalizedPhone || 'unknown',
-        p_transaction_type: 'booking',
+        p_transaction_type: 'tournament',
         p_amount: player.final_price || 0,
         p_reference_id: selectedTournament.id,
         p_reference_type: 'tournament',

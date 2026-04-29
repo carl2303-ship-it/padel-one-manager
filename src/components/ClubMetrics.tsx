@@ -769,7 +769,7 @@ export default function ClubMetrics({ staffClubOwnerId }: ClubMetricsProps) {
 
     playerTransactions.forEach(tx => {
       const amount = Number(tx.amount) || 0;
-      const isTournament = tx.reference_type === 'tournament';
+      const isTournament = tx.transaction_type === 'tournament' || tx.reference_type === 'tournament';
       
       if (isTournament) {
         tournamentsRevenueFromTxns += amount;

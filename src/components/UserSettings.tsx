@@ -32,6 +32,11 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
   const [stripeLoading, setStripeLoading] = useState(false);
   const [stripeMessage, setStripeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [licenseKey, setLicenseKey] = useState('');
+  const [activatingLicense, setActivatingLicense] = useState(false);
+  const [licenseMessage, setLicenseMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [contractInfo, setContractInfo] = useState<{ contract_start?: string; contract_expires_at?: string; plan_type?: string } | null>(null);
+
   const [logoUrl, setLogoUrl] = useState('');
   const [logoLoading, setLogoLoading] = useState(false);
   const [logoMessage, setLogoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -49,7 +54,41 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
   useEffect(() => {
     loadStripeSettings();
     loadLogoSettings();
+    loadContractInfo();
   }, [user]);
+
+  const loadContractInfo = async () => {
+    if (!user) return;
+    const { data } = await supabase.from('clubs').select('contract_start, contract_expires_at, plan_type').eq('owner_id', user.id).maybeSingle();
+    if (data) setContractInfo(data);
+  };
+
+  const handleActivateLicense = async () => {
+    if (!licenseKey.trim() || !user) return;
+    setActivatingLicense(true);
+    setLicenseMessage(null);
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co'}/functions/v1/activate-license`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ''}` },
+          body: JSON.stringify({ license_key: licenseKey.trim(), user_id: user.id }),
+        }
+      );
+      const result = await resp.json();
+      if (result.ok) {
+        setLicenseMessage({ type: 'success', text: `Licença ativada! Plano: ${result.plan}. Expira: ${new Date(result.contract_expires_at).toLocaleDateString('pt-PT')}` });
+        setLicenseKey('');
+        loadContractInfo();
+      } else {
+        setLicenseMessage({ type: 'error', text: result.error || 'Chave inválida' });
+      }
+    } catch {
+      setLicenseMessage({ type: 'error', text: 'Erro ao ativar licença' });
+    }
+    setActivatingLicense(false);
+  };
 
   const loadStripeSettings = async () => {
     if (!user) return;
@@ -652,6 +691,64 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
                 {loading ? (t.message?.loading || 'Loading...') : (t.settings?.changePassword || 'Change Password')}
               </button>
             </form>
+          </div>
+
+          {/* License Activation */}
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <KeyRound className="w-5 h-5" />
+              Licença da Plataforma
+            </h3>
+
+            {contractInfo?.contract_expires_at && (
+              <div className={`mb-4 p-3 rounded-lg border ${
+                new Date(contractInfo.contract_expires_at) > new Date()
+                  ? 'bg-green-50 border-green-200'
+                  : 'bg-red-50 border-red-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium text-gray-700">Plano: </span>
+                    <span className="text-sm font-bold text-gray-900 uppercase">{contractInfo.plan_type}</span>
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                    new Date(contractInfo.contract_expires_at) > new Date()
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}>
+                    {new Date(contractInfo.contract_expires_at) > new Date() ? 'Ativo' : 'Expirado'}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {contractInfo.contract_start && `Início: ${new Date(contractInfo.contract_start).toLocaleDateString('pt-PT')}`}
+                  {' — '}
+                  Expira: {new Date(contractInfo.contract_expires_at).toLocaleDateString('pt-PT')}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chave de Licença</label>
+                <input
+                  type="text"
+                  value={licenseKey}
+                  onChange={e => setLicenseKey(e.target.value.toUpperCase())}
+                  placeholder="PADEL-XXXX-XXXX-XXXX"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-center font-mono tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              {licenseMessage && (
+                <div className={`flex items-center gap-2 text-sm ${licenseMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                  {licenseMessage.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                  {licenseMessage.text}
+                </div>
+              )}
+              <button onClick={handleActivateLicense} disabled={activatingLicense || !licenseKey.trim()}
+                className="w-full py-2.5 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 transition">
+                {activatingLicense ? 'A ativar...' : 'Ativar Licença'}
+              </button>
+            </div>
           </div>
 
           <div>

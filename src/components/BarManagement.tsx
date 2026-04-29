@@ -115,6 +115,7 @@ interface BarTab {
   player_name: string;
   player_phone: string | null;
   player_account_id: string | null;
+  bar_customer_id: string | null;
   tournament_id: string | null;
   tournament_name: string | null;
   status: 'open' | 'closed';
@@ -706,7 +707,6 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
           setNewTabForm(prev => ({ ...prev, player_name: memberSub.member_name }));
         }
       } else if (playerAccount) {
-        // Check if player has membership
         const discount = await getMemberBarDiscount(normalizedPhone, playerAccount.id);
         setPhoneLookupResult({
           found: true,
@@ -714,12 +714,30 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
           source: 'Jogador registado',
           discount
         });
-        // Auto-fill name if empty
         if (!newTabForm.player_name.trim() && playerAccount.name) {
           setNewTabForm(prev => ({ ...prev, player_name: playerAccount.name }));
         }
       } else {
-        setPhoneLookupResult({ found: false, name: null, source: null, discount: 0 });
+        const { data: barCustomer } = await supabase
+          .from('bar_customers')
+          .select('id, name, phone_number, visit_count')
+          .eq('club_owner_id', effectiveUserId)
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+
+        if (barCustomer) {
+          setPhoneLookupResult({
+            found: true,
+            name: barCustomer.name,
+            source: `Cliente do bar (${barCustomer.visit_count || 1} visita${(barCustomer.visit_count || 1) > 1 ? 's' : ''})`,
+            discount: 0
+          });
+          if (!newTabForm.player_name.trim() && barCustomer.name) {
+            setNewTabForm(prev => ({ ...prev, player_name: barCustomer.name }));
+          }
+        } else {
+          setPhoneLookupResult({ found: false, name: null, source: null, discount: 0 });
+        }
       }
     } catch (err) {
       console.error('Phone lookup error:', err);
@@ -798,6 +816,27 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
             phone: p.phone_number || null,
             source: discount > 0 ? 'Jogador (membro)' : 'Jogador registado',
             discount
+          });
+        }
+      }
+
+      const { data: barCustomers } = await supabase
+        .from('bar_customers')
+        .select('id, name, phone_number, visit_count')
+        .eq('club_owner_id', effectiveUserId)
+        .ilike('name', pattern)
+        .limit(10);
+
+      if (barCustomers) {
+        for (const bc of barCustomers) {
+          const key = `${bc.name}|${bc.phone_number || ''}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          results.push({
+            name: bc.name,
+            phone: bc.phone_number || null,
+            source: `Cliente do bar (${bc.visit_count || 1} visita${(bc.visit_count || 1) > 1 ? 's' : ''})`,
+            discount: 0
           });
         }
       }
@@ -911,17 +950,27 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     if (!effectiveUserId || !newTabForm.player_name.trim()) return;
     setSaving(true);
 
-    // Try to find player_account_id by phone
     let playerAccountId: string | null = null;
+    let barCustomerId: string | null = null;
     if (newTabForm.player_phone) {
       const normalizedPhone = normalizePhone(newTabForm.player_phone);
-      const { data: existingAccount } = await supabase
+      const { data: existingPlayer } = await supabase
         .from('player_accounts')
         .select('id')
         .eq('phone_number', normalizedPhone)
         .maybeSingle();
       
-      playerAccountId = existingAccount?.id || null;
+      if (existingPlayer) {
+        playerAccountId = existingPlayer.id;
+      } else {
+        const { data: existingBarCustomer } = await supabase
+          .from('bar_customers')
+          .select('id')
+          .eq('club_owner_id', effectiveUserId)
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+        barCustomerId = existingBarCustomer?.id || null;
+      }
     }
 
     const { error } = await supabase.from('bar_tabs').insert({
@@ -929,6 +978,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
       player_name: newTabForm.player_name.trim(),
       player_phone: newTabForm.player_phone.trim() || null,
       player_account_id: playerAccountId,
+      bar_customer_id: barCustomerId,
       notes: newTabForm.notes.trim() || null
     });
 
@@ -942,6 +992,10 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
 
   const handleDeleteTab = async (tabId: string) => {
     if (!confirm(t.bar.confirmDeleteTab)) return;
+    await supabase.from('player_transactions')
+      .delete()
+      .eq('reference_id', tabId)
+      .eq('reference_type', 'bar_tab');
     await supabase.from('bar_tabs').delete().eq('id', tabId);
     await loadData();
   };
@@ -1004,27 +1058,42 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
       .eq('id', tab.id);
 
     if (newStatus === 'paid' && tab.total > 0) {
-      let playerAccountId: string | null = null;
-      if (tab.player_phone) {
+      let playerAccountId: string | null = tab.player_account_id || null;
+
+      if (!playerAccountId && tab.player_phone && effectiveUserId) {
         const normalizedPhone = tab.player_phone.replace(/\s+/g, '');
-        const { data: existingAccount } = await supabase
+
+        const { data: existingPlayer } = await supabase
           .from('player_accounts')
           .select('id')
           .eq('phone_number', normalizedPhone)
           .maybeSingle();
 
-        playerAccountId = existingAccount?.id || null;
+        if (existingPlayer) {
+          playerAccountId = existingPlayer.id;
+        } else {
+          const { data: existingBarCustomer } = await supabase
+            .from('bar_customers')
+            .select('id, visit_count, total_spent')
+            .eq('club_owner_id', effectiveUserId)
+            .eq('phone_number', normalizedPhone)
+            .maybeSingle();
 
-        if (!existingAccount) {
-          const { data: newAccount } = await supabase
-            .from('player_accounts')
-            .insert({
+          if (existingBarCustomer) {
+            await supabase.from('bar_customers').update({
+              visit_count: (existingBarCustomer.visit_count || 0) + 1,
+              total_spent: (Number(existingBarCustomer.total_spent) || 0) + tab.total,
+              last_visit_at: new Date().toISOString()
+            }).eq('id', existingBarCustomer.id);
+          } else {
+            await supabase.from('bar_customers').insert({
+              club_owner_id: effectiveUserId,
+              name: tab.player_name,
               phone_number: normalizedPhone,
-              name: tab.player_name
-            })
-            .select('id')
-            .single();
-          playerAccountId = newAccount?.id || null;
+              total_spent: tab.total,
+              visit_count: 1
+            });
+          }
         }
       }
 

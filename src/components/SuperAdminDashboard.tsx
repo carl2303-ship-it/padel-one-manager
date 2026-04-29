@@ -45,6 +45,7 @@ interface Club {
   email: string | null;
   website: string | null;
   is_active: boolean;
+  plan_type?: string;
   created_at: string;
   updated_at: string;
   owner_email?: string;

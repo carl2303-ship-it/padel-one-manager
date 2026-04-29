@@ -16,6 +16,7 @@ import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
 import PublicMenu from './components/PublicMenu';
 import PublicPricing from './components/PublicPricing';
+import PlatformPricing from './components/PlatformPricing';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -222,6 +223,10 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const tableNum = urlParams.get('mesa') || urlParams.get('table');
     return <PublicMenu clubId={menuClubId} tableNumber={tableNum} />;
+  }
+
+  if (pathname === '/plans' || pathname === '/platform-pricing') {
+    return <PlatformPricing />;
   }
 
   const pricingMatch = pathname.match(/^\/pricing\/([a-f0-9-]+)$/i);

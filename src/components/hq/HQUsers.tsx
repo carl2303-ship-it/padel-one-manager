@@ -56,6 +56,7 @@ export default function HQUsers() {
   const [superAdmins, setSuperAdmins] = useState<SuperAdmin[]>([]);
   const [showAdminList, setShowAdminList] = useState(false);
 
+
   useEffect(() => { loadUsers(); loadSuperAdmins(); }, []);
 
   const loadSuperAdmins = async () => {
@@ -160,7 +161,7 @@ export default function HQUsers() {
 
   const ROLE_LABELS: Record<string, string> = {
     player: 'Jogador',
-    manager: 'Manager',
+    manager: 'Club Owner',
     organizer: 'Organizador',
     super_admin: 'Super Admin',
   };
@@ -245,7 +246,7 @@ export default function HQUsers() {
         >
           <option value="all">Todos os tipos</option>
           <option value="player">Jogadores</option>
-          <option value="manager">Managers</option>
+          <option value="manager">Club Owners</option>
           <option value="organizer">Organizadores</option>
           <option value="super_admin">Super Admins</option>
         </select>

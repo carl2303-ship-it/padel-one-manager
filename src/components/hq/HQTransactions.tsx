@@ -1,7 +1,22 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/authContext';
-import { ArrowLeftRight, Search, Plus, X, Filter } from 'lucide-react';
+import { ArrowLeftRight, Search, Plus, X, Filter, CreditCard, Key } from 'lucide-react';
+
+interface PlatformPayment {
+  id: string;
+  license_key_id: string | null;
+  stripe_session_id: string | null;
+  stripe_payment_intent: string | null;
+  amount: number;
+  currency: string;
+  target_type: string;
+  target_entity_id: string | null;
+  payer_email: string | null;
+  payer_name: string | null;
+  status: string;
+  created_at: string;
+}
 
 interface Transaction {
   id: string;
@@ -18,10 +33,11 @@ interface Transaction {
 
 const TYPE_LABELS: Record<string, string> = {
   booking: 'Reserva',
-  open_game: 'Open Game',
+  open_game: 'Jogo Aberto',
   academy: 'Academia',
   bar: 'Bar',
   bar_tab: 'Conta Bar',
+  tournament: 'Torneio',
   adjustment: 'Ajuste',
 };
 
@@ -31,17 +47,20 @@ const TYPE_COLORS: Record<string, string> = {
   academy: 'bg-yellow-900/30 text-yellow-400',
   bar: 'bg-orange-900/30 text-orange-400',
   bar_tab: 'bg-orange-900/30 text-orange-400',
+  tournament: 'bg-green-900/30 text-green-400',
   adjustment: 'bg-[#D32F2F]/20 text-[#D32F2F]',
 };
 
 export default function HQTransactions() {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [platformPayments, setPlatformPayments] = useState<PlatformPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [showInject, setShowInject] = useState(false);
   const [clubs, setClubs] = useState<{ id: string; owner_id: string; name: string }[]>([]);
+  const [activeTab, setActiveTab] = useState<'player' | 'platform'>('player');
 
   // Inject form
   const [injectClubOwnerId, setInjectClubOwnerId] = useState('');
@@ -54,6 +73,7 @@ export default function HQTransactions() {
   useEffect(() => {
     loadTransactions();
     loadClubs();
+    loadPlatformPayments();
   }, []);
 
   const loadTransactions = async () => {
@@ -70,6 +90,11 @@ export default function HQTransactions() {
   const loadClubs = async () => {
     const { data } = await supabase.from('clubs').select('id, owner_id, name').order('name');
     if (data) setClubs(data);
+  };
+
+  const loadPlatformPayments = async () => {
+    const { data } = await supabase.from('platform_payments').select('*').order('created_at', { ascending: false }).limit(200);
+    if (data) setPlatformPayments(data);
   };
 
   const handleInject = async () => {
@@ -134,6 +159,66 @@ export default function HQTransactions() {
         </button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 bg-[#0a0a0a] p-1 rounded-lg w-fit">
+        <button onClick={() => setActiveTab('player')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'player' ? 'bg-[#D32F2F] text-white' : 'text-gray-400 hover:text-gray-100'}`}>
+          <ArrowLeftRight size={14} className="inline mr-1.5" />
+          Jogadores ({transactions.length})
+        </button>
+        <button onClick={() => setActiveTab('platform')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'platform' ? 'bg-[#D32F2F] text-white' : 'text-gray-400 hover:text-gray-100'}`}>
+          <CreditCard size={14} className="inline mr-1.5" />
+          Plataforma ({platformPayments.length})
+        </button>
+      </div>
+
+      {activeTab === 'platform' ? (
+        <div className="space-y-4">
+          <div className="px-4 py-2.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-sm w-fit">
+            <span className="text-gray-500">Total receita: </span>
+            <span className="font-bold text-gray-100">€{platformPayments.reduce((s, p) => s + Number(p.amount || 0), 0).toFixed(2)}</span>
+          </div>
+          <div className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl overflow-hidden">
+            <div className="hidden lg:grid grid-cols-12 gap-4 px-5 py-3 bg-[#151515] text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-[#2a2a2a]">
+              <div className="col-span-2">Data</div>
+              <div className="col-span-2">Pagador</div>
+              <div className="col-span-2">Tipo</div>
+              <div className="col-span-2">Valor</div>
+              <div className="col-span-2">Estado</div>
+              <div className="col-span-2">Stripe</div>
+            </div>
+            {platformPayments.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">Nenhum pagamento da plataforma registado.</div>
+            ) : (
+              platformPayments.map(pp => (
+                <div key={pp.id} className="grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-4 px-5 py-3 border-b border-[#2a2a2a] last:border-b-0 hover:bg-[#151515] transition-colors">
+                  <div className="lg:col-span-2 text-sm text-gray-400">{new Date(pp.created_at).toLocaleDateString('pt-PT')}</div>
+                  <div className="lg:col-span-2">
+                    <div className="text-sm text-gray-100">{pp.payer_name || '—'}</div>
+                    <div className="text-xs text-gray-500">{pp.payer_email || '—'}</div>
+                  </div>
+                  <div className="lg:col-span-2">
+                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                      pp.target_type === 'club' ? 'bg-blue-900/30 text-blue-400' : 'bg-purple-900/30 text-purple-400'
+                    }`}>
+                      {pp.target_type === 'club' ? 'Clube' : 'Organizador'}
+                    </span>
+                  </div>
+                  <div className="lg:col-span-2 text-sm font-medium text-gray-100">€{Number(pp.amount).toFixed(2)} <span className="text-xs text-gray-500">{pp.currency?.toUpperCase()}</span></div>
+                  <div className="lg:col-span-2">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                      pp.status === 'completed' ? 'bg-green-900/30 text-green-400' : 'bg-yellow-900/30 text-yellow-400'
+                    }`}>{pp.status}</span>
+                  </div>
+                  <div className="lg:col-span-2 text-xs text-gray-500 font-mono truncate">{pp.stripe_payment_intent || '—'}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
@@ -153,7 +238,8 @@ export default function HQTransactions() {
         >
           <option value="all">Todos os tipos</option>
           <option value="booking">Reservas</option>
-          <option value="open_game">Open Games</option>
+          <option value="open_game">Jogos Abertos</option>
+          <option value="tournament">Torneios</option>
           <option value="academy">Academia</option>
           <option value="bar">Bar</option>
           <option value="adjustment">Ajustes</option>
@@ -201,6 +287,9 @@ export default function HQTransactions() {
           ))
         )}
       </div>
+
+      </>
+      )}
 
       {/* Inject Modal */}
       {showInject && (
