@@ -33,7 +33,8 @@ import {
   Euro,
   RotateCcw,
   RefreshCw,
-  BarChart3
+  BarChart3,
+  Copy
 } from 'lucide-react';
 
 interface Court {
@@ -1419,9 +1420,54 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
       class_category: type.class_category || 'single',
       pack_size: type.pack_size || 5,
       group_size: type.group_size || 2,
-      frequency_per_week: type.frequency_per_week || 1
+      frequency_per_week: type.frequency_per_week || 1,
+      monthly_price_per_player: type.monthly_price_per_player ?? type.price_per_class ?? 50
     });
     setShowTypeForm(true);
+  };
+
+  const handleDuplicateType = async (source: ClassType) => {
+    if (!effectiveUserId) return;
+    const copyLabel = ' (cópia)';
+    const newName = source.name.endsWith(copyLabel) ? `${source.name} 2` : `${source.name}${copyLabel}`;
+
+    const insertData: Record<string, unknown> = {
+      club_owner_id: effectiveUserId,
+      name: newName,
+      description: source.description,
+      duration_minutes: source.duration_minutes,
+      max_students: source.max_students,
+      price_per_class: source.price_per_class,
+      is_active: source.is_active !== false,
+      class_category: source.class_category || 'single'
+    };
+
+    if (source.class_category === 'pack') {
+      insertData.pack_size = source.pack_size;
+      insertData.group_size = null;
+      insertData.frequency_per_week = null;
+      insertData.monthly_price_per_player = null;
+    } else if (source.class_category === 'group') {
+      insertData.group_size = source.group_size;
+      insertData.frequency_per_week = source.frequency_per_week;
+      insertData.monthly_price_per_player = source.monthly_price_per_player;
+      insertData.price_per_class = source.monthly_price_per_player ?? source.price_per_class;
+      insertData.max_students = source.group_size ?? source.max_students;
+      insertData.pack_size = null;
+    } else {
+      insertData.pack_size = null;
+      insertData.group_size = null;
+      insertData.frequency_per_week = null;
+      insertData.monthly_price_per_player = null;
+    }
+
+    const { error } = await supabase.from('class_types').insert(insertData);
+    if (error) {
+      console.error('[AcademyManagement] duplicate class type:', error);
+      alert(error.message);
+      return;
+    }
+    await loadData();
   };
 
   const handleEditClass = (cls: ScheduledClass) => {
@@ -3316,6 +3362,16 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                   <div className="text-lg font-bold text-gray-900">{type.price_per_class} EUR</div>
                   <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
                     <button
+                      type="button"
+                      onClick={() => handleDuplicateType(type)}
+                      className="flex-1 px-2 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50 rounded-lg transition flex items-center justify-center gap-1 border border-amber-200"
+                      title="Duplicar tipo de aula"
+                    >
+                      <Copy className="w-4 h-4 shrink-0" />
+                      <span className="hidden sm:inline">Duplicar</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleEditType(type)}
                       className="flex-1 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center justify-center gap-1"
                     >
@@ -3323,8 +3379,10 @@ export default function AcademyManagement({ staffClubOwnerId }: AcademyManagemen
                       {t.common.edit}
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDeleteType(type.id)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg shrink-0"
+                      title={t.common.delete}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

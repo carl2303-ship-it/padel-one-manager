@@ -35,6 +35,21 @@ interface MembershipPlan {
   is_active: boolean;
 }
 
+interface ClassType {
+  id: string;
+  name: string;
+  description: string | null;
+  duration_minutes: number;
+  max_students: number;
+  price_per_class: number;
+  is_active: boolean;
+  class_category: 'single' | 'pack' | 'group';
+  pack_size: number | null;
+  group_size: number | null;
+  frequency_per_week: number | null;
+  monthly_price_per_player: number | null;
+}
+
 interface EquipmentItem {
   name: string;
   price: string;
@@ -53,6 +68,7 @@ export default function PublicPricing({ clubId }: Props) {
   const [club, setClub] = useState<Club | null>(null);
   const [courts, setCourts] = useState<Court[]>([]);
   const [membershipPlans, setMembershipPlans] = useState<MembershipPlan[]>([]);
+  const [classTypes, setClassTypes] = useState<ClassType[]>([]);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -89,7 +105,7 @@ export default function PublicPricing({ clubId }: Props) {
         if (cfg?.equipment) setEquipment(cfg.equipment);
 
         if (ownerId) {
-          const [courtRes, planRes] = await Promise.all([
+          const [courtRes, planRes, classRes] = await Promise.all([
             supabase
               .from('club_courts')
               .select('id, name, type, hourly_rate, peak_rate, price_90min, price_120min, peak_price_90min, peak_price_120min')
@@ -104,9 +120,17 @@ export default function PublicPricing({ clubId }: Props) {
               .eq('show_on_pricing', true)
               .order('sort_order')
               .order('price'),
+            supabase
+              .from('class_types')
+              .select('*')
+              .eq('club_owner_id', ownerId)
+              .eq('is_active', true)
+              .order('class_category')
+              .order('name'),
           ]);
           setCourts(courtRes.data || []);
           setMembershipPlans(planRes.data || []);
+          setClassTypes(classRes.data || []);
         }
       }
       setLoading(false);
@@ -217,6 +241,24 @@ export default function PublicPricing({ clubId }: Props) {
         <div className="space-y-4 mb-8">
           {renderCourtPricing('Campos Indoor', indoorCourts, '🏟️')}
           {renderCourtPricing('Campos Outdoor', outdoorCourts, '☀️')}
+
+          {/* Equipment (right after courts) */}
+          {equipment.length > 0 && (
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-2xl">🎾</span>
+              <h3 className="text-lg font-bold text-white uppercase tracking-wide">Equipamentos</h3>
+            </div>
+            <div className="space-y-0">
+              {equipment.map((item, i) => (
+                <div key={i} className={`flex items-center justify-between py-2.5 ${i > 0 ? 'border-t border-white/10' : ''}`}>
+                  <span className="text-white text-sm font-medium">{item.name}</span>
+                  <span className="text-orange-300 font-bold text-sm bg-orange-500/15 px-3 py-1 rounded-full">{item.price}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          )}
         </div>
 
         {/* Memberships */}
@@ -292,23 +334,102 @@ export default function PublicPricing({ clubId }: Props) {
         </div>
         )}
 
-        {/* Equipment */}
-        {equipment.length > 0 && (
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10 mb-8">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-2xl">🎾</span>
-            <h3 className="text-lg font-bold text-white uppercase tracking-wide">Equipamentos</h3>
-          </div>
-          <div className="space-y-0">
-            {equipment.map((item, i) => (
-              <div key={i} className={`flex items-center justify-between py-2.5 ${i > 0 ? 'border-t border-white/10' : ''}`}>
-                <span className="text-white text-sm font-medium">{item.name}</span>
-                <span className="text-orange-300 font-bold text-sm bg-orange-500/15 px-3 py-1 rounded-full">{item.price}</span>
+        {/* Academia */}
+        {classTypes.length > 0 && (() => {
+          const singles = classTypes.filter(ct => ct.class_category === 'single');
+          const groups = classTypes.filter(ct => ct.class_category === 'group');
+          const packs = classTypes.filter(ct => ct.class_category === 'pack');
+          const singleDurations = [...new Set(singles.map(ct => ct.duration_minutes))].sort((a, b) => a - b);
+          const groupDurations = [...new Set(groups.map(ct => ct.duration_minutes))].sort((a, b) => a - b);
+
+          const renderItems = (items: ClassType[], showPrice: (ct: ClassType) => string, extraInfo?: (ct: ClassType) => React.ReactNode) => (
+            <div className="space-y-0">
+              {items.map((ct, i) => (
+                <div key={ct.id} className={`py-3 ${i > 0 ? 'border-t border-white/10' : ''}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-semibold text-sm">{ct.name}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        {extraInfo && extraInfo(ct)}
+                      </div>
+                      {ct.description && <p className="text-slate-400 text-xs mt-1 line-clamp-2">{ct.description}</p>}
+                    </div>
+                    <div className="text-right ml-3 shrink-0">
+                      <span className="text-orange-300 font-bold text-sm bg-orange-500/15 px-3 py-1 rounded-full">{showPrice(ct)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+
+          const renderCard = (key: string, icon: string, label: string, content: React.ReactNode) => (
+            <div key={key} className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/10">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-2xl">{icon}</span>
+                <h3 className="text-lg font-bold text-white uppercase tracking-wide">{label}</h3>
               </div>
-            ))}
+              {content}
+            </div>
+          );
+
+          return (
+          <div className="mb-8">
+            <div className="text-center mb-5">
+              <h2 className="text-xl font-extrabold text-white">Academia</h2>
+            </div>
+
+            <div className="space-y-4">
+              {/* Aulas Pontuais por duração */}
+              {singleDurations.map(dur => {
+                const items = singles.filter(ct => ct.duration_minutes === dur).sort((a, b) => (a.max_students || 0) - (b.max_students || 0));
+                if (items.length === 0) return null;
+                return renderCard(`single-${dur}`, '🎯', `Aulas Pontuais ${dur} min`,
+                  renderItems(items, ct => `${formatPrice(ct.price_per_class)}/aula`, ct => (
+                    <>
+                      <span className="text-slate-400 text-xs">⏱ {ct.duration_minutes} min</span>
+                      <span className="text-slate-400 text-xs">👤 Max {ct.max_students}</span>
+                    </>
+                  ))
+                );
+              })}
+
+              {/* Packs de Aulas */}
+              {packs.length > 0 && renderCard('packs', '📦', 'Packs de Aulas',
+                renderItems(
+                  packs.sort((a, b) => (a.pack_size || 0) - (b.pack_size || 0)),
+                  ct => formatPrice(ct.price_per_class),
+                  ct => (
+                    <>
+                      <span className="text-slate-400 text-xs">⏱ {ct.duration_minutes} min</span>
+                      {ct.pack_size && <span className="text-slate-400 text-xs">📦 {ct.pack_size} aulas</span>}
+                      {ct.pack_size && ct.pack_size > 0 && (
+                        <span className="text-slate-400 text-xs">({formatPrice(Math.round((ct.price_per_class / ct.pack_size) * 100) / 100)}/aula)</span>
+                      )}
+                    </>
+                  )
+                )
+              )}
+
+              {/* Aulas Grupo por duração */}
+              {groupDurations.map(dur => {
+                const items = groups.filter(ct => ct.duration_minutes === dur).sort((a, b) => (a.group_size || 0) - (b.group_size || 0));
+                if (items.length === 0) return null;
+                return renderCard(`group-${dur}`, '👥', `Aulas de Grupo ${dur} min`,
+                  renderItems(items, ct => ct.monthly_price_per_player ? `${formatPrice(ct.monthly_price_per_player)}/mês` : `${formatPrice(ct.price_per_class)}/aula`, ct => (
+                    <>
+                      {ct.group_size && <span className="text-slate-400 text-xs">👥 {ct.group_size} jogadores</span>}
+                      {ct.frequency_per_week && <span className="text-slate-400 text-xs">📅 {ct.frequency_per_week}x/semana</span>}
+                    </>
+                  ))
+                );
+              })}
+            </div>
           </div>
-        </div>
-        )}
+          );
+        })()}
+
+        
 
         {/* Footer */}
         <div className="text-center">
