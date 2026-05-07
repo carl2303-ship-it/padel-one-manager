@@ -231,35 +231,30 @@ export default function HQClubManagement() {
     const emailLower = ownerEmail.trim().toLowerCase();
 
     let userId: string | null = null;
+    let accountWasNew = false;
 
     if (createNewAccount) {
-      // Create a new auth account for the club owner
       if (!ownerPassword || ownerPassword.length < 6) {
         alert('A password deve ter pelo menos 6 caracteres.');
         setAssigningOwner(false);
         return;
       }
 
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: emailLower,
-        password: ownerPassword,
+      const { data: adminData, error: adminError } = await supabase.functions.invoke('create-club-owner', {
+        body: { email: emailLower, password: ownerPassword, mode: 'create' },
       });
 
-      if (signUpError) {
-        alert('Erro ao criar conta: ' + signUpError.message);
+      if (adminError || !adminData?.user_id) {
+        const errMsg = adminData?.error || adminError?.message || 'Erro desconhecido';
+        alert('Erro ao criar/encontrar conta: ' + errMsg);
         setAssigningOwner(false);
         return;
       }
 
-      userId = signUpData.user?.id ?? null;
-
-      if (!userId) {
-        alert('Conta criada mas não foi possível obter o ID. Tente associar pelo email.');
-        setAssigningOwner(false);
-        return;
-      }
+      userId = adminData.user_id;
+      accountWasNew = adminData.is_new === true;
     } else {
-      // Look up existing user
+      // First check player_accounts and players tables
       const { data: account } = await supabase
         .from('player_accounts')
         .select('user_id')
@@ -276,8 +271,18 @@ export default function HQClubManagement() {
         userId = player?.user_id ?? null;
       }
 
+      // Fallback: search in auth.users via Edge Function
       if (!userId) {
-        alert('Utilizador não encontrado. Ative "Criar conta nova" para registar este email.');
+        const { data: lookupData } = await supabase.functions.invoke('create-club-owner', {
+          body: { email: emailLower, mode: 'lookup' },
+        });
+        if (lookupData?.user_id && lookupData?.found) {
+          userId = lookupData.user_id;
+        }
+      }
+
+      if (!userId) {
+        alert('Utilizador não encontrado com este email.\nAtive "Criar conta nova" para registar este email.');
         setAssigningOwner(false);
         return;
       }
@@ -290,8 +295,10 @@ export default function HQClubManagement() {
     if (error) {
       alert('Erro: ' + error.message);
     } else {
-      if (createNewAccount) {
+      if (createNewAccount && accountWasNew) {
         alert(`Conta criada com sucesso!\n\nEmail: ${emailLower}\nPassword: ${ownerPassword}\n\nO gestor pode alterar a password nas definições da app.`);
+      } else {
+        alert('Owner associado ao clube com sucesso!');
       }
       setShowAssignOwner(null);
       setOwnerEmail('');
