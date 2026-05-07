@@ -86,6 +86,8 @@ export default function HQClubManagement() {
 
   const [showAssignOwner, setShowAssignOwner] = useState<string | null>(null);
   const [ownerEmail, setOwnerEmail] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [createNewAccount, setCreateNewAccount] = useState(false);
   const [assigningOwner, setAssigningOwner] = useState(false);
 
   const [editingClub, setEditingClub] = useState<string | null>(null);
@@ -230,26 +232,55 @@ export default function HQClubManagement() {
 
     let userId: string | null = null;
 
-    const { data: account } = await supabase
-      .from('player_accounts')
-      .select('user_id')
-      .eq('email', emailLower)
-      .maybeSingle();
-    userId = account?.user_id ?? null;
+    if (createNewAccount) {
+      // Create a new auth account for the club owner
+      if (!ownerPassword || ownerPassword.length < 6) {
+        alert('A password deve ter pelo menos 6 caracteres.');
+        setAssigningOwner(false);
+        return;
+      }
 
-    if (!userId) {
-      const { data: player } = await supabase
-        .from('players')
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: emailLower,
+        password: ownerPassword,
+      });
+
+      if (signUpError) {
+        alert('Erro ao criar conta: ' + signUpError.message);
+        setAssigningOwner(false);
+        return;
+      }
+
+      userId = signUpData.user?.id ?? null;
+
+      if (!userId) {
+        alert('Conta criada mas não foi possível obter o ID. Tente associar pelo email.');
+        setAssigningOwner(false);
+        return;
+      }
+    } else {
+      // Look up existing user
+      const { data: account } = await supabase
+        .from('player_accounts')
         .select('user_id')
         .eq('email', emailLower)
         .maybeSingle();
-      userId = player?.user_id ?? null;
-    }
+      userId = account?.user_id ?? null;
 
-    if (!userId) {
-      alert('Utilizador não encontrado com este email. O utilizador precisa de ter uma conta registada.');
-      setAssigningOwner(false);
-      return;
+      if (!userId) {
+        const { data: player } = await supabase
+          .from('players')
+          .select('user_id')
+          .eq('email', emailLower)
+          .maybeSingle();
+        userId = player?.user_id ?? null;
+      }
+
+      if (!userId) {
+        alert('Utilizador não encontrado. Ative "Criar conta nova" para registar este email.');
+        setAssigningOwner(false);
+        return;
+      }
     }
 
     const { error } = await supabase.from('clubs')
@@ -259,8 +290,13 @@ export default function HQClubManagement() {
     if (error) {
       alert('Erro: ' + error.message);
     } else {
+      if (createNewAccount) {
+        alert(`Conta criada com sucesso!\n\nEmail: ${emailLower}\nPassword: ${ownerPassword}\n\nO gestor pode alterar a password nas definições da app.`);
+      }
       setShowAssignOwner(null);
       setOwnerEmail('');
+      setOwnerPassword('');
+      setCreateNewAccount(false);
       loadClubs();
     }
     setAssigningOwner(false);
@@ -306,6 +342,16 @@ export default function HQClubManagement() {
       .order('created_at', { ascending: false });
     if (data) setClubKeys(data);
     setLoadingKeys(false);
+  };
+
+  const handleDeleteKey = async (keyId: string, clubId: string) => {
+    if (!confirm('Eliminar esta chave de licença?')) return;
+    const { error } = await supabase.from('license_keys').delete().eq('id', keyId);
+    if (error) {
+      alert('Erro ao eliminar: ' + error.message);
+    } else {
+      await loadClubKeys(clubId);
+    }
   };
 
   const initContractDates = (club: Club) => {
@@ -817,27 +863,52 @@ export default function HQClubManagement() {
                     ) : (
                       <div>
                         {showAssignOwner === club.id ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="email"
-                              placeholder="Email do futuro dono..."
-                              value={ownerEmail}
-                              onChange={e => setOwnerEmail(e.target.value)}
-                              className="flex-1 max-w-xs px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-100 focus:outline-none focus:border-[#D32F2F]/50"
-                            />
-                            <button
-                              onClick={() => handleAssignOwner(club.id)}
-                              disabled={assigningOwner || !ownerEmail.trim()}
-                              className="px-3 py-2 bg-[#D32F2F] text-white rounded-lg text-xs font-medium hover:bg-[#B71C1C] disabled:opacity-50"
-                            >
-                              {assigningOwner ? '...' : 'Associar'}
-                            </button>
-                            <button
-                              onClick={() => { setShowAssignOwner(null); setOwnerEmail(''); }}
-                              className="px-2 py-2 text-gray-500 hover:text-gray-300"
-                            >
-                              <X size={14} />
-                            </button>
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={createNewAccount}
+                                  onChange={e => setCreateNewAccount(e.target.checked)}
+                                  className="rounded border-gray-600 text-[#D32F2F] focus:ring-[#D32F2F]"
+                                />
+                                <span className="text-xs text-gray-400">Criar conta nova</span>
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="email"
+                                placeholder="Email do futuro dono..."
+                                value={ownerEmail}
+                                onChange={e => setOwnerEmail(e.target.value)}
+                                className="flex-1 max-w-xs px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-100 focus:outline-none focus:border-[#D32F2F]/50"
+                              />
+                              {createNewAccount && (
+                                <input
+                                  type="text"
+                                  placeholder="Password..."
+                                  value={ownerPassword}
+                                  onChange={e => setOwnerPassword(e.target.value)}
+                                  className="flex-1 max-w-[160px] px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-100 focus:outline-none focus:border-[#D32F2F]/50"
+                                />
+                              )}
+                              <button
+                                onClick={() => handleAssignOwner(club.id)}
+                                disabled={assigningOwner || !ownerEmail.trim() || (createNewAccount && ownerPassword.length < 6)}
+                                className="px-3 py-2 bg-[#D32F2F] text-white rounded-lg text-xs font-medium hover:bg-[#B71C1C] disabled:opacity-50"
+                              >
+                                {assigningOwner ? '...' : createNewAccount ? 'Criar & Associar' : 'Associar'}
+                              </button>
+                              <button
+                                onClick={() => { setShowAssignOwner(null); setOwnerEmail(''); setOwnerPassword(''); setCreateNewAccount(false); }}
+                                className="px-2 py-2 text-gray-500 hover:text-gray-300"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                            {createNewAccount && (
+                              <p className="text-[10px] text-gray-500">A conta será criada com este email e password. O gestor pode alterar a password depois.</p>
+                            )}
                           </div>
                         ) : (
                           <button
@@ -907,6 +978,13 @@ export default function HQClubManagement() {
                               k.status === 'used' ? 'bg-blue-900/30 text-blue-400' : 'bg-gray-700/30 text-gray-400'
                             }`}>{k.status}</span>
                             <span className="text-gray-600 ml-auto">{new Date(k.created_at).toLocaleDateString('pt-PT')}</span>
+                            <button
+                              onClick={() => handleDeleteKey(k.id, club.id)}
+                              className="p-1 text-gray-600 hover:text-red-400 transition-colors"
+                              title="Eliminar chave"
+                            >
+                              <X size={12} />
+                            </button>
                           </div>
                         ))}
                       </div>
