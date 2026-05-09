@@ -132,22 +132,14 @@ function getStatusColor(status: string): string {
   }
 }
 
-function categoryColors(category?: string | null): { bg: string; hex: string } {
-  switch (category) {
-    case 'M1': return { bg: 'bg-purple-600', hex: '#9333ea' };
-    case 'M2': return { bg: 'bg-blue-600', hex: '#2563eb' };
-    case 'M3': return { bg: 'bg-green-600', hex: '#16a34a' };
-    case 'M4': return { bg: 'bg-yellow-500', hex: '#eab308' };
-    case 'M5': return { bg: 'bg-orange-500', hex: '#f97316' };
-    case 'M6': return { bg: 'bg-gray-500', hex: '#6b7280' };
-    case 'F1': return { bg: 'bg-purple-500', hex: '#a855f7' };
-    case 'F2': return { bg: 'bg-blue-500', hex: '#3b82f6' };
-    case 'F3': return { bg: 'bg-green-500', hex: '#22c55e' };
-    case 'F4': return { bg: 'bg-yellow-400', hex: '#facc15' };
-    case 'F5': return { bg: 'bg-orange-400', hex: '#fb923c' };
-    case 'F6': return { bg: 'bg-gray-400', hex: '#9ca3af' };
-    default: return { bg: 'bg-gray-400', hex: '#9ca3af' };
-  }
+function levelColors(level?: number | null): { bg: string; text: string; border: string; hex: string; hexTo: string } {
+  const lvl = level ?? 0
+  if (lvl >= 6) return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-600', hex: '#9333ea', hexTo: '#7e22ce' }
+  if (lvl >= 5) return { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-600', hex: '#2563eb', hexTo: '#1d4ed8' }
+  if (lvl >= 4) return { bg: 'bg-green-600', text: 'text-white', border: 'border-green-600', hex: '#16a34a', hexTo: '#15803d' }
+  if (lvl >= 3) return { bg: 'bg-yellow-500', text: 'text-white', border: 'border-yellow-500', hex: '#eab308', hexTo: '#ca8a04' }
+  if (lvl >= 2) return { bg: 'bg-orange-500', text: 'text-white', border: 'border-orange-500', hex: '#f97316', hexTo: '#ea580c' }
+  return { bg: 'bg-gray-400', text: 'text-white', border: 'border-gray-400', hex: '#9ca3af', hexTo: '#6b7280' }
 }
 
 export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManagementProps) {
@@ -327,7 +319,7 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
 
   function renderPlayerCircle(player: OpenGamePlayer, size: 'sm' | 'md' = 'sm') {
     const sizeClasses = size === 'sm' ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm';
-    const colors = player.player_category ? categoryColors(player.player_category) : null;
+    const colors = levelColors(player.level);
     const firstName = player.name?.split(' ')[0] || '?';
 
     return (
@@ -969,13 +961,10 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                                           {player.level !== null && player.level !== undefined && (
                                             <span
                                               className="text-[10px] font-bold text-white px-1.5 py-0 rounded-full"
-                                              style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                              style={{ backgroundColor: levelColors(player.level).hex }}
                                             >
                                               Nv. {player.level.toFixed(1)}
                                             </span>
-                                          )}
-                                          {player.player_category && (
-                                            <span className="text-[10px] text-gray-400">{player.player_category}</span>
                                           )}
                                         </div>
                                       </div>
@@ -1013,13 +1002,10 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                                           {player.level !== null && player.level !== undefined && (
                                             <span
                                               className="text-[10px] font-bold text-white px-1.5 py-0 rounded-full"
-                                              style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                              style={{ backgroundColor: levelColors(player.level).hex }}
                                             >
                                               Nv. {player.level.toFixed(1)}
                                             </span>
-                                          )}
-                                          {player.player_category && (
-                                            <span className="text-[10px] text-gray-400">{player.player_category}</span>
                                           )}
                                         </div>
                                       </div>
@@ -1150,7 +1136,7 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                   <p className="text-sm text-gray-400 text-center py-4">Nenhum jogador encontrado</p>
                 )}
                 {playerSearchResults.map(p => {
-                  const pColors = categoryColors(p.player_category);
+                  const pColors = levelColors(p.level);
                   // Check if player is already in game
                   const gameData = games.find(g => g.id === addPlayerModal.gameId);
                   const alreadyInGame = gameData?.players.some(gp => gp.player_account_id === p.id);
@@ -1182,7 +1168,6 @@ export default function OpenGamesManagement({ staffClubOwnerId }: OpenGamesManag
                               {p.level.toFixed(1)}
                             </span>
                           )}
-                          {p.player_category && <span className="text-[10px] text-gray-400">{p.player_category}</span>}
                           {p.phone_number && <span className="text-[10px] text-gray-400 ml-1">{p.phone_number}</span>}
                         </div>
                       </div>

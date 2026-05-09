@@ -329,22 +329,14 @@ function getGameStatusColor(status: string): string {
   }
 }
 
-function categoryColors(category?: string | null): { bg: string; hex: string } {
-  switch (category) {
-    case 'M1': return { bg: 'bg-purple-600', hex: '#9333ea' };
-    case 'M2': return { bg: 'bg-blue-600', hex: '#2563eb' };
-    case 'M3': return { bg: 'bg-green-600', hex: '#16a34a' };
-    case 'M4': return { bg: 'bg-yellow-500', hex: '#eab308' };
-    case 'M5': return { bg: 'bg-orange-500', hex: '#f97316' };
-    case 'M6': return { bg: 'bg-gray-500', hex: '#6b7280' };
-    case 'F1': return { bg: 'bg-purple-500', hex: '#a855f7' };
-    case 'F2': return { bg: 'bg-blue-500', hex: '#3b82f6' };
-    case 'F3': return { bg: 'bg-green-500', hex: '#22c55e' };
-    case 'F4': return { bg: 'bg-yellow-400', hex: '#facc15' };
-    case 'F5': return { bg: 'bg-orange-400', hex: '#fb923c' };
-    case 'F6': return { bg: 'bg-gray-400', hex: '#9ca3af' };
-    default: return { bg: 'bg-gray-400', hex: '#9ca3af' };
-  }
+function levelColors(level?: number | null): { bg: string; text: string; border: string; hex: string; hexTo: string } {
+  const lvl = level ?? 0
+  if (lvl >= 6) return { bg: 'bg-purple-600', text: 'text-white', border: 'border-purple-600', hex: '#9333ea', hexTo: '#7e22ce' }
+  if (lvl >= 5) return { bg: 'bg-blue-600', text: 'text-white', border: 'border-blue-600', hex: '#2563eb', hexTo: '#1d4ed8' }
+  if (lvl >= 4) return { bg: 'bg-green-600', text: 'text-white', border: 'border-green-600', hex: '#16a34a', hexTo: '#15803d' }
+  if (lvl >= 3) return { bg: 'bg-yellow-500', text: 'text-white', border: 'border-yellow-500', hex: '#eab308', hexTo: '#ca8a04' }
+  if (lvl >= 2) return { bg: 'bg-orange-500', text: 'text-white', border: 'border-orange-500', hex: '#f97316', hexTo: '#ea580c' }
+  return { bg: 'bg-gray-400', text: 'text-white', border: 'border-gray-400', hex: '#9ca3af', hexTo: '#6b7280' }
 }
 
 const eventTypeColors: Record<string, { bg: string; bgHover: string; bgDragging: string; text: string; textSecondary: string }> = {
@@ -3195,13 +3187,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                 {player.level !== null && player.level !== undefined && (
                                   <span
                                     className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full"
-                                    style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                    style={{ backgroundColor: levelColors(player.level).hex }}
                                   >
                                     Nv. {player.level.toFixed(1)}
                                   </span>
-                                )}
-                                {player.player_category && (
-                                  <span className="text-xs text-gray-500">{player.player_category}</span>
                                 )}
                               </div>
                               <div className="flex items-center gap-2 mt-1">
@@ -3262,13 +3251,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
                                 {player.level !== null && player.level !== undefined && (
                                   <span
                                     className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full"
-                                    style={{ backgroundColor: categoryColors(player.player_category).hex }}
+                                    style={{ backgroundColor: levelColors(player.level).hex }}
                                   >
                                     Nv. {player.level.toFixed(1)}
                                   </span>
-                                )}
-                                {player.player_category && (
-                                  <span className="text-xs text-gray-500">{player.player_category}</span>
                                 )}
                               </div>
                             </div>

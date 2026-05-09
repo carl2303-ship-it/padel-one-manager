@@ -14,7 +14,7 @@ const corsHeaders = {
 };
 
 type SidePreference = "right" | "left" | "both";
-type TargetMode = "any" | "following";
+type TargetMode = "any" | "following" | "direct";
 
 function isTeamTournament(format: string | null, roundRobinType: string | null): boolean {
   if (!format) return false;
@@ -120,7 +120,11 @@ Deno.serve(async (req: Request) => {
     const categoryId = (body.categoryId as string | null) ?? null;
     const sidePreference = (body.sidePreference as SidePreference) ?? "right";
     const targetMode = (body.targetMode as TargetMode) ?? "any";
+    const inviteePhone = (body.inviteePhone as string | undefined) ?? null;
+    const minLevel = typeof body.minLevel === "number" ? body.minLevel : null;
+    const maxLevel = typeof body.maxLevel === "number" ? body.maxLevel : null;
     if (!tournamentId) throw new Error("Missing tournamentId");
+    if (targetMode === "direct" && !inviteePhone) throw new Error("Missing inviteePhone for direct mode");
 
     const userId = authData.user.id;
     const { data: requester, error: requesterError } = await admin
@@ -141,95 +145,140 @@ Deno.serve(async (req: Request) => {
       throw new Error("Partner matching only available for team formats");
     }
 
+    const useLevelRange = minLevel !== null && maxLevel !== null;
+
     let effectiveCategoryId = categoryId;
-    if (!effectiveCategoryId) {
-      const { data: categories } = await admin
-        .from("tournament_categories")
-        .select("id, accepted_levels")
-        .eq("tournament_id", tournamentId);
-      const byProfile = (categories || []).find((c: any) =>
-        requester.player_category && Array.isArray(c.accepted_levels) && c.accepted_levels.includes(requester.player_category)
-      );
-      effectiveCategoryId = byProfile?.id ?? categories?.[0]?.id ?? null;
-    }
-
     let categoryForInvitees: TournamentCategoryEligibility | null = null;
-    if (effectiveCategoryId) {
-      const { data: catRow, error: catErr } = await admin
-        .from("tournament_categories")
-        .select("id, name, accepted_levels, min_level, max_level")
-        .eq("id", effectiveCategoryId)
-        .maybeSingle();
-      if (catErr) throw catErr;
-      if (!catRow) throw new Error("Tournament category not found");
-      categoryForInvitees = catRow as TournamentCategoryEligibility;
-      if (
-        !isPlayerEligibleForCategory(categoryForInvitees, {
-          player_category: requester.player_category,
-          level: requester.level,
-        })
-      ) {
-        throw new Error("A tua categoria não é elegível para esta categoria do torneio");
-      }
-    }
 
-    let followingIds: string[] | null = null;
-    if (targetMode === "following") {
-      const { data: follows } = await admin
-        .from("follows")
-        .select("following_id")
-        .eq("follower_id", userId);
-      followingIds = (follows || []).map((f: any) => f.following_id);
-      if (!followingIds.length) {
-        return new Response(JSON.stringify({ success: true, requestId: null, invitesSent: 0 }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    if (!useLevelRange) {
+      if (!effectiveCategoryId) {
+        const { data: categories } = await admin
+          .from("tournament_categories")
+          .select("id, accepted_levels")
+          .eq("tournament_id", tournamentId);
+        const byProfile = (categories || []).find((c: any) =>
+          requester.player_category && Array.isArray(c.accepted_levels) && c.accepted_levels.includes(requester.player_category)
+        );
+        effectiveCategoryId = byProfile?.id ?? categories?.[0]?.id ?? null;
       }
-    }
 
-    const candidates = await fetchAllCandidateAccounts(admin, requester.id, requester.user_id, followingIds);
-
-    // `sidePreference` represents the desired partner position (right, left, or both).
-    const compatible = (candidates || []).filter((c: any) => {
-      if (!c.user_id || c.user_id === requester.user_id) return false;
-      if (sidePreference !== "both") {
-        const pos = (c.court_position || "both") as string;
-        if (!(pos === "both" || pos === sidePreference)) return false;
-      }
-      if (categoryForInvitees) {
+      if (effectiveCategoryId) {
+        const { data: catRow, error: catErr } = await admin
+          .from("tournament_categories")
+          .select("id, name, accepted_levels, min_level, max_level")
+          .eq("id", effectiveCategoryId)
+          .maybeSingle();
+        if (catErr) throw catErr;
+        if (!catRow) throw new Error("Tournament category not found");
+        categoryForInvitees = catRow as TournamentCategoryEligibility;
         if (
           !isPlayerEligibleForCategory(categoryForInvitees, {
-            player_category: c.player_category,
-            level: c.level,
+            player_category: requester.player_category,
+            level: requester.level,
           })
         ) {
-          return false;
+          throw new Error("A tua categoria não é elegível para esta categoria do torneio");
         }
       }
-      return true;
-    });
-
-    // Uma linha por jogador (auth): vários player_accounts com o mesmo user_id → um convite; escolher id estável (menor UUID).
-    const byInviteeUserId = new Map<string, any[]>();
-    for (const c of compatible) {
-      const uid = c.user_id as string;
-      if (!byInviteeUserId.has(uid)) byInviteeUserId.set(uid, []);
-      byInviteeUserId.get(uid)!.push(c);
     }
-    const compatibleOnePerUser = Array.from(byInviteeUserId.values()).map((rows) =>
-      rows.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))[0],
-    );
 
-    const candidateIds = compatibleOnePerUser.map((c: any) => c.id);
-    const { data: alreadyPlayers } = candidateIds.length
-      ? await admin
-          .from("players")
-          .select("player_account_id")
-          .eq("tournament_id", tournamentId)
-          .in("player_account_id", candidateIds)
-      : { data: [] as any[] };
-    const busySet = new Set((alreadyPlayers || []).map((p: any) => p.player_account_id));
-    const finalCandidates = compatibleOnePerUser.filter((c: any) => !busySet.has(c.id));
+    let finalCandidates: any[] = [];
+
+    if (targetMode === "direct" && inviteePhone) {
+      const cleanPhone = inviteePhone.replace(/\s+/g, "");
+      const { data: directAccounts } = await admin
+        .from("player_accounts")
+        .select("id, user_id, name, court_position, player_category, level")
+        .or(`phone_number.eq.${cleanPhone},phone_number.ilike.%${cleanPhone.slice(-9)}`)
+        .not("user_id", "is", null)
+        .neq("user_id", requester.user_id)
+        .limit(5);
+
+      if (!directAccounts?.length) throw new Error("Jogador não encontrado com esse telefone");
+
+      const eligible = (directAccounts || []).filter((c: any) => {
+        if (useLevelRange) {
+          const lvl = c.level ?? 0;
+          return lvl >= minLevel! && lvl <= maxLevel!;
+        }
+        if (!categoryForInvitees) return true;
+        return isPlayerEligibleForCategory(categoryForInvitees, {
+          player_category: c.player_category,
+          level: c.level,
+        });
+      });
+
+      if (!eligible.length) throw new Error("O jogador não está no intervalo de nível selecionado");
+
+      const { data: alreadyEnrolled } = await admin
+        .from("players")
+        .select("player_account_id")
+        .eq("tournament_id", tournamentId)
+        .in("player_account_id", eligible.map((c: any) => c.id));
+      const busySet = new Set((alreadyEnrolled || []).map((p: any) => p.player_account_id));
+      finalCandidates = eligible.filter((c: any) => !busySet.has(c.id));
+
+      if (!finalCandidates.length) throw new Error("O jogador já está inscrito neste torneio");
+    } else {
+      let followingIds: string[] | null = null;
+      if (targetMode === "following") {
+        const { data: follows } = await admin
+          .from("follows")
+          .select("following_id")
+          .eq("follower_id", userId);
+        followingIds = (follows || []).map((f: any) => f.following_id);
+        if (!followingIds.length) {
+          return new Response(JSON.stringify({ success: true, requestId: null, invitesSent: 0 }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      const candidates = await fetchAllCandidateAccounts(admin, requester.id, requester.user_id, followingIds);
+
+      const compatible = (candidates || []).filter((c: any) => {
+        if (!c.user_id || c.user_id === requester.user_id) return false;
+        if (sidePreference !== "both") {
+          const pos = (c.court_position || "both") as string;
+          if (!(pos === "both" || pos === sidePreference)) return false;
+        }
+        if (useLevelRange) {
+          const lvl = c.level ?? 0;
+          if (lvl < minLevel! || lvl > maxLevel!) return false;
+        } else if (categoryForInvitees) {
+          if (
+            !isPlayerEligibleForCategory(categoryForInvitees, {
+              player_category: c.player_category,
+              level: c.level,
+            })
+          ) {
+            return false;
+          }
+        }
+        return true;
+      });
+
+      const byInviteeUserId = new Map<string, any[]>();
+      for (const c of compatible) {
+        const uid = c.user_id as string;
+        if (!byInviteeUserId.has(uid)) byInviteeUserId.set(uid, []);
+        byInviteeUserId.get(uid)!.push(c);
+      }
+      const compatibleOnePerUser = Array.from(byInviteeUserId.values()).map((rows) =>
+        rows.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))[0],
+      );
+
+      const candidateIds = compatibleOnePerUser.map((c: any) => c.id);
+      const { data: alreadyPlayers } = candidateIds.length
+        ? await admin
+            .from("players")
+            .select("player_account_id")
+            .eq("tournament_id", tournamentId)
+            .in("player_account_id", candidateIds)
+        : { data: [] as any[] };
+      const busySet = new Set((alreadyPlayers || []).map((p: any) => p.player_account_id));
+      finalCandidates = compatibleOnePerUser.filter((c: any) => !busySet.has(c.id));
+    }
 
     const { data: requestRow, error: requestError } = await admin
       .from("partner_match_requests")

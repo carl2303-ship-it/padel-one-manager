@@ -1,26 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
-import { ArrowLeft, Trophy, TrendingUp, Calendar, RefreshCw, Printer, Tag, ChevronDown, Filter } from 'lucide-react';
+import { ArrowLeft, Trophy, TrendingUp, Calendar, RefreshCw, Printer } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import { exportLeagueStandingsPDF } from '../lib/pdfExport';
 
-const PLAYER_CATEGORIES = [
-  { value: 'M6', label: 'M6', gender: 'M' },
-  { value: 'M5', label: 'M5', gender: 'M' },
-  { value: 'M4', label: 'M4', gender: 'M' },
-  { value: 'M3', label: 'M3', gender: 'M' },
-  { value: 'M2', label: 'M2', gender: 'M' },
-  { value: 'M1', label: 'M1', gender: 'M' },
-  { value: 'F6', label: 'F6', gender: 'F' },
-  { value: 'F5', label: 'F5', gender: 'F' },
-  { value: 'F4', label: 'F4', gender: 'F' },
-  { value: 'F3', label: 'F3', gender: 'F' },
-  { value: 'F2', label: 'F2', gender: 'F' },
-  { value: 'F1', label: 'F1', gender: 'F' },
-] as const;
-
-type PlayerCategory = typeof PLAYER_CATEGORIES[number]['value'] | null;
+type PlayerCategory = string | null;
 
 interface League {
   id: string;
@@ -61,13 +46,6 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-function getCategoryBadgeColor(category: PlayerCategory): string {
-  if (!category) return 'bg-gray-100 text-gray-500';
-  const level = parseInt(category.charAt(1));
-  if (level >= 5) return 'bg-green-100 text-green-700';
-  if (level >= 3) return 'bg-blue-100 text-blue-700';
-  return 'bg-amber-100 text-amber-700';
-}
 
 export default function LeagueStandings({ league, onBack }: LeagueStandingsProps) {
   const { t } = useI18n();
@@ -78,8 +56,7 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
   const [recalculating, setRecalculating] = useState(false);
   const [selectedScoringTab, setSelectedScoringTab] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [selectedPlayerCategory, setSelectedPlayerCategory] = useState<string>('all');
-  const [playerCategories, setPlayerCategories] = useState<Map<string, PlayerCategory>>(new Map());
+  const [selectedPlayerCategory] = useState<string>('all');
 
   const hasCategories = league.categories && league.categories.length > 0;
   const isOwner = user?.id === league.user_id;
@@ -127,8 +104,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
         organizerPlayers.forEach(op => {
           categoryMap.set(normalizeName(op.name), op.player_category as PlayerCategory);
         });
-        setPlayerCategories(categoryMap);
-
         standingsData = standingsData.map(s => ({
           ...s,
           player_category: categoryMap.get(normalizeName(s.entity_name)) || null
@@ -199,13 +174,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     return standing.player_category === selectedPlayerCategory;
   });
 
-  const categoryCounts = standings.reduce((acc, s) => {
-    const cat = s.player_category || 'none';
-    acc[cat] = (acc[cat] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-
-  const hasAnyPlayerCategories = standings.some(s => s.player_category);
 
   if (loading) {
     return (
@@ -284,45 +252,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                 </div>
               </div>
 
-              {hasAnyPlayerCategories && (
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Filter className="w-4 h-4" />
-                    <span>Filtrar por categoria:</span>
-                  </div>
-                  <div className="relative">
-                    <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <select
-                      value={selectedPlayerCategory}
-                      onChange={(e) => setSelectedPlayerCategory(e.target.value)}
-                      className="pl-9 pr-8 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white text-sm"
-                    >
-                      <option value="all">Todas ({standings.length})</option>
-                      <option value="none">Sem categoria ({categoryCounts['none'] || 0})</option>
-                      <optgroup label="Masculino">
-                        {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
-                          <option key={c.value} value={c.value}>
-                            {c.label} ({categoryCounts[c.value] || 0})
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="Feminino">
-                        {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
-                          <option key={c.value} value={c.value}>
-                            {c.label} ({categoryCounts[c.value] || 0})
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  </div>
-                  {selectedPlayerCategory !== 'all' && (
-                    <span className="text-sm text-gray-500">
-                      ({filteredStandings.length} jogadores)
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
 
             {filteredStandings.length === 0 ? (
@@ -383,11 +312,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                             <span className="text-sm font-medium text-gray-900">
                               {standing.entity_name}
                             </span>
-                            {standing.player_category && (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${getCategoryBadgeColor(standing.player_category)}`}>
-                                {standing.player_category}
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
@@ -514,51 +438,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
             )}
           </div>
 
-          {hasAnyPlayerCategories && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                <Tag className="w-5 h-5" />
-                Categorias de Jogadores
-              </h3>
-              <div className="space-y-2">
-                {PLAYER_CATEGORIES.map(cat => {
-                  const count = categoryCounts[cat.value] || 0;
-                  if (count === 0) return null;
-                  return (
-                    <button
-                      key={cat.value}
-                      onClick={() => setSelectedPlayerCategory(cat.value)}
-                      className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
-                        selectedPlayerCategory === cat.value
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'hover:bg-gray-100 text-gray-700'
-                      }`}
-                    >
-                      <span className={`px-2 py-0.5 rounded font-medium ${getCategoryBadgeColor(cat.value)}`}>
-                        {cat.label}
-                      </span>
-                      <span className="font-semibold">{count} jogadores</span>
-                    </button>
-                  );
-                })}
-                {(categoryCounts['none'] || 0) > 0 && (
-                  <button
-                    onClick={() => setSelectedPlayerCategory('none')}
-                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
-                      selectedPlayerCategory === 'none'
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'hover:bg-gray-100 text-gray-700'
-                    }`}
-                  >
-                    <span className="px-2 py-0.5 rounded font-medium bg-gray-100 text-gray-500">
-                      Sem categoria
-                    </span>
-                    <span className="font-semibold">{categoryCounts['none']} jogadores</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

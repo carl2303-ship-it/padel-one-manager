@@ -259,7 +259,6 @@ export default function HQUsers() {
           <div className="col-span-2">Telefone</div>
           <div className="col-span-2">Email</div>
           <div className="col-span-1">Tipo</div>
-          <div className="col-span-1">Cat.</div>
           <div className="col-span-1">Pontos</div>
           <div className="col-span-2">Registo</div>
         </div>
@@ -288,7 +287,6 @@ export default function HQUsers() {
                   {ROLE_LABELS[u.role]}
                 </span>
               </div>
-              <div className="lg:col-span-1 text-xs text-gray-400">{u.category}</div>
               <div className="lg:col-span-1 text-sm text-gray-300 flex items-center gap-1">
                 <Star size={12} className="text-[#D32F2F]" />{u.rewardPoints}
               </div>

@@ -12,25 +12,9 @@ import {
   Filter,
   ChevronDown,
   MessageCircle,
-  Tag,
 } from 'lucide-react';
 
-const PLAYER_CATEGORIES = [
-  { value: 'M6', label: 'M6', gender: 'M' },
-  { value: 'M5', label: 'M5', gender: 'M' },
-  { value: 'M4', label: 'M4', gender: 'M' },
-  { value: 'M3', label: 'M3', gender: 'M' },
-  { value: 'M2', label: 'M2', gender: 'M' },
-  { value: 'M1', label: 'M1', gender: 'M' },
-  { value: 'F6', label: 'F6', gender: 'F' },
-  { value: 'F5', label: 'F5', gender: 'F' },
-  { value: 'F4', label: 'F4', gender: 'F' },
-  { value: 'F3', label: 'F3', gender: 'F' },
-  { value: 'F2', label: 'F2', gender: 'F' },
-  { value: 'F1', label: 'F1', gender: 'F' },
-] as const;
-
-type PlayerCategory = typeof PLAYER_CATEGORIES[number]['value'] | null;
+type PlayerCategory = string | null;
 
 interface PlayerRecord {
   id: string;
@@ -66,10 +50,8 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTournament, setSelectedTournament] = useState<string>('all');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [tournaments, setTournaments] = useState<{ id: string; name: string }[]>([]);
   const [showFilters, setShowFilters] = useState(false);
-  const [savingCategory, setSavingCategory] = useState<string | null>(null);
 
   const fetchAllPlayers = useCallback(async () => {
     if (!user) return;
@@ -193,57 +175,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     }
   }, [isOpen, user, fetchAllPlayers]);
 
-  const updatePlayerCategory = async (player: PlayerRecord, category: PlayerCategory) => {
-    if (!user) return;
-
-    setSavingCategory(player.id);
-
-    try {
-      if (player.organizerPlayerId) {
-        await supabase
-          .from('organizer_players')
-          .update({
-            player_category: category,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', player.organizerPlayerId);
-      } else {
-        const { data } = await supabase
-          .from('organizer_players')
-          .insert({
-            organizer_id: user.id,
-            name: player.displayName,
-            email: player.email,
-            phone_number: player.phone_number,
-            player_category: category,
-          })
-          .select()
-          .single();
-
-        if (data) {
-          setPlayers(prev =>
-            prev.map(p =>
-              p.id === player.id
-                ? { ...p, organizerPlayerId: data.id, player_category: category }
-                : p
-            )
-          );
-          setSavingCategory(null);
-          return;
-        }
-      }
-
-      setPlayers(prev =>
-        prev.map(p =>
-          p.id === player.id ? { ...p, player_category: category } : p
-        )
-      );
-    } catch (error) {
-      console.error('Error updating category:', error);
-    }
-
-    setSavingCategory(null);
-  };
 
   const filteredPlayers = players.filter(player => {
     const matchesSearch =
@@ -256,21 +187,15 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       selectedTournament === 'all' ||
       player.tournaments.some(t => t.id === selectedTournament);
 
-    const matchesCategory =
-      selectedCategory === 'all' ||
-      (selectedCategory === 'none' && !player.player_category) ||
-      player.player_category === selectedCategory;
-
-    return matchesSearch && matchesTournament && matchesCategory;
+    return matchesSearch && matchesTournament;
   });
 
   const exportToCSV = () => {
-    const headers = ['Nome', 'Email', 'Telefone', 'Categoria', 'Torneios'];
+    const headers = ['Nome', 'Email', 'Telefone', 'Torneios'];
     const rows = filteredPlayers.map(player => [
       player.displayName,
       player.email || '',
       player.phone_number || '',
-      player.player_category || '',
       player.tournaments.map(t => t.name).join('; '),
     ]);
 
@@ -313,13 +238,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     window.open(`https://wa.me/${cleanPhone}`, '_blank');
   };
 
-  const getCategoryBadgeColor = (category: PlayerCategory) => {
-    if (!category) return 'bg-gray-100 text-gray-500';
-    const level = parseInt(category.charAt(1));
-    if (level >= 5) return 'bg-green-100 text-green-700';
-    if (level >= 3) return 'bg-blue-100 text-blue-700';
-    return 'bg-amber-100 text-amber-700';
-  };
 
   if (!isOpen) return null;
 
@@ -384,28 +302,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
               </div>
 
-              <div className="relative">
-                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[150px]"
-                >
-                  <option value="all">Todas categorias</option>
-                  <option value="none">Sem categoria</option>
-                  <optgroup label="Masculino">
-                    {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Feminino">
-                    {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </optgroup>
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              </div>
             </div>
           </div>
 
@@ -422,28 +318,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                   {tournaments.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              </div>
-              <div className="relative">
-                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
-                >
-                  <option value="all">Todas categorias</option>
-                  <option value="none">Sem categoria</option>
-                  <optgroup label="Masculino">
-                    {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Feminino">
-                    {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </optgroup>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
               </div>
@@ -501,9 +375,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                       Telefone
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Categoria
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       Torneios
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -546,29 +417,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                         ) : (
                           <span className="text-gray-400 text-sm">-</span>
                         )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="relative">
-                          <select
-                            value={player.player_category || ''}
-                            onChange={(e) => updatePlayerCategory(player, e.target.value as PlayerCategory || null)}
-                            disabled={savingCategory === player.id}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-lg border-0 cursor-pointer focus:ring-2 focus:ring-blue-500 appearance-none pr-7 ${getCategoryBadgeColor(player.player_category)} ${savingCategory === player.id ? 'opacity-50' : ''}`}
-                          >
-                            <option value="">Sem cat.</option>
-                            <optgroup label="Masculino">
-                              {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
-                                <option key={c.value} value={c.value}>{c.label}</option>
-                              ))}
-                            </optgroup>
-                            <optgroup label="Feminino">
-                              {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
-                                <option key={c.value} value={c.value}>{c.label}</option>
-                              ))}
-                            </optgroup>
-                          </select>
-                          <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
-                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
@@ -631,9 +479,6 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
               </span>
               <span>
                 <strong>{filteredPlayers.filter(p => p.phone_number).length}</strong> com telefone
-              </span>
-              <span>
-                <strong>{filteredPlayers.filter(p => p.player_category).length}</strong> com categoria
               </span>
             </div>
             <button
