@@ -41,6 +41,10 @@ interface StaffMember {
   invite_sent_at?: string | null;
   invite_expires_at?: string | null;
   invite_accepted_at?: string | null;
+  notify_bookings?: boolean;
+  notify_classes?: boolean;
+  notify_qr?: boolean;
+  notify_cancellations?: boolean;
 }
 
 interface TournamentPlayer {
@@ -120,7 +124,11 @@ export default function StaffManagement() {
       manage_bar: false,
       manage_academy: false,
       view_reports: false
-    }
+    },
+    notify_bookings: true,
+    notify_classes: true,
+    notify_qr: true,
+    notify_cancellations: true,
   });
 
   const roleLabels: Record<string, string> = {
@@ -258,7 +266,11 @@ export default function StaffManagement() {
       perm_members: form.permissions.manage_members,
       perm_bar: form.permissions.manage_bar,
       perm_academy: form.permissions.manage_academy,
-      perm_reports: form.permissions.view_reports
+      perm_reports: form.permissions.view_reports,
+      notify_bookings: form.notify_bookings,
+      notify_classes: form.notify_classes,
+      notify_qr: form.notify_qr,
+      notify_cancellations: form.notify_cancellations,
     };
 
     if (editingStaff) {
@@ -367,7 +379,11 @@ export default function StaffManagement() {
         manage_bar: member.permissions?.manage_bar || false,
         manage_academy: member.permissions?.manage_academy || false,
         view_reports: member.permissions?.view_reports || false
-      }
+      },
+      notify_bookings: member.notify_bookings !== false,
+      notify_classes: member.notify_classes !== false,
+      notify_qr: member.notify_qr !== false,
+      notify_cancellations: member.notify_cancellations !== false,
     });
     setShowForm(true);
     if (member.phone) {
@@ -490,7 +506,11 @@ export default function StaffManagement() {
         manage_bar: false,
         manage_academy: false,
         view_reports: false
-      }
+      },
+      notify_bookings: true,
+      notify_classes: true,
+      notify_qr: true,
+      notify_cancellations: true,
     });
   };
 
@@ -807,6 +827,28 @@ export default function StaffManagement() {
                           ...form,
                           permissions: { ...form.permissions, [key]: e.target.checked }
                         })}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-gray-700">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t.staff?.notifications || 'Email Notifications'}</label>
+                <div className="space-y-2 bg-blue-50 rounded-lg p-3 border border-blue-100">
+                  {([
+                    { key: 'notify_bookings', label: t.staff?.notifyBookings || 'Court bookings' },
+                    { key: 'notify_cancellations', label: t.staff?.notifyCancellations || 'Cancellations' },
+                    { key: 'notify_classes', label: t.staff?.notifyClasses || 'Class enrollments' },
+                    { key: 'notify_qr', label: t.staff?.notifyQr || 'QR orders' },
+                  ] as const).map(({ key, label }) => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={form[key]}
+                        onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
                         className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                       />
                       <span className="text-sm text-gray-700">{label}</span>

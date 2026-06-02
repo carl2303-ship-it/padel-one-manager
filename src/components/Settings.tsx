@@ -27,6 +27,7 @@ interface MembershipPlan {
   court_discount_percent: number;
   bar_discount_percent: number;
   academy_discount_percent: number;
+  tournament_discount_percent: number;
   is_active: boolean;
   show_on_pricing: boolean;
   sort_order: number;
@@ -82,6 +83,7 @@ export default function Settings() {
     court_discount_percent: 10,
     bar_discount_percent: 0,
     academy_discount_percent: 0,
+    tournament_discount_percent: 0,
     is_active: true,
     show_on_pricing: true,
   });
@@ -288,7 +290,7 @@ export default function Settings() {
   };
 
   const resetPlanForm = () => {
-    setPlanForm({ name: '', duration_months: 1, price: 50, benefits: '', court_discount_percent: 10, bar_discount_percent: 0, academy_discount_percent: 0, is_active: true, show_on_pricing: true });
+    setPlanForm({ name: '', duration_months: 1, price: 50, benefits: '', court_discount_percent: 10, bar_discount_percent: 0, academy_discount_percent: 0, tournament_discount_percent: 0, is_active: true, show_on_pricing: true });
   };
 
   const handleEditPlan = (plan: MembershipPlan) => {
@@ -301,6 +303,7 @@ export default function Settings() {
       court_discount_percent: plan.court_discount_percent,
       bar_discount_percent: plan.bar_discount_percent || 0,
       academy_discount_percent: plan.academy_discount_percent || 0,
+      tournament_discount_percent: plan.tournament_discount_percent || 0,
       is_active: plan.is_active,
       show_on_pricing: plan.show_on_pricing ?? true,
     });
@@ -318,6 +321,7 @@ export default function Settings() {
         name: planForm.name, duration_months: planForm.duration_months, price: planForm.price,
         benefits: benefitsArray, court_discount_percent: planForm.court_discount_percent,
         bar_discount_percent: planForm.bar_discount_percent, academy_discount_percent: planForm.academy_discount_percent,
+        tournament_discount_percent: planForm.tournament_discount_percent,
         is_active: planForm.is_active, show_on_pricing: planForm.show_on_pricing,
       }).eq('id', editingPlan.id);
     } else {
@@ -326,6 +330,7 @@ export default function Settings() {
         user_id: user.id, name: planForm.name, duration_months: planForm.duration_months, price: planForm.price,
         benefits: benefitsArray, court_discount_percent: planForm.court_discount_percent,
         bar_discount_percent: planForm.bar_discount_percent, academy_discount_percent: planForm.academy_discount_percent,
+        tournament_discount_percent: planForm.tournament_discount_percent,
         is_active: planForm.is_active, show_on_pricing: planForm.show_on_pricing, sort_order: maxOrder + 1,
       });
     }
@@ -697,6 +702,7 @@ export default function Settings() {
                           {plan.price}€ / {plan.duration_months === 1 ? '1 mês' : plan.duration_months === 12 ? '1 ano' : `${plan.duration_months} meses`}
                           {plan.court_discount_percent > 0 && ` · ${plan.court_discount_percent}% campos`}
                           {plan.bar_discount_percent > 0 && ` · ${plan.bar_discount_percent}% bar`}
+                          {plan.tournament_discount_percent > 0 && ` · ${plan.tournament_discount_percent}% torneios`}
                           {plan.benefits?.length > 0 && ` · ${plan.benefits.length} benefício(s)`}
                         </div>
                       </div>
@@ -882,7 +888,7 @@ export default function Settings() {
               </div>
               <div className="space-y-3">
                 <label className="block text-sm font-medium text-gray-700">Descontos (%)</label>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-4 gap-3">
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Campos</label>
                     <input type="number" value={planForm.court_discount_percent} onChange={e => setPlanForm({ ...planForm, court_discount_percent: e.target.valueAsNumber || 0 })}
@@ -896,6 +902,11 @@ export default function Settings() {
                   <div>
                     <label className="block text-xs text-gray-500 mb-1">Academia</label>
                     <input type="number" value={planForm.academy_discount_percent} onChange={e => setPlanForm({ ...planForm, academy_discount_percent: e.target.valueAsNumber || 0 })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" max="100" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Torneios</label>
+                    <input type="number" value={planForm.tournament_discount_percent} onChange={e => setPlanForm({ ...planForm, tournament_discount_percent: e.target.valueAsNumber || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" min="0" max="100" />
                   </div>
                 </div>

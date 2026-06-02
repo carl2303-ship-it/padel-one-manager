@@ -1594,15 +1594,16 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     console.log('[Tournament] Member subscriptions found:', memberSubs?.length || 0, memberSubs?.map((s: any) => ({ name: s.member_name, phone: s.member_phone, plan: s.plan?.name })));
 
     // 5. Build player info with member check
-    const memberMap = new Map<string, { discount: number; planName: string }>();
+    const memberMap = new Map<string, { discount: number; tournamentDiscount: number; planName: string }>();
     if (memberSubs) {
       memberSubs.forEach((sub: any) => {
         const phone = normalizePhone(sub.member_phone || '');
         const name = (sub.member_name || '').toLowerCase().trim();
         const discount = sub.plan?.court_discount_percent || 0;
+        const tournamentDiscount = sub.plan?.tournament_discount_percent || 0;
         const planName = sub.plan?.name || '';
-        if (phone) memberMap.set(phone, { discount, planName });
-        if (name) memberMap.set(name, { discount, planName });
+        if (phone) memberMap.set(phone, { discount, tournamentDiscount, planName });
+        if (name) memberMap.set(name, { discount, tournamentDiscount, planName });
       });
     }
 
@@ -1624,12 +1625,10 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       const memberInfo = memberMap.get(phone) || memberMap.get(name);
       const isMember = !!memberInfo;
       const planName = memberInfo?.planName || null;
-      const discountPercent = memberInfo?.discount || 0;
+      const tournamentDiscountPercent = memberInfo?.tournamentDiscount || 0;
       
-      // Check if this member is Staff (exempt from payment)
       const isStaff = isMember && planName ? planName.toLowerCase().includes('staff') : false;
 
-      // Get the price for this player
       const category = p.category_id ? categoryMap.get(p.category_id) : null;
       const catRegFee = Number(category?.registration_fee) || 0;
       const catMemberPrice = Number(category?.member_price) || 0;
@@ -1638,10 +1637,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       let basePrice = 0;
       
       if (isStaff) {
-        // Staff members are exempt from tournament payment
         basePrice = 0;
       } else if (isMember) {
-        // Priority for member price: category member_price > tournament member_price > category registration_fee > tournament registration_fee
         if (catMemberPrice > 0) {
           basePrice = catMemberPrice;
         } else if (tournMemberPrice > 0) {
@@ -1652,7 +1649,6 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
           basePrice = tournRegFee;
         }
       } else {
-        // Priority for non-member price: category non_member_price > tournament non_member_price > category registration_fee > tournament registration_fee
         if (catNonMemberPrice > 0) {
           basePrice = catNonMemberPrice;
         } else if (tournNonMemberPrice > 0) {
@@ -1664,17 +1660,15 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         }
       }
 
-      // O desconto de campo (court_discount_percent) NÃO se aplica a torneios.
-      // O member_price já É o preço final para membros.
-      // O desconto só se aplica quando se usa registration_fee como fallback (sem member_price definido).
+      // tournament_discount_percent aplica-se sempre que > 0 e não há member_price específico
       const usedMemberSpecificPrice = isMember && !isStaff && (catMemberPrice > 0 || tournMemberPrice > 0);
-      const finalPrice = !isStaff && isMember && discountPercent > 0 && !usedMemberSpecificPrice
-        ? basePrice * (1 - discountPercent / 100) 
+      const finalPrice = !isStaff && isMember && tournamentDiscountPercent > 0 && !usedMemberSpecificPrice
+        ? basePrice * (1 - tournamentDiscountPercent / 100) 
         : basePrice;
 
       const categoryName = category?.name || null;
 
-      console.log(`[Tournament] Player "${p.name}": isMember=${isMember}, isStaff=${isStaff}, plan=${planName}, basePrice=${basePrice}, finalPrice=${finalPrice}, catMemberPrice=${catMemberPrice}, tournMemberPrice=${tournMemberPrice}, regFee=${tournRegFee}`);
+      console.log(`[Tournament] Player "${p.name}": isMember=${isMember}, isStaff=${isStaff}, plan=${planName}, basePrice=${basePrice}, finalPrice=${finalPrice}, tournDiscount=${tournamentDiscountPercent}%, catMemberPrice=${catMemberPrice}, tournMemberPrice=${tournMemberPrice}, regFee=${tournRegFee}`);
 
       return {
         id: p.id,
@@ -1686,7 +1680,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
         is_member: isMember,
         is_staff: isStaff,
         plan_name: planName,
-        discount_percent: discountPercent,
+        discount_percent: tournamentDiscountPercent,
         final_price: Math.round(finalPrice * 100) / 100,
       };
     });

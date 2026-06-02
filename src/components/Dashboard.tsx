@@ -175,7 +175,7 @@ export default function Dashboard({ onNavigate, staffPermissions }: DashboardPro
           end_time,
           booked_by_name,
           status,
-          court:club_courts(id, name, type)
+          court:club_courts!inner(id, name, type)
         `)
         .eq('club_courts.user_id', effectiveUserId)
         .eq('status', 'confirmed')

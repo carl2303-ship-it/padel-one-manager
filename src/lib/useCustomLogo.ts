@@ -17,6 +17,7 @@ export function useCustomLogo(userId?: string) {
     }
 
     try {
+      // 1. Check user_logo_settings first
       const { data } = await supabase
         .from('user_logo_settings')
         .select('logo_url')
@@ -25,6 +26,18 @@ export function useCustomLogo(userId?: string) {
 
       if (data?.logo_url) {
         setLogoUrl(data.logo_url);
+        return;
+      }
+
+      // 2. Fallback: use club logo_url from clubs table
+      const { data: club } = await supabase
+        .from('clubs')
+        .select('logo_url')
+        .eq('owner_id', targetUserId)
+        .maybeSingle();
+
+      if (club?.logo_url) {
+        setLogoUrl(club.logo_url);
       }
     } catch (error) {
       console.error('Error loading custom logo:', error);

@@ -244,7 +244,7 @@ Deno.serve(async (req: Request) => {
 
         const { data: staffRows } = await supabase
           .from('club_staff')
-          .select('email, is_active, perm_bookings, role')
+          .select('email, is_active, perm_bookings, role, notify_bookings, notify_cancellations')
           .eq('club_owner_id', userId)
           .eq('is_active', true);
 
@@ -254,9 +254,15 @@ Deno.serve(async (req: Request) => {
             email?: string | null;
             perm_bookings?: boolean | null;
             role?: string | null;
+            notify_bookings?: boolean | null;
+            notify_cancellations?: boolean | null;
           };
           const canManageBookings = row.perm_bookings === true || row.role === 'admin';
           if (!canManageBookings) continue;
+          const wantsNotification = type === 'booking_created'
+            ? row.notify_bookings !== false
+            : row.notify_cancellations !== false;
+          if (!wantsNotification) continue;
           if (row.email) recipientSet.add(String(row.email).trim().toLowerCase());
         }
 
@@ -293,14 +299,14 @@ Deno.serve(async (req: Request) => {
       try {
         const { data: staffMembers } = await supabase
           .from('club_staff')
-          .select('user_id, role')
+          .select('user_id, role, notify_qr')
           .eq('club_owner_id', userId)
           .eq('is_active', true)
           .in('role', ['bar_staff', 'kitchen', 'admin']);
 
         if (staffMembers && staffMembers.length > 0) {
           for (const staff of staffMembers) {
-            if (staff.user_id) {
+            if (staff.user_id && (staff as any).notify_qr !== false) {
               const staffPayload = staff.role === 'kitchen'
                 ? { 
                     title: '👨‍🍳 Novo Pedido (Cozinha)!',

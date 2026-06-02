@@ -32,6 +32,7 @@ interface MembershipPlan {
   duration_months: number;
   benefits: string[];
   court_discount_percent: number;
+  tournament_discount_percent: number;
   is_active: boolean;
 }
 
@@ -316,6 +317,11 @@ export default function PublicPricing({ clubId }: Props) {
                       {plan.court_discount_percent > 0 && (
                         <p className="text-sm text-slate-300 flex items-start gap-2">
                           <span className="text-orange-400 mt-0.5">•</span> {plan.court_discount_percent}% desconto nos campos
+                        </p>
+                      )}
+                      {plan.tournament_discount_percent > 0 && (
+                        <p className="text-sm text-slate-300 flex items-start gap-2">
+                          <span className="text-orange-400 mt-0.5">•</span> {plan.tournament_discount_percent}% desconto em torneios
                         </p>
                       )}
                     </div>
