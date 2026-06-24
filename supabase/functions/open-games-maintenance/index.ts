@@ -31,6 +31,107 @@ Deno.serve(async (req: Request) => {
 
     const results: string[] = [];
 
+    // Run cleanup of expired incomplete games on every maintenance call
+    const { data: cleanupCount, error: cleanupErr } = await admin.rpc(
+      "cleanup_expired_open_games",
+    );
+    if (cleanupErr) {
+      console.error("[Maintenance] cleanup_expired_open_games error:", cleanupErr);
+      results.push(`Cleanup error: ${cleanupErr.message}`);
+    } else {
+      results.push(`Cleanup processed ${cleanupCount ?? 0} games`);
+    }
+
+    // ================================================================
+    // Alert creators when their open game lost court availability
+    // ================================================================
+    {
+      const now = new Date();
+      const { data: openGames, error: openGamesErr } = await admin
+        .from("open_games")
+        .select("id, court_id, scheduled_at, duration_minutes, creator_user_id, club_id")
+        .eq("status", "open")
+        .not("court_id", "is", null)
+        .gte("scheduled_at", now.toISOString());
+
+      if (openGamesErr) {
+        console.error("[Maintenance] Error fetching open games:", openGamesErr);
+        results.push(`Court check error: ${openGamesErr.message}`);
+      } else if (openGames && openGames.length > 0) {
+        for (const game of openGames) {
+          const slotStart = new Date(game.scheduled_at);
+          const slotEnd = new Date(
+            slotStart.getTime() + (game.duration_minutes || 90) * 60000,
+          );
+
+          const { data: conflicts } = await admin
+            .from("court_bookings")
+            .select("id, notes, event_type")
+            .eq("court_id", game.court_id)
+            .eq("status", "confirmed")
+            .lt("start_time", slotEnd.toISOString())
+            .gt("end_time", slotStart.toISOString());
+
+          const hasConflict = (conflicts || []).some((booking) => {
+            if (booking.event_type === "open_game" && booking.notes?.includes(`ID: ${game.id}`)) {
+              return false;
+            }
+            return true;
+          });
+
+          if (!hasConflict) continue;
+
+          const { data: alreadySent } = await admin
+            .from("open_game_notifications_sent")
+            .select("id")
+            .eq("game_id", game.id)
+            .eq("notification_type", "court_unavailable")
+            .maybeSingle();
+
+          if (alreadySent) continue;
+
+          const { data: creatorAccount } = await admin
+            .from("player_accounts")
+            .select("id")
+            .eq("user_id", game.creator_user_id)
+            .maybeSingle();
+
+          if (creatorAccount?.id && vapidPublicKey && vapidPrivateKey) {
+            const payload: PushPayload = {
+              title: "Jogo vai ser cancelado ⚠️",
+              body: "O campo já não está disponível nesse horário. O teu jogo aberto vai ser cancelado.",
+              url: "/?screen=games",
+              tag: `court-unavailable-${game.id}`,
+            };
+
+            try {
+              await deliverWebPushNotifications(admin, {
+                vapidPublicKey,
+                vapidPrivateKey,
+                playerAccountId: creatorAccount.id,
+                payload,
+                appSource: "player",
+              });
+
+              await admin.from("open_game_notifications_sent").insert({
+                game_id: game.id,
+                player_account_id: creatorAccount.id,
+                notification_type: "court_unavailable",
+              });
+
+              results.push(`Court unavailable alert sent for game ${game.id}`);
+            } catch (pushErr) {
+              console.error(`[Maintenance] Court alert push error for ${game.id}:`, pushErr);
+            }
+          }
+
+          await admin.from("open_game_players").delete().eq("game_id", game.id);
+          await admin.from("open_games").delete().eq("id", game.id);
+          results.push(`Cancelled open game ${game.id} due to court conflict`);
+        }
+      }
+    }
+
     // ================================================================
     // Alert: games starting within 3 hours with < 3 confirmed players
     // ================================================================
