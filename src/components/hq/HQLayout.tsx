@@ -14,6 +14,7 @@ import {
   X,
   Zap,
   Package,
+  Boxes,
   Shield,
 } from 'lucide-react';
 import HQDashboard from './HQDashboard';
@@ -24,8 +25,9 @@ import HQOrganizers from './HQOrganizers';
 import HQUsers from './HQUsers';
 import HQSettings from './HQSettings';
 import HQModules from './HQModules';
+import HQPacks from './HQPacks';
 
-type HQView = 'dashboard' | 'clubs' | 'organizers' | 'modules' | 'transactions' | 'metrics' | 'users' | 'settings';
+type HQView = 'dashboard' | 'clubs' | 'organizers' | 'modules' | 'packs' | 'transactions' | 'metrics' | 'users' | 'settings';
 
 interface NavItem {
   id: HQView;
@@ -38,6 +40,7 @@ const navItems: NavItem[] = [
   { id: 'clubs', label: 'Clubes', icon: <Building2 size={20} /> },
   { id: 'organizers', label: 'Organizadores', icon: <Crown size={20} /> },
   { id: 'modules', label: 'Módulos', icon: <Package size={20} /> },
+  { id: 'packs', label: 'Packs', icon: <Boxes size={20} /> },
   { id: 'transactions', label: 'Transações', icon: <ArrowLeftRight size={20} /> },
   { id: 'metrics', label: 'Métricas', icon: <BarChart3 size={20} /> },
   { id: 'users', label: 'Utilizadores', icon: <Users size={20} /> },
@@ -90,6 +93,7 @@ export default function HQLayout() {
       case 'clubs': return <HQClubManagement />;
       case 'organizers': return <HQOrganizers />;
       case 'modules': return <HQModules />;
+      case 'packs': return <HQPacks />;
       case 'transactions': return <HQTransactions />;
       case 'metrics': return <HQMetrics />;
       case 'users': return <HQUsers />;

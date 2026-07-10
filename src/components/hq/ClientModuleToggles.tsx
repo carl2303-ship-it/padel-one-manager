@@ -28,6 +28,7 @@ export default function ClientModuleToggles({ entityType, entityId, entityName }
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [packLoading, setPackLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -80,6 +81,20 @@ export default function ClientModuleToggles({ entityType, entityId, entityName }
     setBulkLoading(false);
   };
 
+  const applyPack = async (packCode: string, packName: string) => {
+    if (!confirm(`Aplicar ${packName} a ${entityName || 'este cliente'}?`)) return;
+    setPackLoading(packCode);
+    setError(null);
+    const { error: rpcError } = await supabase.rpc('apply_client_pack', {
+      p_entity_type: entityType,
+      p_entity_id: entityId,
+      p_pack_code: packCode,
+    });
+    if (rpcError) setError(rpcError.message);
+    else await load();
+    setPackLoading(null);
+  };
+
   const isEnabled = (code: string) => clientMods[code]?.enabled === true;
 
   const isBlocked = (mod: PlatformModule) => {
@@ -103,13 +118,33 @@ export default function ClientModuleToggles({ entityType, entityId, entityName }
           <Zap size={14} className="text-[#D32F2F]" />
           Módulos Ativos
         </h4>
-        <button
-          onClick={bulkEnable}
-          disabled={bulkLoading}
-          className="px-3 py-1 rounded-lg text-xs font-medium bg-[#D32F2F]/10 text-[#D32F2F] hover:bg-[#D32F2F]/20 disabled:opacity-50"
-        >
-          {bulkLoading ? 'A ativar...' : 'Ativar Todos'}
-        </button>
+        <div className="flex gap-2 flex-wrap justify-end">
+          {entityType === 'club' && (
+            <>
+              <button
+                onClick={() => applyPack('light', 'Pack Light')}
+                disabled={!!packLoading}
+                className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-900/20 text-blue-400 hover:bg-blue-900/40 disabled:opacity-50"
+              >
+                {packLoading === 'light' ? '...' : 'Pack Light'}
+              </button>
+              <button
+                onClick={() => applyPack('total', 'Pack Total')}
+                disabled={!!packLoading}
+                className="px-3 py-1 rounded-lg text-xs font-medium bg-[#D32F2F]/10 text-[#D32F2F] hover:bg-[#D32F2F]/20 disabled:opacity-50"
+              >
+                {packLoading === 'total' ? '...' : 'Pack Total'}
+              </button>
+            </>
+          )}
+          <button
+            onClick={bulkEnable}
+            disabled={bulkLoading}
+            className="px-3 py-1 rounded-lg text-xs font-medium bg-[#D32F2F]/10 text-[#D32F2F] hover:bg-[#D32F2F]/20 disabled:opacity-50"
+          >
+            {bulkLoading ? 'A ativar...' : 'Ativar Todos'}
+          </button>
+        </div>
       </div>
 
       {error && (
