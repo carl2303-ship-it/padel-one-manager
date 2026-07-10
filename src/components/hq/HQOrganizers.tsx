@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { User, Search, Plus, X, ToggleLeft, ToggleRight, Crown, Award, Medal, Key, Calendar, Copy, Check, ExternalLink, Link2, Send } from 'lucide-react';
+import ClientModuleToggles from './ClientModuleToggles';
 
 interface Organizer {
   id: string;
@@ -546,6 +547,7 @@ export default function HQOrganizers() {
                         ))}
                       </div>
                     )}
+                    <ClientModuleToggles entityType="organizer" entityId={org.user_id} entityName={org.name || org.email} />
                   </div>
                 )}
               </div>

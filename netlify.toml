@@ -6,6 +6,18 @@ command = "npx vite build"
 NODE_VERSION = "18"
 
 [[redirects]]
+from = "/platform-pricing"
+to = "https://padel1.app/clubs"
+status = 301
+force = true
+
+[[redirects]]
+from = "/plans"
+to = "https://padel1.app/clubs"
+status = 301
+force = true
+
+[[redirects]]
 from = "/*"
 to = "/index.html"
 status = 200

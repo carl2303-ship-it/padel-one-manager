@@ -5,6 +5,7 @@ import {
   MapPin, Phone, Mail, Globe, Users, Layers, Plus, X, Upload,
   Image, UserPlus, UserMinus, Link2, Edit2, Key, Calendar, Copy, Check, ExternalLink, Send
 } from 'lucide-react';
+import ClientModuleToggles from './ClientModuleToggles';
 
 interface Club {
   id: string;
@@ -928,6 +929,8 @@ export default function HQClubManagement() {
                       </div>
                     )}
                   </div>
+
+                  <ClientModuleToggles entityType="club" entityId={club.id} entityName={club.name} />
 
                   {/* Contract & License section */}
                   <div className="pt-3 border-t border-[#2a2a2a]">

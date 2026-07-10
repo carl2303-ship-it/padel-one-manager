@@ -12,7 +12,9 @@ import {
   LogOut,
   Menu,
   X,
-  Zap
+  Zap,
+  Package,
+  Shield,
 } from 'lucide-react';
 import HQDashboard from './HQDashboard';
 import HQClubManagement from './HQClubManagement';
@@ -21,8 +23,9 @@ import HQMetrics from './HQMetrics';
 import HQOrganizers from './HQOrganizers';
 import HQUsers from './HQUsers';
 import HQSettings from './HQSettings';
+import HQModules from './HQModules';
 
-type HQView = 'dashboard' | 'clubs' | 'organizers' | 'transactions' | 'metrics' | 'users' | 'settings';
+type HQView = 'dashboard' | 'clubs' | 'organizers' | 'modules' | 'transactions' | 'metrics' | 'users' | 'settings';
 
 interface NavItem {
   id: HQView;
@@ -34,6 +37,7 @@ const navItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
   { id: 'clubs', label: 'Clubes', icon: <Building2 size={20} /> },
   { id: 'organizers', label: 'Organizadores', icon: <Crown size={20} /> },
+  { id: 'modules', label: 'Módulos', icon: <Package size={20} /> },
   { id: 'transactions', label: 'Transações', icon: <ArrowLeftRight size={20} /> },
   { id: 'metrics', label: 'Métricas', icon: <BarChart3 size={20} /> },
   { id: 'users', label: 'Utilizadores', icon: <Users size={20} /> },
@@ -85,6 +89,7 @@ export default function HQLayout() {
       case 'dashboard': return <HQDashboard />;
       case 'clubs': return <HQClubManagement />;
       case 'organizers': return <HQOrganizers />;
+      case 'modules': return <HQModules />;
       case 'transactions': return <HQTransactions />;
       case 'metrics': return <HQMetrics />;
       case 'users': return <HQUsers />;

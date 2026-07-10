@@ -14,12 +14,12 @@ import Settings from './components/Settings';
 import HQLayout from './components/hq/HQLayout';
 import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
-import PublicMenu from './components/PublicMenu';
+import PublicMenuGate from './components/PublicMenuGate';
 import PublicPricing from './components/PublicPricing';
-import PlatformPricing from './components/PlatformPricing';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
+import { useClientModules } from './lib/useClientModules';
 import {
   Menu,
   X,
@@ -112,6 +112,8 @@ function App() {
   const [licenseError, setLicenseError] = useState('');
   const [licenseResult, setLicenseResult] = useState<{ plan?: string; contract_expires_at?: string } | null>(null);
   const [clubPlanInfo, setClubPlanInfo] = useState<{ plan_type?: string; contract_expires_at?: string } | null>(null);
+  const [managedClubId, setManagedClubId] = useState<string | null>(null);
+  const { hasModule, loading: modulesLoading } = useClientModules('club', managedClubId);
 
   const handleSignOut = async () => {
     await signOut();
@@ -151,6 +153,7 @@ function App() {
       setShowMobileMenu(false);
       setNeedsLicense(false);
       setClubPlanInfo(null);
+      setManagedClubId(null);
       setStaffPermissions({
         isStaff: false,
         isOwner: true,
@@ -229,6 +232,7 @@ function App() {
           plan_type: ownedClub.plan_type,
           contract_expires_at: ownedClub.contract_expires_at,
         });
+        setManagedClubId(ownedClub.id);
         setNeedsLicense(false);
         await checkStaffPermissions();
         return;
@@ -334,6 +338,12 @@ function App() {
       .maybeSingle();
 
     if (staffData && staffData.club_owner_id !== user.id) {
+      const { data: staffClub } = await supabase
+        .from('clubs')
+        .select('id')
+        .eq('owner_id', staffData.club_owner_id)
+        .maybeSingle();
+      if (staffClub) setManagedClubId(staffClub.id);
       const permBar = staffData.perm_bar || staffData.role === 'admin' || staffData.role === 'kitchen' || staffData.role === 'bar_staff';
       const permBookings = staffData.perm_bookings || staffData.role === 'admin';
       const permMembers = staffData.perm_members || staffData.role === 'admin';
@@ -358,6 +368,12 @@ function App() {
         setView('bar');
       }
     } else {
+      const { data: ownerClub } = await supabase
+        .from('clubs')
+        .select('id')
+        .eq('owner_id', user.id)
+        .maybeSingle();
+      if (ownerClub) setManagedClubId(ownerClub.id);
       setStaffPermissions({
         isStaff: false,
         isOwner: true,
@@ -382,11 +398,12 @@ function App() {
     const menuClubId = menuMatch[1];
     const urlParams = new URLSearchParams(window.location.search);
     const tableNum = urlParams.get('mesa') || urlParams.get('table');
-    return <PublicMenu clubId={menuClubId} tableNumber={tableNum} />;
+    return <PublicMenuGate clubId={menuClubId} tableNumber={tableNum} />;
   }
 
   if (pathname === '/plans' || pathname === '/platform-pricing') {
-    return <PlatformPricing />;
+    window.location.replace('https://padel1.app/clubs');
+    return null;
   }
 
   const pricingMatch = pathname.match(/^\/pricing\/([a-f0-9-]+)$/i);
@@ -506,28 +523,56 @@ function App() {
     );
   }
 
-  // Staff with only bar access doesn't need the dashboard
-  const staffBarOnly = staffPermissions.isStaff &&
+  // Manager module gate (club must have 'manager' module active, unless bar-only staff with bar module)
+  const barOnlyStaff = staffPermissions.isStaff &&
     staffPermissions.perm_bar &&
     !staffPermissions.perm_bookings &&
     !staffPermissions.perm_members &&
     !staffPermissions.perm_academy &&
     !staffPermissions.perm_reports;
 
+  if (!modulesLoading && managedClubId && !hasModule('manager')) {
+    const canAccessBarOnly = barOnlyStaff && hasModule('bar');
+    if (!canAccessBarOnly) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+            <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+            <div className="text-3xl mb-3">🔒</div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Módulo Manager Inativo</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              O módulo de gestão de clube não está ativo para a sua conta.
+              Contacte o suporte Padel One para ativar.
+            </p>
+            <button
+              onClick={handleSignOut}
+              className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
+            >
+              Sair
+            </button>
+          </div>
+        </div>
+      );
+    }
+  }
+
+  // Staff with only bar access doesn't need the dashboard (barOnlyStaff defined above)
+
   const allNavItems = [
-    { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always' },
-    { id: 'bookings' as View, label: t.nav.bookings, icon: BookingsIcon, permission: 'perm_bookings' },
-    { id: 'members' as View, label: t.nav.members, icon: MembersIcon, permission: 'perm_members' },
-    { id: 'academy' as View, label: t.nav.academy, icon: AcademyIcon, permission: 'perm_academy' },
-    { id: 'bar' as View, label: t.nav.bar, icon: BarIcon, permission: 'perm_bar' },
-    { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: MetricsIcon, permission: 'perm_reports' },
-    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: OpenGamesIcon, permission: 'perm_bookings' },
-    { id: 'rewards' as View, label: 'Rewards', icon: RewardsIcon, permission: 'perm_bookings' },
-    { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: StaffIcon, permission: 'owner_only' },
+    { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always', module: null as string | null },
+    { id: 'bookings' as View, label: t.nav.bookings, icon: BookingsIcon, permission: 'perm_bookings', module: 'manager' },
+    { id: 'members' as View, label: t.nav.members, icon: MembersIcon, permission: 'perm_members', module: 'manager' },
+    { id: 'academy' as View, label: t.nav.academy, icon: AcademyIcon, permission: 'perm_academy', module: 'manager' },
+    { id: 'bar' as View, label: t.nav.bar, icon: BarIcon, permission: 'perm_bar', module: 'bar' },
+    { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: MetricsIcon, permission: 'perm_reports', module: 'manager' },
+    { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: OpenGamesIcon, permission: 'perm_bookings', module: 'manager' },
+    { id: 'rewards' as View, label: 'Rewards', icon: RewardsIcon, permission: 'perm_bookings', module: 'manager' },
+    { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: StaffIcon, permission: 'owner_only', module: 'manager' },
   ];
 
   const navItems = allNavItems.filter(item => {
-    if (item.permission === 'always') return !staffBarOnly;
+    if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar')) return false;
+    if (item.permission === 'always') return !barOnlyStaff;
     if (item.permission === 'owner_only') return staffPermissions.isOwner;
     return staffPermissions[item.permission as keyof StaffPermissions];
   });
@@ -710,20 +755,20 @@ function App() {
       <main className="flex-1 lg:ml-64">
         <div className="pt-16 lg:pt-0 min-h-screen">
           {view === 'dashboard' && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
-          {view === 'bookings' && staffPermissions.perm_bookings && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'members' && staffPermissions.perm_members && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'academy' && staffPermissions.perm_academy && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'bar' && staffPermissions.perm_bar && (
+          {view === 'bookings' && staffPermissions.perm_bookings && hasModule('manager') && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'members' && staffPermissions.perm_members && hasModule('manager') && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'academy' && staffPermissions.perm_academy && hasModule('manager') && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'bar' && staffPermissions.perm_bar && hasModule('bar') && (
             <BarManagement
               key={refreshKey}
               staffClubOwnerId={staffPermissions.clubOwnerId}
               staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
             />
           )}
-          {view === 'metrics' && staffPermissions.perm_reports && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'open-games' && staffPermissions.perm_bookings && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'rewards' && staffPermissions.perm_bookings && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'staff' && staffPermissions.isOwner && <StaffManagement />}
+          {view === 'metrics' && staffPermissions.perm_reports && hasModule('manager') && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'open-games' && staffPermissions.perm_bookings && hasModule('manager') && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'rewards' && staffPermissions.perm_bookings && hasModule('manager') && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+          {view === 'staff' && staffPermissions.isOwner && hasModule('manager') && <StaffManagement />}
           {view === 'settings' && staffPermissions.isOwner && <Settings />}
         </div>
       </main>
