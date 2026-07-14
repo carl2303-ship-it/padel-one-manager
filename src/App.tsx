@@ -391,6 +391,15 @@ function App() {
     setCheckingPermissions(false);
   };
 
+  const barOnlyClub = !modulesLoading && !!managedClubId && hasModule('bar') && !hasModule('manager');
+  const barOnlyMode = barOnlyClub;
+
+  useEffect(() => {
+    if (barOnlyMode) {
+      setView('bar');
+    }
+  }, [barOnlyMode]);
+
   // Check if this is a public page (no auth needed)
   const pathname = window.location.pathname;
   const menuMatch = pathname.match(/^\/menu\/([a-f0-9-]+)$/i);
@@ -523,40 +532,52 @@ function App() {
     );
   }
 
-  // Manager module gate (club must have 'manager' module active, unless bar-only staff with bar module)
-  const barOnlyStaff = staffPermissions.isStaff &&
-    staffPermissions.perm_bar &&
-    !staffPermissions.perm_bookings &&
-    !staffPermissions.perm_members &&
-    !staffPermissions.perm_academy &&
-    !staffPermissions.perm_reports;
-
-  if (!modulesLoading && managedClubId && !hasModule('manager')) {
-    const canAccessBarOnly = barOnlyStaff && hasModule('bar');
-    if (!canAccessBarOnly) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
-            <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
-            <div className="text-3xl mb-3">🔒</div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Módulo Manager Inativo</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              O módulo de gestão de clube não está ativo para a sua conta.
-              Contacte o suporte Padel One para ativar.
-            </p>
-            <button
-              onClick={handleSignOut}
-              className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
-            >
-              Sair
-            </button>
-          </div>
+  // Module gate: need manager and/or bar; bar-only clubs get a slimmed-down app
+  if (!modulesLoading && managedClubId && !hasModule('manager') && !hasModule('bar')) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+          <div className="text-3xl mb-3">🔒</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Sem módulos ativos</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            Não tem módulos ativos para este clube.
+            Contacte o suporte Padel One para ativar.
+          </p>
+          <button
+            onClick={handleSignOut}
+            className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
+          >
+            Sair
+          </button>
         </div>
-      );
-    }
+      </div>
+    );
   }
 
-  // Staff with only bar access doesn't need the dashboard (barOnlyStaff defined above)
+  if (barOnlyClub && !staffPermissions.isOwner && !staffPermissions.perm_bar) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+          <div className="text-3xl mb-3">🔒</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Sem acesso ao bar</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            A sua conta não tem permissão para gerir o bar deste clube.
+          </p>
+          <button
+            onClick={handleSignOut}
+            className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const appTitle = barOnlyMode ? 'Padel One Bar' : t.app.title;
+  const appSubtitle = barOnlyMode ? 'Bar e pedidos' : t.app.subtitle;
 
   const allNavItems = [
     { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always', module: null as string | null },
@@ -572,7 +593,7 @@ function App() {
 
   const navItems = allNavItems.filter(item => {
     if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar')) return false;
-    if (item.permission === 'always') return !barOnlyStaff;
+    if (item.permission === 'always') return !barOnlyMode;
     if (item.permission === 'owner_only') return staffPermissions.isOwner;
     return staffPermissions[item.permission as keyof StaffPermissions];
   });
@@ -584,8 +605,8 @@ function App() {
         <div className="flex items-center gap-3 px-6 py-5 border-b border-gray-200">
           <img src={logoUrl} alt="Logo" className="h-10 w-auto" />
           <div>
-            <h1 className="text-lg font-bold text-gray-900">{t.app.title}</h1>
-            <p className="text-xs text-gray-500">{t.app.subtitle}</p>
+            <h1 className="text-lg font-bold text-gray-900">{appTitle}</h1>
+            <p className="text-xs text-gray-500">{appSubtitle}</p>
           </div>
         </div>
 
@@ -611,7 +632,7 @@ function App() {
         </nav>
 
         <div className="px-4 py-4 border-t border-gray-200 space-y-2">
-          {staffPermissions.isOwner && (
+          {staffPermissions.isOwner && !barOnlyMode && (
             <button
               onClick={() => setView('settings')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
@@ -639,7 +660,7 @@ function App() {
             </div>
           )}
 
-          {clubPlanInfo && (
+          {clubPlanInfo && !barOnlyMode && (
             <div className="mx-2 mb-2 px-4 py-2 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200">
               <div className="flex items-center gap-2 text-amber-800 text-sm font-semibold">
                 <EmojiIcon emoji="👑" className="w-4 h-4" />
@@ -672,7 +693,7 @@ function App() {
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <img src={logoUrl} alt="Logo" className="h-8 w-auto" />
-            <h1 className="text-lg font-bold text-gray-900">{t.app.title}</h1>
+            <h1 className="text-lg font-bold text-gray-900">{appTitle}</h1>
           </div>
           <button
             onClick={() => setShowMobileMenu(!showMobileMenu)}
@@ -708,7 +729,7 @@ function App() {
                 );
               })}
               <hr className="my-2" />
-              {staffPermissions.isOwner && (
+              {staffPermissions.isOwner && !barOnlyMode && (
                 <button
                   onClick={() => {
                     setView('settings');
@@ -754,7 +775,7 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 lg:ml-64">
         <div className="pt-16 lg:pt-0 min-h-screen">
-          {view === 'dashboard' && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
+          {view === 'dashboard' && !barOnlyMode && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
           {view === 'bookings' && staffPermissions.perm_bookings && hasModule('manager') && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'members' && staffPermissions.perm_members && hasModule('manager') && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'academy' && staffPermissions.perm_academy && hasModule('manager') && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
@@ -769,7 +790,7 @@ function App() {
           {view === 'open-games' && staffPermissions.perm_bookings && hasModule('manager') && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'rewards' && staffPermissions.perm_bookings && hasModule('manager') && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
           {view === 'staff' && staffPermissions.isOwner && hasModule('manager') && <StaffManagement />}
-          {view === 'settings' && staffPermissions.isOwner && <Settings />}
+          {view === 'settings' && staffPermissions.isOwner && !barOnlyMode && <Settings />}
         </div>
       </main>
     </div>
