@@ -194,6 +194,14 @@ const orderItemsProgress = (order: QrOrder) => {
   return { nReady, nTotal };
 };
 
+const UNATTENDED_ORDER_MAX_AGE_MINUTES = 60;
+
+const minutesSince = (iso: string) =>
+  Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
+
+const minutesUntilAutoCancel = (createdAt: string) =>
+  Math.max(0, UNATTENDED_ORDER_MAX_AGE_MINUTES - minutesSince(createdAt));
+
 export default function BarManagement({ staffClubOwnerId, staffRole }: BarManagementProps) {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -376,8 +384,20 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     }
   }, [ensureAudioCtx]);
 
+  const cleanupUnattendedOrders = useCallback(async () => {
+    if (!effectiveUserId) return;
+    try {
+      await supabase.rpc('cleanup_unattended_club_orders', {
+        p_max_age_minutes: UNATTENDED_ORDER_MAX_AGE_MINUTES,
+      });
+    } catch (err) {
+      console.warn('[Bar] cleanup unattended orders:', err);
+    }
+  }, [effectiveUserId]);
+
   const reloadOrders = useCallback(async () => {
     if (!effectiveUserId) return;
+    await cleanupUnattendedOrders();
     const { data: allOrdersData } = await supabase
       .from('club_orders')
       .select('*')
@@ -398,7 +418,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
       );
       setQrOrders(ordersWithItems);
     }
-  }, [effectiveUserId, clubId]);
+  }, [effectiveUserId, clubId, cleanupUnattendedOrders]);
 
   const reloadTabs = useCallback(async () => {
     if (!effectiveUserId) return;
@@ -496,6 +516,15 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     };
   }, [clubId, effectiveUserId, isKitchenSoloView, playOrderBeep, reloadOrders]);
 
+  // Periodic cleanup of unattended pending orders (backup to pg_cron)
+  useEffect(() => {
+    if (!effectiveUserId) return;
+    const interval = setInterval(() => {
+      void cleanupUnattendedOrders().then(() => reloadOrders());
+    }, 5 * 60_000);
+    return () => clearInterval(interval);
+  }, [effectiveUserId, cleanupUnattendedOrders, reloadOrders]);
+
   // Auto-refresh when the tab/window regains focus
   const lastForegroundRefresh = useRef(Date.now());
   useEffect(() => {
@@ -539,6 +568,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
     }
 
     // Load ALL orders from unified club_orders table (both manual and QR)
+    await cleanupUnattendedOrders();
     const { data: allOrdersData } = await supabase
       .from('club_orders')
       .select('*')
@@ -2394,6 +2424,13 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
                                 <Clock className="w-3 h-3" />
                                 {formatDate(order.created_at)}
                               </div>
+                              {order.status === 'pending' && (
+                                <div className="text-xs text-red-600 mt-1">
+                                  {minutesUntilAutoCancel(order.created_at) > 0
+                                    ? `Cancela automaticamente em ${minutesUntilAutoCancel(order.created_at)} min se não for atendido`
+                                    : 'A cancelar automaticamente…'}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="text-right">
