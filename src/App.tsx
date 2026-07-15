@@ -810,6 +810,7 @@ function App() {
             <TournamentBarManagement
               key={refreshKey}
               staffClubOwnerId={staffPermissions.clubOwnerId}
+              clubId={managedClubId}
             />
           )}
           {view === 'metrics' && staffPermissions.perm_reports && hasModule('manager') && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}

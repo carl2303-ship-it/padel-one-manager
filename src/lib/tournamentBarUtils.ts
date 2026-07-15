@@ -44,30 +44,64 @@ export function normalizePhone(phone: string | null): string {
   return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
 }
 
-export async function fetchClubTournaments(clubOwnerId: string): Promise<TournamentListItem[]> {
-  const { data: club } = await supabase
+async function resolveClubId(clubOwnerId: string, clubId?: string | null): Promise<string | null> {
+  if (clubId) return clubId;
+
+  const { data: club, error: clubError } = await supabase
     .from('clubs')
     .select('id')
     .eq('owner_id', clubOwnerId)
+    .limit(1)
     .maybeSingle();
 
-  if (!club) return [];
+  if (clubError && clubError.code !== 'PGRST116') throw clubError;
+  return club?.id ?? null;
+}
 
-  const { data: tournaments } = await supabase
+export async function fetchClubTournaments(
+  clubOwnerId: string,
+  clubId?: string | null,
+): Promise<TournamentListItem[]> {
+  const resolvedClubId = await resolveClubId(clubOwnerId, clubId);
+  if (!resolvedClubId) return [];
+
+  const { data: rpcRows, error: rpcError } = await supabase.rpc('get_club_tournaments_for_bar', {
+    p_club_id: resolvedClubId,
+  });
+
+  if (!rpcError && rpcRows) {
+    return (rpcRows as Array<Record<string, unknown>>).map(row => ({
+      id: row.id as string,
+      name: row.name as string,
+      start_date: row.start_date as string,
+      end_date: row.end_date as string,
+      status: row.status as string,
+      player_count: Number(row.player_count) || 0,
+    }));
+  }
+
+  if (rpcError && rpcError.code !== 'PGRST202') {
+    console.warn('[TournamentBar] RPC unavailable, falling back to direct query:', rpcError.message);
+  }
+
+  const { data: tournaments, error: tError } = await supabase
     .from('tournaments')
     .select('id, name, start_date, end_date, status')
-    .eq('club_id', club.id)
+    .eq('club_id', resolvedClubId)
     .neq('status', 'cancelled')
     .order('start_date', { ascending: false })
     .limit(50);
 
+  if (tError) throw tError;
   if (!tournaments?.length) return [];
 
   const ids = tournaments.map(t => t.id);
-  const { data: players } = await supabase
+  const { data: players, error: pError } = await supabase
     .from('players')
     .select('tournament_id')
     .in('tournament_id', ids);
+
+  if (pError) throw pError;
 
   const countMap = new Map<string, number>();
   ids.forEach(id => countMap.set(id, 0));

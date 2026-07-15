@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Clock, CreditCard, Trophy, Users, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/authContext';
 import {
   fetchClubTournaments,
   loadTournamentDetails,
@@ -12,26 +13,37 @@ import {
 
 interface TournamentBarManagementProps {
   staffClubOwnerId?: string | null;
+  clubId?: string | null;
 }
 
-export default function TournamentBarManagement({ staffClubOwnerId }: TournamentBarManagementProps) {
-  const effectiveUserId = staffClubOwnerId || undefined;
+export default function TournamentBarManagement({ staffClubOwnerId, clubId }: TournamentBarManagementProps) {
+  const { user } = useAuth();
+  const effectiveUserId = staffClubOwnerId || user?.id;
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tournaments, setTournaments] = useState<TournamentListItem[]>([]);
   const [selected, setSelected] = useState<TournamentDetails | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const loadList = useCallback(async () => {
-    if (!effectiveUserId) return;
+    if (!effectiveUserId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
+    setLoadError(null);
     try {
-      const list = await fetchClubTournaments(effectiveUserId);
+      const list = await fetchClubTournaments(effectiveUserId, clubId);
       setTournaments(list);
+    } catch (err) {
+      console.error('[TournamentBar] load tournaments:', err);
+      setLoadError('Não foi possível carregar os torneios.');
+      setTournaments([]);
     } finally {
       setLoading(false);
     }
-  }, [effectiveUserId]);
+  }, [effectiveUserId, clubId]);
 
   useEffect(() => {
     void loadList();
@@ -156,6 +168,10 @@ export default function TournamentBarManagement({ staffClubOwnerId }: Tournament
           Inscritos e contas de bar por torneio
         </p>
       </div>
+
+      {loadError && (
+        <div className="card p-4 border border-red-200 bg-red-50 text-red-700 text-sm">{loadError}</div>
+      )}
 
       {loading ? (
         <div className="card p-12 text-center text-gray-500">A carregar torneios...</div>

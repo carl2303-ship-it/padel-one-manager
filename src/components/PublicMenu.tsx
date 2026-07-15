@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabase';
 import { compareMenuItemsInCategory, orderMenuItemsByCategoryList } from '../lib/menuItemSort';
 import {
   Plus,
@@ -21,10 +21,6 @@ import {
   UtensilsCrossed,
   Wine
 } from 'lucide-react';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const anonSupabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // ─── i18n ───────────────────────────────────────────────────
 type Lang = 'pt' | 'en' | 'fr' | 'de' | 'es';
@@ -432,7 +428,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
   useEffect(() => {
     if (!orderId) return;
 
-    const channel = anonSupabase
+    const channel = supabase
       .channel(`order-status-${orderId}`)
       .on(
         'postgres_changes',
@@ -481,14 +477,14 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       .subscribe();
 
     return () => {
-      anonSupabase.removeChannel(channel);
+      supabase.removeChannel(channel);
     };
   }, [orderId]);
 
   const loadMenu = async () => {
     setLoading(true);
 
-    const { data: clubData } = await anonSupabase
+    const { data: clubData } = await supabase
       .from('clubs')
       .select('id, name, logo_url, photo_url_1, photo_url_2, owner_id')
       .eq('id', clubId)
@@ -502,14 +498,14 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
     setClub(clubData);
 
-    const { data: categoriesData } = await anonSupabase
+    const { data: categoriesData } = await supabase
       .from('menu_categories')
       .select('id, name, sort_order')
       .eq('club_owner_id', clubData.owner_id)
       .eq('is_active', true)
       .order('sort_order');
 
-    const { data: itemsData } = await anonSupabase
+    const { data: itemsData } = await supabase
       .from('menu_items')
       .select('*')
       .eq('club_owner_id', clubData.owner_id)
@@ -578,13 +574,13 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
     const normalizedPhone = normalizePhone(phone);
 
     try {
-      const { data: playerAccount } = await anonSupabase
+      const { data: playerAccount } = await supabase
         .from('player_accounts')
         .select('id, name, phone_number')
         .eq('phone_number', normalizedPhone)
         .maybeSingle();
 
-      const { data: memberSub } = await anonSupabase
+      const { data: memberSub } = await supabase
         .from('member_subscriptions')
         .select('member_name, member_phone, status, player_account_id, plan:membership_plans(name, bar_discount_percent)')
         .eq('club_owner_id', club.owner_id)
@@ -594,7 +590,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
       let memberSubByAccount = null;
       if (!memberSub && playerAccount) {
-        const { data } = await anonSupabase
+        const { data } = await supabase
           .from('member_subscriptions')
           .select('member_name, member_phone, status, player_account_id, plan:membership_plans(name, bar_discount_percent)')
           .eq('club_owner_id', club.owner_id)
@@ -661,7 +657,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
     setSubmitting(true);
 
-    const { data: orderData, error: orderError } = await anonSupabase
+    const { data: orderData, error: orderError } = await supabase
       .from('club_orders')
       .insert({
         club_id: club.id,
@@ -702,7 +698,7 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
       };
     });
 
-    const { error: itemsError } = await anonSupabase
+    const { error: itemsError } = await supabase
       .from('club_order_items')
       .insert(items);
 
