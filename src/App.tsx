@@ -7,6 +7,7 @@ import CourtBookings from './components/CourtBookings';
 import MemberManagement from './components/MemberManagement';
 import AcademyManagement from './components/AcademyManagement';
 import BarManagement from './components/BarManagement';
+import TournamentBarManagement from './components/TournamentBarManagement';
 import ClubMetrics from './components/ClubMetrics';
 import StaffManagement from './components/StaffManagement';
 import StaffInviteAccept from './components/StaffInviteAccept';
@@ -34,6 +35,7 @@ const BookingsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji
 const MembersIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="👥" className={className} />;
 const AcademyIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎓" className={className} />;
 const BarIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🍹" className={className} />;
+const TournamentsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🏆" className={className} />;
 const MetricsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📈" className={className} />;
 const OpenGamesIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎾" className={className} />;
 const RewardsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎁" className={className} />;
@@ -41,7 +43,7 @@ const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="�
 const SettingsEmojiIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="⚙️" className={className} />;
 const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🚪" className={className} />;
 
-type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
+type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'tournaments' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
 
 function isSuperAdminEntryUrl(): boolean {
   if (typeof window === 'undefined') return false;
@@ -393,12 +395,24 @@ function App() {
 
   const barOnlyClub = !modulesLoading && !!managedClubId && hasModule('bar') && !hasModule('manager');
   const barOnlyMode = barOnlyClub;
+  const hasTournamentsBar = hasModule('tournaments') && hasModule('bar');
+  const canAccessTournamentsBar = hasTournamentsBar && (
+    staffPermissions.isOwner ||
+    staffPermissions.perm_bar ||
+    staffPermissions.perm_bookings
+  );
+
+  const compactViewInitialized = useRef(false);
 
   useEffect(() => {
-    if (barOnlyMode) {
-      setView('bar');
-    }
-  }, [barOnlyMode]);
+    compactViewInitialized.current = false;
+  }, [managedClubId]);
+
+  useEffect(() => {
+    if (modulesLoading || compactViewInitialized.current || !barOnlyMode) return;
+    compactViewInitialized.current = true;
+    setView(hasTournamentsBar ? 'tournaments' : 'bar');
+  }, [barOnlyMode, hasTournamentsBar, modulesLoading]);
 
   // Check if this is a public page (no auth needed)
   const pathname = window.location.pathname;
@@ -576,14 +590,19 @@ function App() {
     );
   }
 
-  const appTitle = barOnlyMode ? 'Padel One Bar' : t.app.title;
-  const appSubtitle = barOnlyMode ? 'Bar e pedidos' : t.app.subtitle;
+  const appTitle = barOnlyMode
+    ? (hasTournamentsBar ? 'Padel One Club' : 'Padel One Bar')
+    : t.app.title;
+  const appSubtitle = barOnlyMode
+    ? (hasTournamentsBar ? 'Torneios e Bar' : 'Bar e pedidos')
+    : t.app.subtitle;
 
   const allNavItems = [
     { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always', module: null as string | null },
     { id: 'bookings' as View, label: t.nav.bookings, icon: BookingsIcon, permission: 'perm_bookings', module: 'manager' },
     { id: 'members' as View, label: t.nav.members, icon: MembersIcon, permission: 'perm_members', module: 'manager' },
     { id: 'academy' as View, label: t.nav.academy, icon: AcademyIcon, permission: 'perm_academy', module: 'manager' },
+    { id: 'tournaments' as View, label: 'Torneios', icon: TournamentsIcon, permission: 'tournaments_bar', module: null as string | null },
     { id: 'bar' as View, label: t.nav.bar, icon: BarIcon, permission: 'perm_bar', module: 'bar' },
     { id: 'metrics' as View, label: t.nav.metrics || 'Metrics', icon: MetricsIcon, permission: 'perm_reports', module: 'manager' },
     { id: 'open-games' as View, label: t.nav.openGames || 'Jogos Abertos', icon: OpenGamesIcon, permission: 'perm_bookings', module: 'manager' },
@@ -592,7 +611,8 @@ function App() {
   ];
 
   const navItems = allNavItems.filter(item => {
-    if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar')) return false;
+    if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar' | 'tournaments')) return false;
+    if (item.permission === 'tournaments_bar') return canAccessTournamentsBar;
     if (item.permission === 'always') return !barOnlyMode;
     if (item.permission === 'owner_only') return staffPermissions.isOwner;
     return staffPermissions[item.permission as keyof StaffPermissions];
@@ -784,6 +804,12 @@ function App() {
               key={refreshKey}
               staffClubOwnerId={staffPermissions.clubOwnerId}
               staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
+            />
+          )}
+          {view === 'tournaments' && canAccessTournamentsBar && (
+            <TournamentBarManagement
+              key={refreshKey}
+              staffClubOwnerId={staffPermissions.clubOwnerId}
             />
           )}
           {view === 'metrics' && staffPermissions.perm_reports && hasModule('manager') && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
