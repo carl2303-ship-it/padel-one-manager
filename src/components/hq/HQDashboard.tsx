@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Building2, Trophy, ArrowLeftRight, TrendingUp, TrendingDown } from 'lucide-react';
+import { Users, Building2, ArrowLeftRight, TrendingUp, TrendingDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, PieChart, Pie, Cell
@@ -35,10 +35,10 @@ export default function HQDashboard() {
   };
 
   const loadKPIs = async () => {
-    const [players, clubs, organizers, txns] = await Promise.all([
+    const [players, clubs, allClubs, txns] = await Promise.all([
       supabase.from('player_accounts').select('id', { count: 'exact', head: true }),
       supabase.from('clubs').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('organizers').select('id', { count: 'exact', head: true }).eq('is_active', true).neq('source', 'boost'),
+      supabase.from('clubs').select('id', { count: 'exact', head: true }),
       supabase.from('player_transactions').select('amount'),
     ]);
 
@@ -47,7 +47,7 @@ export default function HQDashboard() {
     setKpis([
       { label: 'Jogadores', value: players.count ?? 0, icon: <Users size={22} className="text-[#D32F2F]" /> },
       { label: 'Clubes Ativos', value: clubs.count ?? 0, icon: <Building2 size={22} className="text-[#D32F2F]" /> },
-      { label: 'Organizadores', value: organizers.count ?? 0, icon: <Trophy size={22} className="text-[#D32F2F]" /> },
+      { label: 'Total Clubes', value: allClubs.count ?? 0, icon: <Building2 size={22} className="text-[#D32F2F]" /> },
       { label: 'Volume Transações', value: `€${totalVolume.toFixed(0)}`, icon: <ArrowLeftRight size={22} className="text-[#D32F2F]" /> },
     ]);
   };

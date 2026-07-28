@@ -118,7 +118,7 @@ export default function HQSettings() {
 
     const payload = {
       name: planForm.name.trim(),
-      target_type: planForm.target_type,
+      target_type: 'club' as const,
       price_monthly: planForm.price_monthly ? parseFloat(planForm.price_monthly) : null,
       price_annual: planForm.price_annual ? parseFloat(planForm.price_annual) : null,
       features,
@@ -235,7 +235,7 @@ export default function HQSettings() {
       ) : (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-100">Planos da Plataforma</h2>
+            <h2 className="text-lg font-semibold text-gray-100">Planos da Plataforma — Clubes</h2>
             <button onClick={() => openPlanModal()}
               className="flex items-center gap-2 px-4 py-2 bg-[#D32F2F] text-white rounded-lg text-sm font-medium hover:bg-[#B71C1C] transition-colors">
               <Plus size={16} /> Novo Plano
@@ -247,65 +247,6 @@ export default function HQSettings() {
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Planos para Clubes</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {plans.filter(p => p.target_type === 'club').map(plan => (
-                <div key={plan.id} className={`bg-[#1a1a1a] border rounded-xl p-5 ${plan.is_active ? 'border-[#2a2a2a]' : 'border-red-900/30 opacity-60'}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-base font-bold text-gray-100">{plan.name}</h4>
-                    <div className="flex gap-1">
-                      <button onClick={() => openPlanModal(plan)} className="p-1.5 text-gray-500 hover:text-gray-300 hover:bg-[#2a2a2a] rounded-lg">
-                        <Edit3 size={14} />
-                      </button>
-                      <button onClick={() => deletePlan(plan)} className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded-lg">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 mb-4">
-                    {plan.price_monthly != null && (
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-bold text-gray-100">{plan.price_monthly}€</span>
-                        <span className="text-xs text-gray-500">/mês</span>
-                      </div>
-                    )}
-                    {plan.price_annual != null && (
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-lg font-semibold text-green-400">{plan.price_annual}€</span>
-                        <span className="text-xs text-gray-500">/ano</span>
-                        {plan.price_monthly != null && plan.price_annual != null && (
-                          <span className="text-[10px] text-green-500 ml-1">
-                            (-{Math.round((1 - plan.price_annual / (plan.price_monthly * 12)) * 100)}%)
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {plan.features && Object.keys(plan.features).length > 0 && (
-                    <div className="border-t border-[#2a2a2a] pt-3 space-y-1">
-                      {Object.entries(plan.features).map(([k, v]) => (
-                        <div key={k} className="text-xs text-gray-400 flex items-center gap-1.5">
-                          <span className={typeof v === 'boolean' ? (v ? 'text-green-400' : 'text-red-400') : 'text-gray-300'}>
-                            {typeof v === 'boolean' ? (v ? '✓' : '✗') : String(v)}
-                          </span>
-                          <span>{k.replace(/_/g, ' ')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <button onClick={() => togglePlanActive(plan)}
-                    className={`mt-3 w-full py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      plan.is_active ? 'bg-red-900/20 text-red-400 hover:bg-red-900/40' : 'bg-green-900/20 text-green-400 hover:bg-green-900/40'
-                    }`}>
-                    {plan.is_active ? 'Desativar' : 'Ativar'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Organizer plans */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Planos para Organizadores</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {plans.filter(p => p.target_type === 'organizer').map(plan => (
                 <div key={plan.id} className={`bg-[#1a1a1a] border rounded-xl p-5 ${plan.is_active ? 'border-[#2a2a2a]' : 'border-red-900/30 opacity-60'}`}>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-base font-bold text-gray-100">{plan.name}</h4>
@@ -381,12 +322,9 @@ export default function HQSettings() {
                     className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-100 focus:outline-none focus:border-[#D32F2F]/50" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-400 mb-1">Tipo *</label>
-                  <select value={planForm.target_type} onChange={e => setPlanForm({ ...planForm, target_type: e.target.value as 'club' | 'organizer' })}
-                    className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-100 focus:outline-none">
-                    <option value="club">Clube</option>
-                    <option value="organizer">Organizador</option>
-                  </select>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Tipo</label>
+                  <input type="text" value="Clube" readOnly
+                    className="w-full px-3 py-2 bg-[#111111] border border-[#2a2a2a] rounded-lg text-sm text-gray-500" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
