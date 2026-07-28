@@ -38,7 +38,7 @@ export default function HQDashboard() {
     const [players, clubs, organizers, txns] = await Promise.all([
       supabase.from('player_accounts').select('id', { count: 'exact', head: true }),
       supabase.from('clubs').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('organizers').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('organizers').select('id', { count: 'exact', head: true }).eq('is_active', true).neq('source', 'boost'),
       supabase.from('player_transactions').select('amount'),
     ]);
 

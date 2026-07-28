@@ -120,6 +120,7 @@ export default function HQOrganizers() {
     const { data } = await supabase
       .from('organizers')
       .select('*')
+      .neq('source', 'boost')
       .order('created_at', { ascending: false });
     if (data) setOrganizers(data);
     setLoading(false);
@@ -182,7 +183,8 @@ export default function HQOrganizers() {
 
     const { error } = await supabase.from('organizers').insert({
       user_id: userId, email: emailLower, name: orgForm.name.trim(),
-      club_name: orgForm.club_name.trim() || null, subscription_plan: orgForm.organizer_tier,
+      club_name: orgForm.club_name.trim() || null, source: 'padel1',
+      subscription_plan: orgForm.organizer_tier,
       organizer_tier: orgForm.organizer_tier, subscription_status: 'active', is_active: true,
     });
     if (error) {

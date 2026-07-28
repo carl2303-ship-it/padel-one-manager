@@ -62,8 +62,8 @@ export default function HQMetrics() {
     const [clubs, activeC, orgs, activeO, players] = await Promise.all([
       supabase.from('clubs').select('id', { count: 'exact', head: true }),
       supabase.from('clubs').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('organizers').select('id', { count: 'exact', head: true }),
-      supabase.from('organizers').select('id', { count: 'exact', head: true }).eq('is_active', true),
+      supabase.from('organizers').select('id', { count: 'exact', head: true }).neq('source', 'boost'),
+      supabase.from('organizers').select('id', { count: 'exact', head: true }).eq('is_active', true).neq('source', 'boost'),
       supabase.from('player_accounts').select('id', { count: 'exact', head: true }),
     ]);
     setTotalClubs(clubs.count ?? 0);
@@ -112,7 +112,7 @@ export default function HQMetrics() {
       })));
     }
 
-    const { data: orgs } = await supabase.from('organizers').select('organizer_tier');
+    const { data: orgs } = await supabase.from('organizers').select('organizer_tier').neq('source', 'boost');
     if (orgs) {
       const counts: Record<string, number> = {};
       orgs.forEach(o => { const t = o.organizer_tier || 'bronze'; counts[t] = (counts[t] || 0) + 1; });
@@ -146,6 +146,7 @@ export default function HQMetrics() {
 
     const { count: orgCount } = await supabase.from('organizers')
       .select('id', { count: 'exact', head: true })
+      .neq('source', 'boost')
       .gt('subscription_expires_at', now)
       .lte('subscription_expires_at', limit);
 
@@ -156,7 +157,7 @@ export default function HQMetrics() {
   const loadGrowth = async () => {
     const [{ data: clubs }, { data: orgs }] = await Promise.all([
       supabase.from('clubs').select('created_at').order('created_at'),
-      supabase.from('organizers').select('created_at').order('created_at'),
+      supabase.from('organizers').select('created_at').neq('source', 'boost').order('created_at'),
     ]);
 
     const months: Record<string, { clubs: number; organizers: number }> = {};
