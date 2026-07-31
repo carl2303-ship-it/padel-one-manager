@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { compareMenuItemsInCategory, orderMenuItemsByCategoryList } from '../lib/menuItemSort';
+import { normalizePhone } from '../lib/phoneUtils';
 import {
   Plus,
   Minus,
@@ -555,14 +556,6 @@ export default function PublicMenu({ clubId, tableNumber }: PublicMenuProps) {
 
   const totalItems = cart.reduce((sum, c) => sum + c.quantity, 0);
   const totalPrice = cart.reduce((sum, c) => sum + c.quantity * c.menuItem.price, 0);
-
-  const normalizePhone = (phone: string): string => {
-    if (!phone) return '';
-    let cleaned = phone.replace(/\s+/g, '').trim();
-    if (cleaned.startsWith('00')) cleaned = '+' + cleaned.substring(2);
-    if (!cleaned.startsWith('+') && cleaned.length === 9) cleaned = '+351' + cleaned;
-    return cleaned;
-  };
 
   const handlePhoneLookup = async (phone: string) => {
     if (!club || phone.replace(/\s+/g, '').length < 6) {

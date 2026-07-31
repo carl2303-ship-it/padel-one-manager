@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { normalizePhone as normalizePhoneCanonical } from './phoneUtils';
 
 export interface TournamentPlayerInfo {
   id: string;
@@ -38,10 +39,9 @@ export interface TournamentListItem {
   player_count: number;
 }
 
+/** Dígitos nacionais sem indicativo (canónico do sistema). */
 export function normalizePhone(phone: string | null): string {
-  if (!phone) return '';
-  const cleaned = phone.replace(/\s+/g, '');
-  return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
+  return normalizePhoneCanonical(phone);
 }
 
 async function resolveClubId(clubOwnerId: string, clubId?: string | null): Promise<string | null> {

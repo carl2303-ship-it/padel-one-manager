@@ -3,6 +3,7 @@ import { supabase, Tournament, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
+import { normalizePhone } from '../lib/phoneUtils';
 import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
 
 const sendWelcomeEmail = async (
@@ -334,9 +335,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     setLoading(true);
     setError('');
 
-    const normalizedPhone = checkPhone.replace(/\s+/g, '').startsWith('+')
-      ? checkPhone.replace(/\s+/g, '')
-      : '+' + checkPhone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(checkPhone);
 
     const { data: account } = await supabase
       .from('player_accounts')
@@ -435,9 +434,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
     setPartnerLookupLoading(true);
 
-    const normalizedPhone = phone.replace(/\s+/g, '').startsWith('+')
-      ? phone.replace(/\s+/g, '')
-      : '+' + phone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phone);
 
     const { data: account } = await supabase
       .from('player_accounts')
@@ -465,7 +462,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   };
 
   const createOrGetPlayerAccount = async (name: string, email: string, phone: string) => {
-    const normalizedPhone = phone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phone);
     const tempPassword = `Player${normalizedPhone.slice(-4)}!`;
     const userEmail = email || `${normalizedPhone}@temp.player.com`;
 

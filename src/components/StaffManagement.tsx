@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
+import { normalizePhone, isValidPhone } from '../lib/phoneUtils';
 import {
   Plus,
   X,
@@ -73,28 +74,6 @@ const roleColors = {
   kitchen: 'bg-orange-100 text-orange-700 border-orange-200',
   club_owner: 'bg-purple-100 text-purple-700 border-purple-200',
   other: 'bg-gray-100 text-gray-700 border-gray-200'
-};
-
-const normalizePhone = (phone: string): string => {
-  // Remove espaços, hífens, parênteses e pontos
-  let normalized = phone.replace(/[\s\-\(\)\.]/g, '');
-  
-  // Substitui 00 por +
-  if (normalized.startsWith('00')) {
-    normalized = '+' + normalized.substring(2);
-  }
-  
-  // Se começar só com + sem indicativo, adiciona +351
-  if (normalized === '+' || (normalized.startsWith('+') && normalized.length < 4)) {
-    normalized = '+351' + normalized.substring(1);
-  }
-  
-  // Se não começar com +, adiciona +351
-  if (!normalized.startsWith('+')) {
-    normalized = '+351' + normalized;
-  }
-  
-  return normalized;
 };
 
 export default function StaffManagement() {
@@ -212,24 +191,14 @@ export default function StaffManagement() {
   const handlePhoneChange = (phone: string) => {
     setForm({ ...form, phone });
     setPhoneError(null);
-    
-    // Validação: detectar números inválidos
-    const trimmed = phone.trim();
-    if (trimmed.length > 0) {
-      // Se começar só com + sem indicativo
-      if (trimmed === '+' || (trimmed.startsWith('+') && trimmed.length < 4)) {
-        setPhoneError('Por favor, adicione o indicativo do país (ex: +351)');
-        return;
-      }
-      
-      // Se começar com + mas não tem indicativo válido (menos de 3 dígitos após +)
-      if (trimmed.startsWith('+') && trimmed.length > 1 && trimmed.length < 5) {
-        setPhoneError('Indicativo do país incompleto. Use +351 para Portugal');
-        return;
-      }
+
+    const normalized = normalizePhone(phone);
+    if (phone.trim().length > 0 && normalized.length > 0 && !isValidPhone(phone) && phone.replace(/\D/g, '').length >= 6) {
+      setPhoneError('Número de telefone inválido. Use o número nacional (ex: 912345678)');
+      return;
     }
-    
-    if (phone.length >= 9) {
+
+    if (normalized.length >= 9) {
       checkPhoneForPlayer(phone);
     } else {
       setPlayerMatch(null);
@@ -244,11 +213,9 @@ export default function StaffManagement() {
       alert(t.staff?.phoneEmailRequired || 'Phone and email are required');
       return;
     }
-    
-    // Validar telefone antes de salvar
-    const trimmedPhone = form.phone.trim();
-    if (trimmedPhone === '+' || (trimmedPhone.startsWith('+') && trimmedPhone.length < 4)) {
-      setPhoneError('Por favor, adicione o indicativo do país (ex: +351). O número será corrigido automaticamente.');
+
+    if (!isValidPhone(form.phone)) {
+      setPhoneError('Número de telefone inválido. Use o número nacional (ex: 912345678)');
       return;
     }
 
@@ -741,7 +708,7 @@ export default function StaffManagement() {
                     value={form.phone}
                     onChange={(e) => handlePhoneChange(e.target.value)}
                     className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="+351 912 345 678"
+                    placeholder="912 345 678"
                     required
                   />
                   {checkingPhone && (
@@ -754,7 +721,7 @@ export default function StaffManagement() {
                   <p className="mt-1 text-sm text-red-600">{phoneError}</p>
                 )}
                 <p className="mt-1 text-xs text-gray-500">
-                  Formato: +351 912 345 678 (o indicativo +351 será adicionado automaticamente se não fornecido)
+                  Formato: 912 345 678 (número nacional, sem indicativo)
                 </p>
               </div>
 

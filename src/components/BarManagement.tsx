@@ -34,6 +34,7 @@ import {
 import BarMetricsDashboard from './BarMetricsDashboard';
 import { compressImage } from '../lib/imageCompressor';
 import { compareMenuItemsInCategory, orderMenuItemsByCategoryList } from '../lib/menuItemSort';
+import { normalizePhone as normalizePhoneCanonical } from '../lib/phoneUtils';
 
 /** PostgREST quando a coluna ainda não existe na base (migração não aplicada). */
 function isPostgrestMissingColumnError(err: { code?: string; message?: string } | null): boolean {
@@ -674,8 +675,7 @@ export default function BarManagement({ staffClubOwnerId, staffRole }: BarManage
 
   // Helper function to normalize phone numbers
   const normalizePhone = (phone: string | null): string => {
-    if (!phone) return '';
-    return phone.replace(/\s+/g, '').trim();
+    return normalizePhoneCanonical(phone);
   };
 
   // Helper function to get member bar discount

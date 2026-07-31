@@ -25,6 +25,7 @@ import {
   UserCheck,
   CreditCard
 } from 'lucide-react';
+import { normalizePhone } from '../lib/phoneUtils';
 
 interface CourtSlotConfig {
   time: string;
@@ -266,10 +267,6 @@ interface OpenGamePlayer {
   discount_percent?: number;
   price?: number;
 }
-
-const normalizePhone = (phone: string): string => {
-  return phone.replace(/[\s\-\(\)\.]/g, '').replace(/^00/, '+');
-};
 
 // Helper functions for Open Games
 function formatDateTime(dateStr: string, tz: string = DEFAULT_TZ): string {
@@ -1327,10 +1324,7 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       console.log('[Payment] Player found:', player);
       
       if (player) {
-        const rawPhone = player.phone_number || '';
-        const normalizedPhone = rawPhone.replace(/\s+/g, '').startsWith('+')
-          ? rawPhone.replace(/\s+/g, '')
-          : rawPhone ? '+' + rawPhone.replace(/\s+/g, '') : '';
+        const normalizedPhone = normalizePhone(player.phone_number || '');
 
         console.log('[Payment] Phone:', normalizedPhone, 'Price:', player.price);
 
@@ -1713,11 +1707,8 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       return;
     }
 
-    // 2. Handle player_transactions
-    const rawPhone = player.phone_number || '';
-    const normalizedPhone = rawPhone.replace(/\s+/g, '').startsWith('+')
-      ? rawPhone.replace(/\s+/g, '')
-      : rawPhone ? '+' + rawPhone.replace(/\s+/g, '') : '';
+    // 2. Handle player_transactions — national digits only (match player_accounts)
+    const normalizedPhone = normalizePhone(player.phone_number || '');
 
     // Find or create player_account
     let playerAccountId: string | null = null;

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
+import { normalizePhone } from '../lib/phoneUtils';
 import {
   Plus,
   X,
@@ -43,10 +44,6 @@ interface Court {
   type: string;
   hourly_rate: number;
 }
-
-const normalizePhone = (phone: string): string => {
-  return phone.replace(/[\s\-\(\)\.]/g, '').replace(/^00/, '+');
-};
 
 interface StaffCoach {
   id: string;
