@@ -493,7 +493,7 @@ function NumberField({
           className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[#2a2a2a] bg-[#111111] text-gray-400 hover:text-gray-100"
           aria-label={`Aumentar ${config.label}`}
         >
-          <Minus size={14} />
+          <Plus size={14} />
         </button>
       </div>
       <input
