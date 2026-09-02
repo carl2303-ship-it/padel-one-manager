@@ -15,6 +15,7 @@ import {
   Package,
   Boxes,
   Shield,
+  Trophy,
 } from 'lucide-react';
 import HQDashboard from './HQDashboard';
 import HQClubManagement from './HQClubManagement';
@@ -24,8 +25,9 @@ import HQUsers from './HQUsers';
 import HQSettings from './HQSettings';
 import HQModules from './HQModules';
 import HQPacks from './HQPacks';
+import HQTournamentROI from './HQTournamentROI';
 
-type HQView = 'dashboard' | 'clubs' | 'modules' | 'packs' | 'transactions' | 'metrics' | 'users' | 'settings';
+type HQView = 'dashboard' | 'clubs' | 'modules' | 'packs' | 'transactions' | 'metrics' | 'tournament-roi' | 'users' | 'settings';
 
 interface NavItem {
   id: HQView;
@@ -40,6 +42,7 @@ const navItems: NavItem[] = [
   { id: 'packs', label: 'Packs', icon: <Boxes size={20} /> },
   { id: 'transactions', label: 'Transações', icon: <ArrowLeftRight size={20} /> },
   { id: 'metrics', label: 'Métricas', icon: <BarChart3 size={20} /> },
+  { id: 'tournament-roi', label: 'Rentabilidade Torneios', icon: <Trophy size={20} /> },
   { id: 'users', label: 'Utilizadores', icon: <Users size={20} /> },
   { id: 'settings', label: 'Configurações', icon: <Settings size={20} /> },
 ];
@@ -92,6 +95,7 @@ export default function HQLayout() {
       case 'packs': return <HQPacks />;
       case 'transactions': return <HQTransactions />;
       case 'metrics': return <HQMetrics />;
+      case 'tournament-roi': return <HQTournamentROI />;
       case 'users': return <HQUsers />;
       case 'settings': return <HQSettings />;
     }
