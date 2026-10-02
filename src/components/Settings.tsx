@@ -657,7 +657,8 @@ export default function Settings() {
           <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 text-sm text-blue-800">
             <p className="font-medium mb-1">Página pública do preçário</p>
             <p className="text-blue-600">
-              Os <strong>preços dos campos</strong> são lidos das definições dos campos.
+              Os <strong>preços dos campos</strong> vêm das definições dos campos.
+              Os <strong>preços das aulas</strong> vêm automaticamente dos tipos de aula ativos na Academia.
               Aqui geres os <strong>planos de membro</strong>, <strong>equipamentos e extras</strong> que aparecem na página pública.
             </p>
           </div>

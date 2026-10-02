@@ -395,18 +395,19 @@ export default function PublicPricing({ clubId }: Props) {
                 );
               })}
 
-              {/* Packs de Aulas */}
+              {/* Packs de Aulas — price_per_class é o valor por aula; o total do pack = preço × nº aulas */}
               {packs.length > 0 && renderCard('packs', '📦', 'Packs de Aulas',
                 renderItems(
                   packs.sort((a, b) => (a.pack_size || 0) - (b.pack_size || 0)),
-                  ct => formatPrice(ct.price_per_class),
+                  ct => {
+                    const size = ct.pack_size && ct.pack_size > 0 ? ct.pack_size : 1;
+                    return formatPrice(ct.price_per_class * size);
+                  },
                   ct => (
                     <>
                       <span className="text-slate-400 text-xs">⏱ {ct.duration_minutes} min</span>
                       {ct.pack_size && <span className="text-slate-400 text-xs">📦 {ct.pack_size} aulas</span>}
-                      {ct.pack_size && ct.pack_size > 0 && (
-                        <span className="text-slate-400 text-xs">({formatPrice(Math.round((ct.price_per_class / ct.pack_size) * 100) / 100)}/aula)</span>
-                      )}
+                      <span className="text-slate-400 text-xs">{formatPrice(ct.price_per_class)}/aula</span>
                     </>
                   )
                 )
