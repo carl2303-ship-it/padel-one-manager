@@ -275,26 +275,13 @@ export async function openBarTabsForTournament(
     return { created: 0, skipped: true };
   }
 
-  const tabsToCreate = await Promise.all(newPlayers.map(async (p) => {
-    let playerAccountId: string | null = null;
-    if (p.phone_number) {
-      const normalizedPhone = normalizePhone(p.phone_number);
-      const { data: existingAccount } = await supabase
-        .from('player_accounts')
-        .select('id')
-        .eq('phone_number', normalizedPhone)
-        .maybeSingle();
-      playerAccountId = existingAccount?.id || null;
-    }
-
-    return {
-      club_owner_id: clubOwnerId,
-      player_name: p.name,
-      player_phone: p.phone_number || null,
-      player_account_id: playerAccountId,
-      tournament_id: tournament.id,
-      tournament_name: tournament.name,
-    };
+  const tabsToCreate = newPlayers.map((p) => ({
+    club_owner_id: clubOwnerId,
+    player_name: p.name,
+    player_phone: p.phone_number || null,
+    player_account_id: p.player_account_id || null,
+    tournament_id: tournament.id,
+    tournament_name: tournament.name,
   }));
 
   const { error } = await supabase.from('bar_tabs').insert(tabsToCreate);

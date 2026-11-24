@@ -5,7 +5,6 @@ import { useAuth } from '../lib/authContext';
 import {
   fetchClubTournaments,
   loadTournamentDetails,
-  normalizePhone,
   openBarTabsForTournament,
   type TournamentDetails,
   type TournamentListItem,
@@ -81,49 +80,16 @@ export default function TournamentBarManagement({ staffClubOwnerId, clubId }: To
         .eq('id', playerId);
       if (error) throw error;
 
-      // Prefer the already-linked tournament player_account_id. Never create a
-      // stub account on payment — national-digit lookup used to miss E164 rows
-      // (e.g. +447… vs 7930…) and spawn duplicate player_accounts.
-      const normalizedPhone = normalizePhone(player.phone_number);
-      let playerAccountId: string | null = player.player_account_id || null;
-      if (!playerAccountId && (normalizedPhone || player.phone_number)) {
-        const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
-        const candidates = Array.from(
-          new Set(
-            [
-              normalizedPhone,
-              raw,
-              player.phone_number || '',
-              // Common E164 rebuilds when national digits were stored/looked up
-              normalizedPhone && /^\d{9,10}$/.test(normalizedPhone)
-                ? `+44${normalizedPhone}`
-                : '',
-              normalizedPhone && /^[67]\d{8}$/.test(normalizedPhone)
-                ? `+34${normalizedPhone}`
-                : '',
-              normalizedPhone && /^[67]\d{8}$/.test(normalizedPhone)
-                ? `+31${normalizedPhone}`
-                : '',
-              normalizedPhone && /^9[1236]\d{7}$/.test(normalizedPhone)
-                ? `+351${normalizedPhone}`
-                : '',
-            ].filter(Boolean),
-          ),
-        );
-        const { data: existingAccount } = await supabase
-          .from('player_accounts')
-          .select('id')
-          .in('phone_number', candidates)
-          .limit(1)
-          .maybeSingle();
-        playerAccountId = existingAccount?.id || null;
-      }
+      // HUB-95: payment never creates/rewrites player_accounts or phones.
+      // The tournament row already has the correct player_account_id.
+      const playerAccountId = player.player_account_id || null;
+      const phoneForTx = player.phone_number || 'unknown';
 
       if (newStatus === 'paid') {
         const rpcParams: Record<string, unknown> = {
           p_club_owner_id: effectiveUserId,
           p_player_name: player.name,
-          p_player_phone: normalizedPhone || 'unknown',
+          p_player_phone: phoneForTx,
           p_transaction_type: 'tournament',
           p_amount: player.final_price || 0,
           p_reference_id: selected.id,
@@ -138,6 +104,7 @@ export default function TournamentBarManagement({ staffClubOwnerId, clubId }: To
           p_reference_id: selected.id,
           p_reference_type: 'tournament',
           p_player_name: player.name,
+          p_player_phone: phoneForTx === 'unknown' ? null : phoneForTx,
         });
       }
 

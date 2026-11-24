@@ -1324,32 +1324,17 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       console.log('[Payment] Player found:', player);
       
       if (player) {
-        const normalizedPhone = normalizePhone(player.phone_number || '');
-
-        console.log('[Payment] Phone:', normalizedPhone, 'Price:', player.price);
-
-        // Find existing player_account only — never create stubs on payment
-        // (national vs E164 mismatches used to spawn duplicate accounts).
-        let playerAccountId: string | null = null;
-        if (normalizedPhone) {
-          const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
-          const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
-          const { data: existingAccount, error: accError } = await supabase
-            .from('player_accounts')
-            .select('id, user_id')
-            .in('phone_number', candidates)
-            .limit(1)
-            .maybeSingle();
-
-          console.log('[Payment] Existing account:', { existingAccount, accError });
-          playerAccountId = existingAccount?.id || null;
-        }
+        // HUB-95: never create/rewrite player_accounts or phones on payment.
+        const playerAccountId =
+          (player as { player_account_id?: string | null }).player_account_id || null;
+        const phoneForTx = player.phone_number || 'unknown';
+        console.log('[Payment] Account:', playerAccountId, 'Phone:', phoneForTx, 'Price:', player.price);
 
         if (newStatus === 'paid') {
           const rpcParams: any = {
             p_club_owner_id: effectiveUserId,
             p_player_name: player.name || 'Jogador',
-            p_player_phone: normalizedPhone || 'unknown',
+            p_player_phone: phoneForTx,
             p_transaction_type: 'open_game',
             p_amount: player.price || 0,
             p_reference_id: selectedOpenGame.id,
@@ -1696,28 +1681,16 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
       return;
     }
 
-    // 2. Handle player_transactions — national digits only (match player_accounts)
-    const normalizedPhone = normalizePhone(player.phone_number || '');
-
-    // Link existing player_account only — never create stubs on payment.
-    let playerAccountId: string | null = (player as { player_account_id?: string | null }).player_account_id || null;
-    if (!playerAccountId && normalizedPhone) {
-      const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
-      const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
-      const { data: existingAccount } = await supabase
-        .from('player_accounts')
-        .select('id')
-        .in('phone_number', candidates)
-        .limit(1)
-        .maybeSingle();
-      playerAccountId = existingAccount?.id || null;
-    }
+    // HUB-95: never create/rewrite player_accounts or phones on payment.
+    const playerAccountId =
+      (player as { player_account_id?: string | null }).player_account_id || null;
+    const phoneForTx = player.phone_number || 'unknown';
 
     if (newStatus === 'paid') {
       const rpcParams: any = {
         p_club_owner_id: effectiveUserId,
         p_player_name: player.name,
-        p_player_phone: normalizedPhone || 'unknown',
+        p_player_phone: phoneForTx,
         p_transaction_type: 'tournament',
         p_amount: player.final_price || 0,
         p_reference_id: selectedTournament.id,
