@@ -6,6 +6,7 @@ export interface TournamentPlayerInfo {
   name: string;
   phone_number: string | null;
   email: string | null;
+  player_account_id: string | null;
   payment_status: string;
   category_name: string | null;
   is_member: boolean;
@@ -144,7 +145,7 @@ export async function loadTournamentDetails(
 
   const { data: players } = await supabase
     .from('players')
-    .select('id, name, phone_number, email, payment_status, category_id')
+    .select('id, name, phone_number, email, payment_status, category_id, player_account_id')
     .eq('tournament_id', tournamentId)
     .order('name');
 
@@ -226,6 +227,7 @@ export async function loadTournamentDetails(
       name: p.name,
       phone_number: p.phone_number,
       email: p.email,
+      player_account_id: (p as { player_account_id?: string | null }).player_account_id || null,
       payment_status: isStaff ? 'exempt' : (p.payment_status || 'pending'),
       category_name: (category?.name as string) || null,
       is_member: isMember,

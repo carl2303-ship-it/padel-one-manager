@@ -1328,32 +1328,21 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
 
         console.log('[Payment] Phone:', normalizedPhone, 'Price:', player.price);
 
-        // 1. Find existing player_account
+        // Find existing player_account only — never create stubs on payment
+        // (national vs E164 mismatches used to spawn duplicate accounts).
         let playerAccountId: string | null = null;
         if (normalizedPhone) {
+          const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
+          const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
           const { data: existingAccount, error: accError } = await supabase
             .from('player_accounts')
             .select('id, user_id')
-            .eq('phone_number', normalizedPhone)
+            .in('phone_number', candidates)
+            .limit(1)
             .maybeSingle();
 
           console.log('[Payment] Existing account:', { existingAccount, accError });
           playerAccountId = existingAccount?.id || null;
-
-          if (!existingAccount) {
-            // Create new player account
-            const { data: newAccount, error: createError } = await supabase
-              .from('player_accounts')
-              .insert({
-                phone_number: normalizedPhone,
-                name: player.name || 'Jogador'
-              })
-              .select('id')
-              .single();
-            
-            console.log('[Payment] New account:', { newAccount, createError });
-            playerAccountId = newAccount?.id || null;
-          }
         }
 
         if (newStatus === 'paid') {
@@ -1710,25 +1699,18 @@ export default function CourtBookings({ staffClubOwnerId }: CourtBookingsProps) 
     // 2. Handle player_transactions — national digits only (match player_accounts)
     const normalizedPhone = normalizePhone(player.phone_number || '');
 
-    // Find or create player_account
-    let playerAccountId: string | null = null;
-    if (normalizedPhone) {
+    // Link existing player_account only — never create stubs on payment.
+    let playerAccountId: string | null = (player as { player_account_id?: string | null }).player_account_id || null;
+    if (!playerAccountId && normalizedPhone) {
+      const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
+      const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
       const { data: existingAccount } = await supabase
         .from('player_accounts')
         .select('id')
-        .eq('phone_number', normalizedPhone)
+        .in('phone_number', candidates)
+        .limit(1)
         .maybeSingle();
-
       playerAccountId = existingAccount?.id || null;
-
-      if (!existingAccount) {
-        const { data: newAccount } = await supabase
-          .from('player_accounts')
-          .insert({ phone_number: normalizedPhone, name: player.name })
-          .select('id')
-          .single();
-        playerAccountId = newAccount?.id || null;
-      }
     }
 
     if (newStatus === 'paid') {

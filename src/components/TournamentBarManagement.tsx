@@ -81,23 +81,42 @@ export default function TournamentBarManagement({ staffClubOwnerId, clubId }: To
         .eq('id', playerId);
       if (error) throw error;
 
+      // Prefer the already-linked tournament player_account_id. Never create a
+      // stub account on payment — national-digit lookup used to miss E164 rows
+      // (e.g. +447… vs 7930…) and spawn duplicate player_accounts.
       const normalizedPhone = normalizePhone(player.phone_number);
-      let playerAccountId: string | null = null;
-      if (normalizedPhone) {
+      let playerAccountId: string | null = player.player_account_id || null;
+      if (!playerAccountId && (normalizedPhone || player.phone_number)) {
+        const raw = (player.phone_number || '').replace(/[\s\-().]/g, '');
+        const candidates = Array.from(
+          new Set(
+            [
+              normalizedPhone,
+              raw,
+              player.phone_number || '',
+              // Common E164 rebuilds when national digits were stored/looked up
+              normalizedPhone && /^\d{9,10}$/.test(normalizedPhone)
+                ? `+44${normalizedPhone}`
+                : '',
+              normalizedPhone && /^[67]\d{8}$/.test(normalizedPhone)
+                ? `+34${normalizedPhone}`
+                : '',
+              normalizedPhone && /^[67]\d{8}$/.test(normalizedPhone)
+                ? `+31${normalizedPhone}`
+                : '',
+              normalizedPhone && /^9[1236]\d{7}$/.test(normalizedPhone)
+                ? `+351${normalizedPhone}`
+                : '',
+            ].filter(Boolean),
+          ),
+        );
         const { data: existingAccount } = await supabase
           .from('player_accounts')
           .select('id')
-          .eq('phone_number', normalizedPhone)
+          .in('phone_number', candidates)
+          .limit(1)
           .maybeSingle();
         playerAccountId = existingAccount?.id || null;
-        if (!existingAccount) {
-          const { data: newAccount } = await supabase
-            .from('player_accounts')
-            .insert({ phone_number: normalizedPhone, name: player.name })
-            .select('id')
-            .single();
-          playerAccountId = newAccount?.id || null;
-        }
       }
 
       if (newStatus === 'paid') {
