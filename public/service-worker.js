@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v5-20261125-manager-lite';
+const CACHE_VERSION = 'v6-20261125-sa-lite-gate';
 const STATIC_CACHE = `padel-hub-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `padel-hub-dynamic-${CACHE_VERSION}`;
 

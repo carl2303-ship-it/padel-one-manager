@@ -26,13 +26,28 @@ import OrganizerLiteSettings from './components/OrganizerLiteSettings';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
-import { useClientModules } from './lib/useClientModules';
+import { useClientModules, fetchClientModules } from './lib/useClientModules';
 import {
   Menu,
   X,
 } from 'lucide-react';
 
 const TOUR_APP_URL = 'https://tour.padel1.app';
+
+function ownerStaffPermissions(): StaffPermissions {
+  return {
+    isStaff: false,
+    isOwner: true,
+    clubOwnerId: null,
+    staffName: null,
+    perm_bookings: true,
+    perm_members: true,
+    perm_bar: true,
+    perm_academy: true,
+    perm_reports: true,
+    role: null,
+  };
+}
 
 // Emoji icon components for sidebar menu
 const EmojiIcon = ({ emoji, className }: { emoji: string; className?: string }) => (
@@ -208,17 +223,48 @@ function App() {
     }
   }, [user]);
 
+  /** Independent organizer (no club) → Manager lite when entitled. */
+  const enableOrganizerLiteShell = () => {
+    setNeedsLicense(false);
+    setOrganizerLiteEligible(true);
+    setManagedClubId(null);
+    setClubPlanInfo(null);
+    setStaffPermissions(ownerStaffPermissions());
+    setCheckingPermissions(false);
+  };
+
   const checkLicenseAndPermissions = async () => {
     if (!user) return;
     setCheckingPermissions(true);
 
     try {
-    // Super admins bypass everything
-    const { data: saRecord } = await supabase
-      .from('super_admins')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
+    const [{ data: saRecord }, { data: ownedClub }, { data: orgSettings }] = await Promise.all([
+      supabase.from('super_admins').select('id').eq('user_id', user.id).maybeSingle(),
+      supabase
+        .from('clubs')
+        .select('id, plan_type, contract_start, contract_expires_at, status')
+        .eq('owner_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('user_logo_settings')
+        .select('is_paid_organizer')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ]);
+
+    // Super admin WITHOUT a club: still enter Manager lite when organizer is entitled.
+    // Bug (HUB-107): previous SA early-return skipped organizerLiteEligible → empty club shell.
+    if (saRecord && !ownedClub) {
+      const orgMods = await fetchClientModules('organizer', user.id);
+      if (orgSettings?.is_paid_organizer || orgMods.hasManagerLite) {
+        enableOrganizerLiteShell();
+        return;
+      }
+      setNeedsLicense(false);
+      await checkStaffPermissions();
+      return;
+    }
+
     if (saRecord) {
       setNeedsLicense(false);
       await checkStaffPermissions();
@@ -238,14 +284,7 @@ function App() {
       return;
     }
 
-    // Check if user's club is suspended
-    const { data: suspendedClub } = await supabase
-      .from('clubs')
-      .select('id')
-      .eq('owner_id', user.id)
-      .eq('status', 'suspended')
-      .maybeSingle();
-    if (suspendedClub) {
+    if (ownedClub?.status === 'suspended') {
       setLicenseMessage('O acesso do seu clube foi suspenso. Contacte o suporte Padel One.');
       setNeedsLicense(true);
       setCheckingPermissions(false);
@@ -253,12 +292,6 @@ function App() {
     }
 
     // Club owner: check contract
-    const { data: ownedClub } = await supabase
-      .from('clubs')
-      .select('id, plan_type, contract_start, contract_expires_at')
-      .eq('owner_id', user.id)
-      .maybeSingle();
-
     if (ownedClub) {
       const hasValidContract = ownedClub.contract_expires_at &&
         new Date(ownedClub.contract_expires_at) > new Date();
@@ -269,6 +302,7 @@ function App() {
           contract_expires_at: ownedClub.contract_expires_at,
         });
         setManagedClubId(ownedClub.id);
+        setOrganizerLiteEligible(false);
         setNeedsLicense(false);
         await checkStaffPermissions();
         return;
@@ -284,30 +318,15 @@ function App() {
       return;
     }
 
-    // Paid organizer check
-    const { data: orgSettings } = await supabase
-      .from('user_logo_settings')
-      .select('is_paid_organizer')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
+    // Paid organizer / manager_lite (no club ownership)
     if (orgSettings?.is_paid_organizer) {
-      setNeedsLicense(false);
-      setOrganizerLiteEligible(true);
-      setManagedClubId(null);
-      setStaffPermissions({
-        isStaff: false,
-        isOwner: true,
-        clubOwnerId: null,
-        staffName: null,
-        perm_bookings: true,
-        perm_members: true,
-        perm_bar: true,
-        perm_academy: true,
-        perm_reports: true,
-        role: null,
-      });
-      setCheckingPermissions(false);
+      enableOrganizerLiteShell();
+      return;
+    }
+
+    const orgMods = await fetchClientModules('organizer', user.id);
+    if (orgMods.hasManagerLite) {
+      enableOrganizerLiteShell();
       return;
     }
 
