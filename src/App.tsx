@@ -27,7 +27,7 @@ import OrganizerVenuesManagement from './components/OrganizerVenuesManagement';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
-import { useClientModules, fetchClientModules } from './lib/useClientModules';
+import { useClientModules, fetchClientModules, isManagerLiteEntitled } from './lib/useClientModules';
 import {
   Menu,
   X,
@@ -157,16 +157,47 @@ function App() {
   const [clubPlanInfo, setClubPlanInfo] = useState<{ plan_type?: string; contract_expires_at?: string } | null>(null);
   const [managedClubId, setManagedClubId] = useState<string | null>(null);
   const [organizerLiteEligible, setOrganizerLiteEligible] = useState(false);
-  const { hasModule, loading: modulesLoading } = useClientModules('club', managedClubId);
   const {
-    hasManagerLite,
+    hasModule,
+    hasManager: clubHasManager,
+    hasManagerLite: clubHasManagerLite,
+    hasTournaments: clubHasTournaments,
+    hasBar: clubHasBar,
+    loading: clubModulesLoading,
+  } = useClientModules('club', managedClubId);
+  const {
+    hasManager: orgHasManager,
+    hasManagerLite: orgHasManagerLite,
+    hasTournaments: orgHasTournaments,
+    hasBar: orgHasBar,
     loading: organizerModulesLoading,
   } = useClientModules(
     organizerLiteEligible && !managedClubId ? 'organizer' : null,
     organizerLiteEligible && !managedClubId && user ? user.id : null
   );
+
+  const modulesLoading = managedClubId ? clubModulesLoading : organizerModulesLoading;
+  const entitlements = managedClubId
+    ? {
+        hasManager: clubHasManager,
+        hasManagerLite: clubHasManagerLite,
+        hasTournaments: clubHasTournaments,
+        hasBar: clubHasBar,
+      }
+    : {
+        hasManager: orgHasManager,
+        hasManagerLite: orgHasManagerLite,
+        hasTournaments: orgHasTournaments,
+        hasBar: orgHasBar,
+      };
+
+  // Pack: Tournaments (sem manager full) ⇒ Lite. Dono do clube OU organizer independente.
+  // Staff do clube (ex. só bar) não entra no shell lite — mantém fluxo bar.
+  const derivesLite = isManagerLiteEntitled(entitlements);
   const managerLiteMode =
-    organizerLiteEligible && !managedClubId && !organizerModulesLoading && hasManagerLite;
+    !modulesLoading &&
+    derivesLite &&
+    (managedClubId ? staffPermissions.isOwner : organizerLiteEligible);
 
   const handleSignOut = async () => {
     await signOut();
@@ -255,11 +286,14 @@ function App() {
         .maybeSingle(),
     ]);
 
-    // Super admin WITHOUT a club: still enter Manager lite when organizer is entitled.
+    // Super admin WITHOUT a club: Manager lite when tournaments / manager_lite / paid org.
     // Bug (HUB-107): previous SA early-return skipped organizerLiteEligible → empty club shell.
     if (saRecord && !ownedClub) {
       const orgMods = await fetchClientModules('organizer', user.id);
-      if (orgSettings?.is_paid_organizer || orgMods.hasManagerLite) {
+      if (
+        orgSettings?.is_paid_organizer ||
+        isManagerLiteEntitled(orgMods)
+      ) {
         enableOrganizerLiteShell();
         return;
       }
@@ -321,14 +355,14 @@ function App() {
       return;
     }
 
-    // Paid organizer / manager_lite (no club ownership)
+    // Paid organizer / Tournaments pack (no club ownership) → Lite
     if (orgSettings?.is_paid_organizer) {
       enableOrganizerLiteShell();
       return;
     }
 
     const orgMods = await fetchClientModules('organizer', user.id);
-    if (orgMods.hasManagerLite) {
+    if (isManagerLiteEntitled(orgMods)) {
       enableOrganizerLiteShell();
       return;
     }
@@ -463,14 +497,27 @@ function App() {
     setCheckingPermissions(false);
   };
 
-  const barOnlyClub = !modulesLoading && !!managedClubId && hasModule('bar') && !hasModule('manager');
+  // Bar-only shell: clube com Bar mas SEM Lite (sem tournaments) e sem manager full.
+  // APC (tournaments+bar) → Lite + Bar add-on, NÃO este modo.
+  const barOnlyClub =
+    !modulesLoading &&
+    !!managedClubId &&
+    entitlements.hasBar &&
+    !entitlements.hasManager &&
+    !managerLiteMode;
   const barOnlyMode = barOnlyClub;
-  const hasTournamentsBar = hasModule('tournaments') && hasModule('bar');
+  const hasTournamentsBar = entitlements.hasTournaments && entitlements.hasBar;
   const canAccessTournamentsBar = hasTournamentsBar && (
     staffPermissions.isOwner ||
     staffPermissions.perm_bar ||
     staffPermissions.perm_bookings
   );
+  const liteShowBar =
+    managerLiteMode &&
+    entitlements.hasBar &&
+    (staffPermissions.isOwner || staffPermissions.perm_bar);
+  const liteShowTournamentsBar =
+    managerLiteMode && !!managedClubId && canAccessTournamentsBar;
 
   const compactViewInitialized = useRef(false);
 
@@ -504,7 +551,12 @@ function App() {
     return <PublicPricing clubId={pricingMatch[1]} />;
   }
 
-  if (authLoading || checkingPermissions || (organizerLiteEligible && !managedClubId && organizerModulesLoading)) {
+  if (
+    authLoading ||
+    checkingPermissions ||
+    (managedClubId && clubModulesLoading) ||
+    (organizerLiteEligible && !managedClubId && organizerModulesLoading)
+  ) {
     if (showSuperAdmin) {
       return (
         <div className="min-h-screen bg-[#111111] flex items-center justify-center">
@@ -616,8 +668,15 @@ function App() {
     );
   }
 
-  // Module gate: need manager and/or bar; bar-only clubs get a slimmed-down app
-  if (!modulesLoading && managedClubId && !hasModule('manager') && !hasModule('bar')) {
+  // Module gate: tournaments (Lite), manager full, ou bar
+  if (
+    !modulesLoading &&
+    managedClubId &&
+    !entitlements.hasManager &&
+    !entitlements.hasBar &&
+    !entitlements.hasTournaments &&
+    !entitlements.hasManagerLite
+  ) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
@@ -639,12 +698,12 @@ function App() {
     );
   }
 
-  // Paid organizer without manager_lite yet — avoid empty club shell
+  // Organizer sem Tournaments / manager_lite — evitar shell vazio
   if (
     organizerLiteEligible &&
     !managedClubId &&
     !organizerModulesLoading &&
-    !hasManagerLite
+    !derivesLite
   ) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
@@ -653,7 +712,7 @@ function App() {
           <div className="text-3xl mb-3">🔒</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Manager Lite não ativo</h2>
           <p className="text-sm text-gray-500 mb-6">
-            A sua conta de organizador ainda não tem o módulo Manager Lite.
+            A sua conta ainda não tem o pack Torneios (Manager Lite).
             Contacte o suporte Padel One ou use a Tour para torneios.
           </p>
           <a
@@ -700,7 +759,11 @@ function App() {
       ? (hasTournamentsBar ? 'Padel One Club' : 'Padel One Bar')
       : t.app.title;
   const appSubtitle = managerLiteMode
-    ? 'Gestão do organizador'
+    ? managedClubId
+      ? liteShowBar
+        ? 'Gestão do clube · Lite + Bar'
+        : 'Gestão do clube · Lite'
+      : 'Gestão do organizador'
     : barOnlyMode
       ? (hasTournamentsBar ? 'Torneios e Bar' : 'Bar e pedidos')
       : t.app.subtitle;
@@ -713,6 +776,10 @@ function App() {
     { id: 'rewards', label: 'Rewards', icon: RewardsIcon },
     { id: 'metrics', label: t.nav.metrics || 'Métricas', icon: MetricsIcon },
     { id: 'sponsors', label: 'Sponsors', icon: SponsorsIcon },
+    ...(liteShowTournamentsBar
+      ? [{ id: 'tournaments' as View, label: 'Torneios', icon: TournamentsIcon }]
+      : []),
+    ...(liteShowBar ? [{ id: 'bar' as View, label: t.nav.bar, icon: BarIcon }] : []),
   ];
 
   const allNavItems = [
@@ -953,10 +1020,28 @@ function App() {
               )}
               {view === 'venues' && <OrganizerVenuesManagement key={refreshKey} />}
               {view === 'rewards' && (
-                <RewardsManagement key={refreshKey} organizerMode />
+                <RewardsManagement
+                  key={refreshKey}
+                  organizerMode={!managedClubId}
+                  staffClubOwnerId={managedClubId ? staffPermissions.clubOwnerId : undefined}
+                />
               )}
               {view === 'metrics' && <OrganizerMetrics key={refreshKey} />}
               {view === 'sponsors' && <OrganizerSponsors key={refreshKey} />}
+              {view === 'tournaments' && liteShowTournamentsBar && (
+                <TournamentBarManagement
+                  key={refreshKey}
+                  staffClubOwnerId={staffPermissions.clubOwnerId}
+                  clubId={managedClubId}
+                />
+              )}
+              {view === 'bar' && liteShowBar && (
+                <BarManagement
+                  key={refreshKey}
+                  staffClubOwnerId={staffPermissions.clubOwnerId}
+                  staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
+                />
+              )}
               {view === 'settings' && <OrganizerLiteSettings key={refreshKey} />}
             </div>
           ) : (

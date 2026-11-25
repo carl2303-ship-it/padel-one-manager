@@ -95,3 +95,14 @@ export async function fetchClientModules(
   if (error || !data) return EMPTY;
   return parseModules(data);
 }
+
+/**
+ * Pack rule (Carlos 2026-11-25): buying Tournaments ⇒ Manager Lite.
+ * Lite = !manager full && (tournaments OR explicit manager_lite HQ override).
+ * Bar is an add-on on top of Lite, not a substitute.
+ */
+export function isManagerLiteEntitled(
+  m: Pick<ClientModulesResult, 'hasManager' | 'hasTournaments' | 'hasManagerLite'>
+): boolean {
+  return !m.hasManager && (m.hasTournaments || m.hasManagerLite);
+}
