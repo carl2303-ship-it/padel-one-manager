@@ -18,8 +18,16 @@ export type Tournament = {
   start_time?: string;
   end_time?: string;
   status: 'draft' | 'active' | 'completed' | 'cancelled';
-  format: 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout';
-  round_robin_type?: 'teams' | 'individual';
+  format:
+    | 'single_elimination'
+    | 'round_robin'
+    | 'groups_knockout'
+    | 'individual_groups_knockout'
+    | 'super_teams'
+    | 'club_league'
+    | 'ladder'
+    | string;
+  round_robin_type?: 'teams' | 'individual' | string | null;
   max_teams: number;
   number_of_courts?: number;
   number_of_groups?: number;

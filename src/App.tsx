@@ -17,6 +17,12 @@ import OpenGamesManagement from './components/OpenGamesManagement';
 import RewardsManagement from './components/RewardsManagement';
 import PublicMenuGate from './components/PublicMenuGate';
 import PublicPricing from './components/PublicPricing';
+import OrganizerDashboard from './components/OrganizerDashboard';
+import OrganizerMembers from './components/OrganizerMembers';
+import OrganizerMetrics from './components/OrganizerMetrics';
+import OrganizerSponsors from './components/OrganizerSponsors';
+import OrganizerPlayersModal from './components/OrganizerPlayersModal';
+import OrganizerLiteSettings from './components/OrganizerLiteSettings';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -25,6 +31,8 @@ import {
   Menu,
   X,
 } from 'lucide-react';
+
+const TOUR_APP_URL = 'https://tour.padel1.app';
 
 // Emoji icon components for sidebar menu
 const EmojiIcon = ({ emoji, className }: { emoji: string; className?: string }) => (
@@ -40,10 +48,25 @@ const MetricsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji=
 const OpenGamesIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎾" className={className} />;
 const RewardsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🎁" className={className} />;
 const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="👔" className={className} />;
+const SponsorsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🤝" className={className} />;
+const PlayersIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🧍" className={className} />;
 const SettingsEmojiIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="⚙️" className={className} />;
 const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🚪" className={className} />;
 
-type View = 'dashboard' | 'bookings' | 'members' | 'academy' | 'bar' | 'tournaments' | 'metrics' | 'open-games' | 'rewards' | 'staff' | 'settings';
+type View =
+  | 'dashboard'
+  | 'bookings'
+  | 'members'
+  | 'players'
+  | 'academy'
+  | 'bar'
+  | 'tournaments'
+  | 'metrics'
+  | 'sponsors'
+  | 'open-games'
+  | 'rewards'
+  | 'staff'
+  | 'settings';
 
 function isSuperAdminEntryUrl(): boolean {
   if (typeof window === 'undefined') return false;
@@ -115,7 +138,17 @@ function App() {
   const [licenseResult, setLicenseResult] = useState<{ plan?: string; contract_expires_at?: string } | null>(null);
   const [clubPlanInfo, setClubPlanInfo] = useState<{ plan_type?: string; contract_expires_at?: string } | null>(null);
   const [managedClubId, setManagedClubId] = useState<string | null>(null);
+  const [organizerLiteEligible, setOrganizerLiteEligible] = useState(false);
   const { hasModule, loading: modulesLoading } = useClientModules('club', managedClubId);
+  const {
+    hasManagerLite,
+    loading: organizerModulesLoading,
+  } = useClientModules(
+    organizerLiteEligible && !managedClubId ? 'organizer' : null,
+    organizerLiteEligible && !managedClubId && user ? user.id : null
+  );
+  const managerLiteMode =
+    organizerLiteEligible && !managedClubId && !organizerModulesLoading && hasManagerLite;
 
   const handleSignOut = async () => {
     await signOut();
@@ -156,6 +189,7 @@ function App() {
       setNeedsLicense(false);
       setClubPlanInfo(null);
       setManagedClubId(null);
+      setOrganizerLiteEligible(false);
       setStaffPermissions({
         isStaff: false,
         isOwner: true,
@@ -259,7 +293,21 @@ function App() {
 
     if (orgSettings?.is_paid_organizer) {
       setNeedsLicense(false);
-      await checkStaffPermissions();
+      setOrganizerLiteEligible(true);
+      setManagedClubId(null);
+      setStaffPermissions({
+        isStaff: false,
+        isOwner: true,
+        clubOwnerId: null,
+        staffName: null,
+        perm_bookings: true,
+        perm_members: true,
+        perm_bar: true,
+        perm_academy: true,
+        perm_reports: true,
+        role: null,
+      });
+      setCheckingPermissions(false);
       return;
     }
 
@@ -434,7 +482,7 @@ function App() {
     return <PublicPricing clubId={pricingMatch[1]} />;
   }
 
-  if (authLoading || checkingPermissions) {
+  if (authLoading || checkingPermissions || (organizerLiteEligible && !managedClubId && organizerModulesLoading)) {
     if (showSuperAdmin) {
       return (
         <div className="min-h-screen bg-[#111111] flex items-center justify-center">
@@ -569,6 +617,40 @@ function App() {
     );
   }
 
+  // Paid organizer without manager_lite yet — avoid empty club shell
+  if (
+    organizerLiteEligible &&
+    !managedClubId &&
+    !organizerModulesLoading &&
+    !hasManagerLite
+  ) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+          <div className="text-3xl mb-3">🔒</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Manager Lite não ativo</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            A sua conta de organizador ainda não tem o módulo Manager Lite.
+            Contacte o suporte Padel One ou use a Tour para torneios.
+          </p>
+          <a
+            href={TOUR_APP_URL}
+            className="inline-flex w-full justify-center py-3 mb-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700"
+          >
+            Abrir Tour
+          </a>
+          <button
+            onClick={handleSignOut}
+            className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (barOnlyClub && !staffPermissions.isOwner && !staffPermissions.perm_bar) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
@@ -590,12 +672,24 @@ function App() {
     );
   }
 
-  const appTitle = barOnlyMode
-    ? (hasTournamentsBar ? 'Padel One Club' : 'Padel One Bar')
-    : t.app.title;
-  const appSubtitle = barOnlyMode
-    ? (hasTournamentsBar ? 'Torneios e Bar' : 'Bar e pedidos')
-    : t.app.subtitle;
+  const appTitle = managerLiteMode
+    ? 'Manager Lite'
+    : barOnlyMode
+      ? (hasTournamentsBar ? 'Padel One Club' : 'Padel One Bar')
+      : t.app.title;
+  const appSubtitle = managerLiteMode
+    ? 'Gestão do organizador'
+    : barOnlyMode
+      ? (hasTournamentsBar ? 'Torneios e Bar' : 'Bar e pedidos')
+      : t.app.subtitle;
+
+  const liteNavItems: { id: View; label: string; icon: typeof DashboardIcon }[] = [
+    { id: 'dashboard', label: t.nav.dashboard, icon: DashboardIcon },
+    { id: 'players', label: 'Jogadores', icon: PlayersIcon },
+    { id: 'members', label: 'Membros / Planos', icon: MembersIcon },
+    { id: 'metrics', label: t.nav.metrics || 'Métricas', icon: MetricsIcon },
+    { id: 'sponsors', label: 'Sponsors', icon: SponsorsIcon },
+  ];
 
   const allNavItems = [
     { id: 'dashboard' as View, label: t.nav.dashboard, icon: DashboardIcon, permission: 'always', module: null as string | null },
@@ -610,13 +704,15 @@ function App() {
     { id: 'staff' as View, label: t.nav.staff || 'Staff', icon: StaffIcon, permission: 'owner_only', module: 'manager' },
   ];
 
-  const navItems = allNavItems.filter(item => {
-    if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar' | 'tournaments')) return false;
-    if (item.permission === 'tournaments_bar') return canAccessTournamentsBar;
-    if (item.permission === 'always') return !barOnlyMode;
-    if (item.permission === 'owner_only') return staffPermissions.isOwner;
-    return staffPermissions[item.permission as keyof StaffPermissions];
-  });
+  const navItems = managerLiteMode
+    ? liteNavItems
+    : allNavItems.filter(item => {
+        if (item.module && managedClubId && !hasModule(item.module as 'manager' | 'bar' | 'tournaments')) return false;
+        if (item.permission === 'tournaments_bar') return canAccessTournamentsBar;
+        if (item.permission === 'always') return !barOnlyMode;
+        if (item.permission === 'owner_only') return staffPermissions.isOwner;
+        return staffPermissions[item.permission as keyof StaffPermissions];
+      });
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -652,6 +748,17 @@ function App() {
         </nav>
 
         <div className="px-4 py-4 border-t border-gray-200 space-y-2">
+          {managerLiteMode && (
+            <a
+              href={TOUR_APP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition-all"
+            >
+              <TournamentsIcon className="w-5 h-5 text-indigo-600" />
+              Abrir Tour
+            </a>
+          )}
           {staffPermissions.isOwner && !barOnlyMode && (
             <button
               onClick={() => setView('settings')}
@@ -749,6 +856,18 @@ function App() {
                 );
               })}
               <hr className="my-2" />
+              {managerLiteMode && (
+                <a
+                  href={TOUR_APP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setShowMobileMenu(false)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-indigo-700 hover:bg-indigo-50 transition-all"
+                >
+                  <TournamentsIcon className="w-5 h-5 text-indigo-600" />
+                  Abrir Tour
+                </a>
+              )}
               {staffPermissions.isOwner && !barOnlyMode && (
                 <button
                   onClick={() => {
@@ -795,29 +914,50 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 lg:ml-64">
         <div className="pt-16 lg:pt-0 min-h-screen">
-          {view === 'dashboard' && !barOnlyMode && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
-          {view === 'bookings' && staffPermissions.perm_bookings && hasModule('manager') && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'members' && staffPermissions.perm_members && hasModule('manager') && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'academy' && staffPermissions.perm_academy && hasModule('manager') && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'bar' && staffPermissions.perm_bar && hasModule('bar') && (
-            <BarManagement
-              key={refreshKey}
-              staffClubOwnerId={staffPermissions.clubOwnerId}
-              staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
-            />
+          {managerLiteMode ? (
+            <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+              {view === 'dashboard' && (
+                <OrganizerDashboard
+                  key={refreshKey}
+                  onNavigate={(v) => setView(v as View)}
+                  tourAppUrl={TOUR_APP_URL}
+                />
+              )}
+              {view === 'players' && <OrganizerPlayersModal key={refreshKey} embedded />}
+              {view === 'members' && (
+                <OrganizerMembers key={refreshKey} initialTab="members" hidePlayersTab />
+              )}
+              {view === 'metrics' && <OrganizerMetrics key={refreshKey} />}
+              {view === 'sponsors' && <OrganizerSponsors key={refreshKey} />}
+              {view === 'settings' && <OrganizerLiteSettings key={refreshKey} />}
+            </div>
+          ) : (
+            <>
+              {view === 'dashboard' && !barOnlyMode && <Dashboard key={refreshKey} onNavigate={setView} staffPermissions={staffPermissions} />}
+              {view === 'bookings' && staffPermissions.perm_bookings && hasModule('manager') && <CourtBookings key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'members' && staffPermissions.perm_members && hasModule('manager') && <MemberManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'academy' && staffPermissions.perm_academy && hasModule('manager') && <AcademyManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'bar' && staffPermissions.perm_bar && hasModule('bar') && (
+                <BarManagement
+                  key={refreshKey}
+                  staffClubOwnerId={staffPermissions.clubOwnerId}
+                  staffRole={staffPermissions.isStaff ? staffPermissions.role : null}
+                />
+              )}
+              {view === 'tournaments' && canAccessTournamentsBar && (
+                <TournamentBarManagement
+                  key={refreshKey}
+                  staffClubOwnerId={staffPermissions.clubOwnerId}
+                  clubId={managedClubId}
+                />
+              )}
+              {view === 'metrics' && staffPermissions.perm_reports && hasModule('manager') && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'open-games' && staffPermissions.perm_bookings && hasModule('manager') && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'rewards' && staffPermissions.perm_bookings && hasModule('manager') && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
+              {view === 'staff' && staffPermissions.isOwner && hasModule('manager') && <StaffManagement />}
+              {view === 'settings' && staffPermissions.isOwner && !barOnlyMode && <Settings />}
+            </>
           )}
-          {view === 'tournaments' && canAccessTournamentsBar && (
-            <TournamentBarManagement
-              key={refreshKey}
-              staffClubOwnerId={staffPermissions.clubOwnerId}
-              clubId={managedClubId}
-            />
-          )}
-          {view === 'metrics' && staffPermissions.perm_reports && hasModule('manager') && <ClubMetrics key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'open-games' && staffPermissions.perm_bookings && hasModule('manager') && <OpenGamesManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'rewards' && staffPermissions.perm_bookings && hasModule('manager') && <RewardsManagement key={refreshKey} staffClubOwnerId={staffPermissions.clubOwnerId} />}
-          {view === 'staff' && staffPermissions.isOwner && hasModule('manager') && <StaffManagement />}
-          {view === 'settings' && staffPermissions.isOwner && !barOnlyMode && <Settings />}
         </div>
       </main>
     </div>

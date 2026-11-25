@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Search, UserCircle, Phone, Mail, Calendar, Star, ShieldPlus, X, Trash2 } from 'lucide-react';
+import { Users, Search, UserCircle, Phone, Mail, Calendar, Star, ShieldPlus, X, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import ClientModuleToggles from './ClientModuleToggles';
 
 interface PlayerAccount {
   id: string;
@@ -24,6 +25,7 @@ interface UserLogoSetting {
 
 interface CombinedUser {
   id: string;
+  authUserId: string | null;
   name: string;
   phone: string;
   email: string;
@@ -55,7 +57,7 @@ export default function HQUsers() {
   const [addingAdmin, setAddingAdmin] = useState(false);
   const [superAdmins, setSuperAdmins] = useState<SuperAdmin[]>([]);
   const [showAdminList, setShowAdminList] = useState(false);
-
+  const [expandedOrganizerId, setExpandedOrganizerId] = useState<string | null>(null);
 
   useEffect(() => { loadUsers(); loadSuperAdmins(); }, []);
 
@@ -132,6 +134,7 @@ export default function HQUsers() {
 
       return {
         id: p.id,
+        authUserId: p.user_id || null,
         name: p.name || '—',
         phone: p.phone_number || p.phone || '—',
         email: p.email || '—',
@@ -267,32 +270,53 @@ export default function HQUsers() {
           <div className="p-8 text-center text-gray-500">Nenhum utilizador encontrado.</div>
         ) : (
           paginated.map(u => (
-            <div key={u.id} className="grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-4 px-5 py-3 border-b border-[#2a2a2a] last:border-b-0 hover:bg-[#151515] transition-colors items-center">
-              <div className="lg:col-span-3 flex items-center gap-2">
-                {u.avatarUrl ? (
-                  <img src={u.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover" />
-                ) : (
-                  <UserCircle size={20} className="text-gray-600 shrink-0" />
-                )}
-                <span className="text-sm font-medium text-gray-100 truncate">{u.name}</span>
+            <div key={u.id} className="border-b border-[#2a2a2a] last:border-b-0">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 lg:gap-4 px-5 py-3 hover:bg-[#151515] transition-colors items-center">
+                <div className="lg:col-span-3 flex items-center gap-2">
+                  {u.avatarUrl ? (
+                    <img src={u.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover" />
+                  ) : (
+                    <UserCircle size={20} className="text-gray-600 shrink-0" />
+                  )}
+                  <span className="text-sm font-medium text-gray-100 truncate">{u.name}</span>
+                  {u.role === 'organizer' && u.authUserId && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedOrganizerId(expandedOrganizerId === u.id ? null : u.id)}
+                      className="ml-1 p-1 rounded text-gray-500 hover:text-gray-200 hover:bg-[#2a2a2a]"
+                      title="Módulos do organizador"
+                    >
+                      {expandedOrganizerId === u.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                  )}
+                </div>
+                <div className="lg:col-span-2 text-sm text-gray-400 flex items-center gap-1">
+                  <Phone size={12} className="shrink-0" />{u.phone}
+                </div>
+                <div className="lg:col-span-2 text-sm text-gray-400 truncate flex items-center gap-1">
+                  <Mail size={12} className="shrink-0" />{u.email}
+                </div>
+                <div className="lg:col-span-1">
+                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${ROLE_COLORS[u.role]}`}>
+                    {ROLE_LABELS[u.role]}
+                  </span>
+                </div>
+                <div className="lg:col-span-1 text-sm text-gray-300 flex items-center gap-1">
+                  <Star size={12} className="text-[#D32F2F]" />{u.rewardPoints}
+                </div>
+                <div className="lg:col-span-2 text-xs text-gray-500 flex items-center gap-1">
+                  <Calendar size={12} />{new Date(u.createdAt).toLocaleDateString('pt-PT')}
+                </div>
               </div>
-              <div className="lg:col-span-2 text-sm text-gray-400 flex items-center gap-1">
-                <Phone size={12} className="shrink-0" />{u.phone}
-              </div>
-              <div className="lg:col-span-2 text-sm text-gray-400 truncate flex items-center gap-1">
-                <Mail size={12} className="shrink-0" />{u.email}
-              </div>
-              <div className="lg:col-span-1">
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${ROLE_COLORS[u.role]}`}>
-                  {ROLE_LABELS[u.role]}
-                </span>
-              </div>
-              <div className="lg:col-span-1 text-sm text-gray-300 flex items-center gap-1">
-                <Star size={12} className="text-[#D32F2F]" />{u.rewardPoints}
-              </div>
-              <div className="lg:col-span-2 text-xs text-gray-500 flex items-center gap-1">
-                <Calendar size={12} />{new Date(u.createdAt).toLocaleDateString('pt-PT')}
-              </div>
+              {expandedOrganizerId === u.id && u.authUserId && (
+                <div className="px-5 pb-4 bg-[#111111]">
+                  <ClientModuleToggles
+                    entityType="organizer"
+                    entityId={u.authUserId}
+                    entityName={u.name}
+                  />
+                </div>
+              )}
             </div>
           ))
         )}
