@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { Trophy, Users, Calendar, ArrowRight, BarChart3, AlertTriangle } from 'lucide-react';
+import { Trophy, Users, Calendar, ArrowRight, BarChart3, AlertTriangle, MapPin, Gift } from 'lucide-react';
 
 interface OrganizerDashboardProps {
   onNavigate: (view: string) => void;
@@ -252,6 +252,42 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament, tourA
             })}
           </div>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <button
+          type="button"
+          onClick={() => onNavigate('players')}
+          className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition-colors text-left"
+        >
+          <Users className="w-5 h-5 text-blue-600 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Jogadores</p>
+            <p className="text-xs text-gray-500">CRM e níveis</p>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate('venues')}
+          className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition-colors text-left"
+        >
+          <MapPin className="w-5 h-5 text-emerald-600 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Clubes / venues</p>
+            <p className="text-xs text-gray-500">Locais e campos</p>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate('rewards')}
+          className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-100 hover:border-amber-200 hover:bg-amber-50/40 transition-colors text-left"
+        >
+          <Gift className="w-5 h-5 text-amber-600 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Rewards</p>
+            <p className="text-xs text-gray-500">Regras e catálogo</p>
+          </div>
+        </button>
       </div>
 
       <p className="text-sm text-gray-500">

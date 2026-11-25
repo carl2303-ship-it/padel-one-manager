@@ -186,7 +186,7 @@ export default function AuthForm({ onSuccess, hqEntry = false }: AuthFormProps) 
               <>
                 <h1 className={titleClass}>{t.app.title}</h1>
                 <p className={subtitleClass}>
-                  Gestão completa do seu clube de padel
+                  Gestão do clube ou do organizador de torneios
                 </p>
               </>
             )}

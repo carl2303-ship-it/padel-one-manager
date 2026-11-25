@@ -32,7 +32,8 @@ import {
 
 interface RewardRule {
   id: string;
-  club_id: string;
+  club_id: string | null;
+  organizer_id?: string | null;
   action_type: string;
   points: number;
   description: string | null;
@@ -50,7 +51,8 @@ interface PlayerRewardEntry {
 
 interface CatalogItem {
   id: string;
-  club_id: string;
+  club_id: string | null;
+  organizer_id?: string | null;
   title: string;
   description: string | null;
   image_url: string | null;
@@ -74,6 +76,8 @@ interface Redemption {
 
 interface RewardsManagementProps {
   staffClubOwnerId?: string | null;
+  /** Manager lite: scope by organizer_id (R1), club_id null */
+  organizerMode?: boolean;
 }
 
 const ACTION_LABELS: Record<string, { label: string; icon: JSX.Element; description: string }> = {
@@ -107,7 +111,7 @@ const TIER_LABELS: Record<string, { label: string; color: string; emoji: string 
   diamond: { label: 'Diamond', color: 'bg-cyan-100 text-cyan-700', emoji: '💎' },
 };
 
-export default function RewardsManagement({ staffClubOwnerId }: RewardsManagementProps) {
+export default function RewardsManagement({ staffClubOwnerId, organizerMode = false }: RewardsManagementProps) {
   const { user } = useAuth();
   const effectiveUserId = staffClubOwnerId || user?.id;
 
@@ -115,6 +119,7 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
   const [players, setPlayers] = useState<PlayerRewardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [clubId, setClubId] = useState<string | null>(null);
+  const [organizerId, setOrganizerId] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<{ points: number; isActive: boolean; spendThreshold: number }>({ points: 0, isActive: true, spendThreshold: 10 });
   const [saving, setSaving] = useState(false);
@@ -135,56 +140,66 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
 
   useEffect(() => {
     if (effectiveUserId) loadData();
-  }, [effectiveUserId]);
+  }, [effectiveUserId, organizerMode]);
 
   async function loadData() {
     if (!effectiveUserId) return;
     setLoading(true);
+    setRules([]);
+    setCatalogItems([]);
+    setRedemptions([]);
+    setPlayers([]);
 
-    // Get club id
-    const { data: clubs } = await supabase
-      .from('clubs')
-      .select('id')
-      .eq('owner_id', effectiveUserId)
-      .limit(1);
+    let cid: string | null = null;
+    let oid: string | null = null;
 
-    if (!clubs || clubs.length === 0) {
-      setLoading(false);
-      return;
+    if (organizerMode) {
+      oid = effectiveUserId;
+      setOrganizerId(oid);
+      setClubId(null);
+    } else {
+      const { data: clubs } = await supabase
+        .from('clubs')
+        .select('id')
+        .eq('owner_id', effectiveUserId)
+        .limit(1);
+
+      if (!clubs || clubs.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      cid = clubs[0].id;
+      setClubId(cid);
+      setOrganizerId(null);
     }
 
-    const cid = clubs[0].id;
-    setClubId(cid);
+    const scopeFilter = (q: any) =>
+      organizerMode ? q.eq('organizer_id', oid) : q.eq('club_id', cid);
 
-    // Get reward rules
-    const { data: rulesData } = await supabase
-      .from('reward_rules')
-      .select('*')
-      .eq('club_id', cid)
-      .order('action_type');
+    const { data: rulesData } = await scopeFilter(
+      supabase.from('reward_rules').select('*')
+    ).order('action_type');
 
     if (rulesData) setRules(rulesData);
 
-    // Get catalog items
-    const { data: catalogData } = await supabase
-      .from('reward_catalog')
-      .select('*')
-      .eq('club_id', cid)
-      .order('sort_order', { ascending: true });
+    const { data: catalogData } = await scopeFilter(
+      supabase.from('reward_catalog').select('*')
+    ).order('sort_order', { ascending: true });
 
     if (catalogData) setCatalogItems(catalogData);
 
-    // Get recent redemptions
-    const { data: redemptionsData } = await supabase
-      .from('reward_redemptions')
-      .select('id, catalog_item_id, player_account_id, points_spent, status, redeemed_at')
-      .eq('club_id', cid)
+    const { data: redemptionsData } = await scopeFilter(
+      supabase
+        .from('reward_redemptions')
+        .select('id, catalog_item_id, player_account_id, points_spent, status, redeemed_at')
+    )
       .order('redeemed_at', { ascending: false })
       .limit(50);
 
     if (redemptionsData && redemptionsData.length > 0) {
-      const rdPaIds = [...new Set(redemptionsData.map(r => r.player_account_id))];
-      const rdItemIds = [...new Set(redemptionsData.map(r => r.catalog_item_id))];
+      const rdPaIds = [...new Set(redemptionsData.map((r: Redemption) => r.player_account_id))];
+      const rdItemIds = [...new Set(redemptionsData.map((r: Redemption) => r.catalog_item_id))];
 
       const [{ data: rdAccounts }, { data: rdItems }] = await Promise.all([
         supabase.from('player_accounts').select('id, name').in('id', rdPaIds),
@@ -194,23 +209,21 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
       const rdAccMap = new Map((rdAccounts || []).map(a => [a.id, a.name]));
       const rdItemMap = new Map((rdItems || []).map(i => [i.id, i.title]));
 
-      setRedemptions(redemptionsData.map(r => ({
+      setRedemptions(redemptionsData.map((r: Redemption) => ({
         ...r,
         player_name: rdAccMap.get(r.player_account_id) || 'Jogador',
         item_title: rdItemMap.get(r.catalog_item_id) || 'Item',
       })));
     }
 
-    // Get player rankings
-    const { data: playerData } = await supabase
-      .from('player_rewards')
-      .select('player_account_id, total_points, tier')
-      .eq('club_id', cid)
+    const { data: playerData } = await scopeFilter(
+      supabase.from('player_rewards').select('player_account_id, total_points, tier')
+    )
       .order('total_points', { ascending: false })
       .limit(50);
 
     if (playerData && playerData.length > 0) {
-      const paIds = playerData.map(p => p.player_account_id);
+      const paIds = playerData.map((p: { player_account_id: string }) => p.player_account_id);
       const { data: accounts } = await supabase
         .from('player_accounts')
         .select('id, name, avatar_url')
@@ -218,7 +231,7 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
 
       const accountMap = new Map((accounts || []).map(a => [a.id, a]));
 
-      setPlayers(playerData.map(p => {
+      setPlayers(playerData.map((p: { player_account_id: string; total_points: number; tier: string }) => {
         const acct = accountMap.get(p.player_account_id);
         return {
           player_account_id: p.player_account_id,
@@ -259,10 +272,11 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
   }
 
   async function createMissingRules() {
-    if (!clubId) return;
+    if (organizerMode ? !organizerId : !clubId) return;
     setSaving(true);
 
     const existingTypes = new Set(rules.map(r => r.action_type));
+    // Organizer lite: focus tournament + custom; still allow creating all types
     const missing = Object.keys(ACTION_LABELS).filter(t => !existingTypes.has(t));
 
     if (missing.length === 0) {
@@ -277,7 +291,8 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
     };
 
     const inserts = missing.map(actionType => ({
-      club_id: clubId,
+      club_id: organizerMode ? null : clubId,
+      organizer_id: organizerMode ? organizerId : null,
       action_type: actionType,
       points: defaults[actionType] || 10,
       description: ACTION_LABELS[actionType]?.description || '',
@@ -294,11 +309,12 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
   }
 
   async function saveCatalogItem() {
-    if (!clubId || !catalogForm.title.trim()) return;
+    if ((organizerMode ? !organizerId : !clubId) || !catalogForm.title.trim()) return;
     setSaving(true);
 
     const payload = {
-      club_id: clubId,
+      club_id: organizerMode ? null : clubId,
+      organizer_id: organizerMode ? organizerId : null,
       title: catalogForm.title.trim(),
       description: catalogForm.description.trim() || null,
       image_url: catalogForm.image_url.trim() || null,
@@ -369,9 +385,10 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
         if (redemption) {
           await supabase.rpc('award_reward_points', {
             p_player_account_id: redemption.player_account_id,
-            p_club_id: clubId,
+            p_club_id: organizerMode ? null : clubId,
             p_action_type: 'custom',
             p_custom_description: 'Reembolso: resgate cancelado',
+            p_organizer_id: organizerMode ? organizerId : null,
           });
         }
       }
@@ -416,7 +433,11 @@ export default function RewardsManagement({ staffClubOwnerId }: RewardsManagemen
           <Gift className="w-8 h-8 text-amber-600" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Sistema de Rewards</h1>
-            <p className="text-sm text-gray-500">Configure pontos de reward para ações dos jogadores</p>
+            <p className="text-sm text-gray-500">
+              {organizerMode
+                ? 'Pontos e catálogo do organizador (torneios). Finalize na Tour consome estas regras.'
+                : 'Configure pontos de reward para ações dos jogadores'}
+            </p>
           </div>
         </div>
         <button

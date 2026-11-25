@@ -23,6 +23,7 @@ import OrganizerMetrics from './components/OrganizerMetrics';
 import OrganizerSponsors from './components/OrganizerSponsors';
 import OrganizerPlayersModal from './components/OrganizerPlayersModal';
 import OrganizerLiteSettings from './components/OrganizerLiteSettings';
+import OrganizerVenuesManagement from './components/OrganizerVenuesManagement';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -65,6 +66,7 @@ const RewardsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji=
 const StaffIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="👔" className={className} />;
 const SponsorsIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🤝" className={className} />;
 const PlayersIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🧍" className={className} />;
+const VenuesIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="📍" className={className} />;
 const SettingsEmojiIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="⚙️" className={className} />;
 const LogOutIcon = ({ className }: { className?: string }) => <EmojiIcon emoji="🚪" className={className} />;
 
@@ -78,6 +80,7 @@ type View =
   | 'tournaments'
   | 'metrics'
   | 'sponsors'
+  | 'venues'
   | 'open-games'
   | 'rewards'
   | 'staff'
@@ -706,6 +709,8 @@ function App() {
     { id: 'dashboard', label: t.nav.dashboard, icon: DashboardIcon },
     { id: 'players', label: 'Jogadores', icon: PlayersIcon },
     { id: 'members', label: 'Membros / Planos', icon: MembersIcon },
+    { id: 'venues', label: 'Clubes / venues', icon: VenuesIcon },
+    { id: 'rewards', label: 'Rewards', icon: RewardsIcon },
     { id: 'metrics', label: t.nav.metrics || 'Métricas', icon: MetricsIcon },
     { id: 'sponsors', label: 'Sponsors', icon: SponsorsIcon },
   ];
@@ -945,6 +950,10 @@ function App() {
               {view === 'players' && <OrganizerPlayersModal key={refreshKey} embedded />}
               {view === 'members' && (
                 <OrganizerMembers key={refreshKey} initialTab="members" hidePlayersTab />
+              )}
+              {view === 'venues' && <OrganizerVenuesManagement key={refreshKey} />}
+              {view === 'rewards' && (
+                <RewardsManagement key={refreshKey} organizerMode />
               )}
               {view === 'metrics' && <OrganizerMetrics key={refreshKey} />}
               {view === 'sponsors' && <OrganizerSponsors key={refreshKey} />}
